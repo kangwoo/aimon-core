@@ -210,12 +210,12 @@ final class AnthropicExceptionMapper {
 
     /**
      * Classifies a <em>mid-stream</em> error — one delivered as an SSE error event on an already-opened HTTP-200
-     * stream,
-     * where the transport status no longer reflects the failure. Such an error can only be a server-side condition that
-     * occurred after generation started (the request itself was already accepted), so it is mapped to the same
-     * retryable taxonomy the blocking path would produce for the equivalent 5xx: {@link LlmRateLimitedException} when
-     * the body signals a rate limit, otherwise {@link LlmOverloadedException}. This keeps the gateway's retry budget
-     * intact for calls re-routed through streaming (non-streaming in-flight abort).
+     * stream, where the transport status no longer reflects the failure. Such an error can only be a server-side
+     * condition that occurred after generation started (the request itself was already accepted), so it is mapped to
+     * the same retryable taxonomy the blocking path would produce for the equivalent 5xx:
+     * {@link LlmRateLimitedException} when the body signals a rate limit, otherwise {@link LlmOverloadedException}.
+     * This keeps the gateway's retry budget intact for calls re-routed through streaming (non-streaming in-flight
+     * abort).
      *
      * <p>
      * Package-private so tests can exercise the classification directly without constructing a Kotlin-only

@@ -261,10 +261,9 @@ class AnthropicThinkingResolverTest {
      *
      * <p>
      * #89, and a decision rather than an oversight: a budget that fits under {@code max_tokens} by one token leaves the
-     * answer as little as a clamp does and is sent without a finding.
-     * {@code docs/design/llm/anthropic-thinking.md} §6.4 states the three conditions under which
-     * the finding is recorded and why nothing else is covered. A floor or proportion warning added without revisiting
-     * that section turns this class red, which is the point of it.
+     * answer as little as a clamp does and is sent without a finding. {@code docs/design/llm/anthropic-thinking.md}
+     * §6.4 states the three conditions under which the finding is recorded and why nothing else is covered. A floor or
+     * proportion warning added without revisiting that section turns this class red, which is the point of it.
      */
     @Nested
     @DisplayName("§16.8: the clamp warning covers a clamp, not a small answer allowance")

@@ -113,9 +113,8 @@ class ContextEngineLiveRigTest {
 
     /**
      * Plays the model: fetches the report when asked, answers filler with "noted", and, asked for the code, answers
-     * from
-     * the view when it can see it and otherwise searches {@code SessionHistory}. A call without tools is a summary call
-     * and gets a summary that leaves the code out.
+     * from the view when it can see it and otherwise searches {@code SessionHistory}. A call without tools is a summary
+     * call and gets a summary that leaves the code out.
      */
     private static final class ScriptedModel implements LlmClient {
 

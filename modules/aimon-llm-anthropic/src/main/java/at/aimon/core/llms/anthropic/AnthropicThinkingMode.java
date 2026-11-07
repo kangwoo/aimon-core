@@ -109,8 +109,7 @@ public enum AnthropicThinkingMode {
      * rather than reads: both shapes are accepted, so the client sends the adaptive one and says nothing, because
      * {@code AUTO} asked the table and the table answered. Which of the two it prefers is a client policy with the
      * vendor's own deprecation notice behind it, and it lives in {@code AnthropicThinkingResolver.resolveAutoDialect}
-     * rather than on the enum —
-     * a row states a fact, and no probe measured a preference.
+     * rather than on the enum — a row states a fact, and no probe measured a preference.
      *
      * <p>
      * One thing this mode cannot carry: an explicit {@link AnthropicConfig#getThinkingBudgetTokens()}, which

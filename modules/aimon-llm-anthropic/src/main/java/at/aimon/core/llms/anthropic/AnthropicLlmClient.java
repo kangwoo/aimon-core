@@ -139,10 +139,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * <p>
      * It is a collaborator rather than a set of private methods for one reason: three of this client's warnings used
      * to describe a request that a later step abandoned, and the fix is that a step which notices something now has
-     * nowhere to say it. {@link AnthropicThinkingResolver} has no logger and cannot reach
-     * {@link #reportDivergence}, so the only route from a finding to an operator runs through
-     * {@link AnthropicThinkingResolution#findingsToReport()}, which drops the findings the finished request made
-     * false.
+     * nowhere to say it. {@link AnthropicThinkingResolver} has no logger and cannot reach {@link #reportDivergence}, so
+     * the only route from a finding to an operator runs through {@link AnthropicThinkingResolution#findingsToReport()},
+     * which drops the findings the finished request made false.
      */
     private final AnthropicThinkingResolver thinkingResolver;
 

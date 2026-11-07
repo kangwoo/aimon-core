@@ -78,9 +78,8 @@ import at.aimon.llm.testkit.StallingSseServer;
  * A stream the SDK closes under its reader ends silently, and a stream whose transport is cut fails loudly; before
  * EE-95's follow-up the client took the silent end for the end of the answer and returned what had arrived. These
  * tests pin the three places that mattered: the client reports a cancellation, an AUTO-compaction summary is not
- * installed and does not move the
- * circuit breaker, and a turn ends {@code INTERRUPTED} rather than completing with the part of the answer that got
- * through.
+ * installed and does not move the circuit breaker, and a turn ends {@code INTERRUPTED} rather than completing with the
+ * part of the answer that got through.
  *
  * <p>
  * Every stop is read from an outcome — the exception, the transcript, the breaker's count — and the timeouts are hang

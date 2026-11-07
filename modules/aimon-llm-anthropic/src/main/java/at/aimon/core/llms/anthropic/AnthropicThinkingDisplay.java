@@ -11,8 +11,8 @@ import java.util.Objects;
  * thinking blocks it has to replay but <b>no readable thinking text at all</b>. That is why forwarding the deltas on
  * its own would have shipped an always-empty channel on this dialect: nothing arrives to forward until this field asks
  * for it. Both halves of that are measured — {@code summarized} returns a populated {@code thinking} block (471
- * characters and a signature, on {@code claude-opus-5}), and the accepted set is exactly
- * <b>{@code {summarized, omitted}}</b>.
+ * characters and a signature, on {@code claude-opus-5}), and the accepted set is exactly <b>{@code {summarized,
+ * omitted}}</b>.
  *
  * <p>
  * <b>Absent means off.</b> There is no {@code OFF} constant and no default value — an unset
