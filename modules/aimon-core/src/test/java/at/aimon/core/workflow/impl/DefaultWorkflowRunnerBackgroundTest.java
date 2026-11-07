@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,6 +31,8 @@ import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -39,6 +42,7 @@ import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.workflow.BackgroundSubmission;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.RunQuery;
@@ -46,6 +50,7 @@ import at.aimon.core.workflow.RunStore;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
 import at.aimon.core.workflow.WorkflowRun;
 import at.aimon.core.workflow.WorkflowRunState;
+import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 
 @DisplayName("DefaultWorkflowRunner — background runs, control plane, cancellation")
 class DefaultWorkflowRunnerBackgroundTest {
@@ -134,11 +139,109 @@ class DefaultWorkflowRunnerBackgroundTest {
         final QuotaGuard guard = QuotaGuard.builder().ledger(new InMemoryUsageLedger())
                 .policy(scope -> java.util.List.of()).build();
 
-        runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("metered"), guard)
-                .await(Duration.ofSeconds(5));
+        runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("metered"),
+                BackgroundSubmission.builder().quotaGuard(guard).build()).await(Duration.ofSeconds(5));
         runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("unmetered")).await(Duration.ofSeconds(5));
 
         assertThat(seen).containsExactly(guard, QuotaGuard.disabled());
+    }
+
+    @Test
+    @DisplayName("TC-25: a background run's subagents are ceilinged by the intersection of the agent's allow-list and"
+            + " the submitter's")
+    void backgroundRunIsNarrowedBySubmittersAllowList() throws Exception {
+        final java.util.List<SubagentLaunchContext> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    seen.add(invocation.getArgument(0, SubagentLaunchContext.class));
+                    return success("ok");
+                });
+        final DefaultWorkflowRunner agentWide = new DefaultWorkflowRunner(manager,
+                env().toBuilder().callerAllowedTools(tools("Read", "Grep", "Bash"))
+                        .callerProgrammatic(programmatic("Read", "Grep")).build());
+        try {
+            agentWide.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("narrowed"),
+                    BackgroundSubmission.builder().callerAllowedTools(tools("Read", "Workflow"))
+                            .callerProgrammatic(programmatic("Read")).build())
+                    .await(Duration.ofSeconds(5));
+            agentWide.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("agent-wide"),
+                    BackgroundSubmission.none()).await(Duration.ofSeconds(5));
+        } finally {
+            agentWide.close();
+        }
+
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get(0).getCallerAllowedTools()).containsExactlyElementsOf(tools("Read"));
+        assertThat(seen.get(0).getCallerProgrammatic().getTools()).containsExactly("Read");
+        assertThat(seen.get(1).getCallerAllowedTools()).containsExactlyElementsOf(tools("Read", "Grep", "Bash"));
+        assertThat(seen.get(1).getCallerProgrammatic().getTools()).containsExactly("Read", "Grep");
+    }
+
+    @Test
+    @DisplayName("TC-25: a submitter without programmatic tool calling leaves the run none, whatever the agent opens")
+    void backgroundRunProgrammaticIsMonotone() throws Exception {
+        final java.util.List<SubagentLaunchContext> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    seen.add(invocation.getArgument(0, SubagentLaunchContext.class));
+                    return success("ok");
+                });
+        final DefaultWorkflowRunner agentWide = new DefaultWorkflowRunner(manager,
+                env().toBuilder().callerProgrammatic(programmatic("Read")).build());
+        try {
+            agentWide
+                    .runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("no-ptc"),
+                            BackgroundSubmission.builder().callerProgrammatic(ProgrammaticToolSettings.none()).build())
+                    .await(Duration.ofSeconds(5));
+        } finally {
+            agentWide.close();
+        }
+
+        assertThat(seen.get(0).getCallerProgrammatic().isEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("TC-25: a submitter whose allow-list shares no tool with the agent's is refused before any run is"
+            + " claimed")
+    void disjointSubmissionIsRefusedBeforeTheClaim() {
+        final RunStore store = spy(new InMemoryRunStore());
+        final DefaultWorkflowRunner agentWide = DefaultWorkflowRunner
+                .builder(manager, env().toBuilder().callerAllowedTools(tools("Read")).build()).runStore(store).build();
+        try {
+            assertThatThrownBy(() -> agentWide.runInBackground(ctx -> "x", RunId.from("disjoint"),
+                    BackgroundSubmission.builder().callerAllowedTools(tools("Bash")).build()))
+                    .isInstanceOf(BackgroundRunRefusedException.class).hasMessageStartingWith(
+                            "background run refused: the caller's allow-list and the agent's share no" + " tool");
+            verify(store, never()).putIfAbsentOrTerminal(any(WorkflowRun.class));
+            assertThat(agentWide.status(RunId.from("disjoint"))).isEmpty();
+        } finally {
+            agentWide.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the default WorkflowRunner#runInBackground(script, id, submission) delegates to the two-argument"
+            + " form")
+    void defaultSubmissionOverloadDelegates() {
+        final AtomicBoolean delegated = new AtomicBoolean();
+        final at.aimon.core.workflow.WorkflowRunner plain = mock(at.aimon.core.workflow.WorkflowRunner.class,
+                org.mockito.Mockito.CALLS_REAL_METHODS);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            delegated.set(true);
+            return null;
+        }).when(plain).runInBackground(any(), any(RunId.class));
+
+        plain.runInBackground(ctx -> "x", RunId.from("plain"), BackgroundSubmission.none());
+
+        assertThat(delegated).isTrue();
+    }
+
+    private static java.util.List<AllowedTool> tools(String... names) {
+        return java.util.Arrays.stream(names).map(AllowedTool::parse).toList();
+    }
+
+    private static ProgrammaticToolSettings programmatic(String... tools) {
+        return ProgrammaticToolSettings.builder().tools(java.util.List.of(tools)).build();
     }
 
     @Test

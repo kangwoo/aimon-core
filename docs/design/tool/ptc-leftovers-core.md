@@ -1,17 +1,24 @@
 # Design — ptc-leftovers-core
 
-> Status: **PR 1 IMPLEMENTED**; PR 2 and PR 3 not yet built. **PR 1** — `aimon-core` and `aimon-graaljs` (tests only):
+> Status: **PR 1 and PR 2 IMPLEMENTED**; PR 3 not yet built. **PR 1** — `aimon-core` and `aimon-graaljs` (tests only):
 > the language notice skips a refused `ExecuteCode` call (`ExecuteCodeLanguageNotice`, breaking signature), fail-safe
 > span recording (`at.aimon.core.tracing.Spans.*Safely`), the Python runtime's loop-only-when-needed, pre-imports and
 > program-only tracebacks (`aimon_ptc.py`, `ToolApiRenderer.PYTHON_RESERVED`), the script-error line with an excerpt
 > (`ExecuteCodeObservation`), the nested-span payload key (`ToolContextKeys.TRACE_PAYLOAD_POLICY`), the measured reply
 > drain (`ShellProgramRun.REPLY_DRAIN`, 2 s), the generalized `CommentReflowTest` predicate and the grandchild-fork
 > ceiling test. The docs it changed are [`programmatic-tool-calling.md`](programmatic-tool-calling.md) §6.3, §12.1,
-> §12.2, §21 and [`programmatic-tool-calling-shell.md`](programmatic-tool-calling-shell.md) §8, §11; it closes
-> TC-20, TC-22, TC-28 and TC-29 in [`../../backlog/tool-contract-open-items.md`](../../backlog/tool-contract-open-items.md).
+> §12.2, §21 and [`programmatic-tool-calling-shell.md`](programmatic-tool-calling-shell.md) Status, §6, §8, §11; it
+> closes TC-20, TC-22, TC-28 and TC-29 in [`../../backlog/tool-contract-open-items.md`](../../backlog/tool-contract-open-items.md).
+> **PR 2** — `aimon-core` and `aimon-graaljs`: ITERATION and TOOL spans in the slash-skill loop (`LlmSkillExecutor`),
+> the background-run ceiling (`WorkflowRunner.runInBackground(…, BackgroundSubmission)`, breaking), and the
+> model-invoked inline-skill ceiling (`InlineSkillCeiling`, `ToolContextKeys.INLINE_SKILL_CEILING`, applied by all three
+> loops). The docs it changed are `programmatic-tool-calling.md` Status, §7.2, §12.1, §12.2, §21,
+> [`tool-call-dispatcher.md`](tool-call-dispatcher.md) §6, §7 and the skill guide; it closes TC-23, TC-25, TC-26 and
+> TC-24 (decided "no").
 >
-> **[§4](#4-after-the-pr-1-build--where-the-implementation-departed), appended after the PR 1 build, is where the build
-> departs from this document;** PR 2 and PR 3 each append a section after it. Everything between this header and §4 is
+> **[§4](#4-after-the-pr-1-build--where-the-implementation-departed) and
+> [§5](#5-after-the-pr-2-build--where-the-implementation-departed), appended after the PR 1 and PR 2 builds, are where
+> the build departs from this document;** PR 3 appends a section after them. Everything between this header and §4 is
 > the body as approved by design review round 3, kept byte-exact rather than corrected
 > ([`../README.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록)). The body's citations (`file:line`) are at
 > `318805f5`; its path shorthands (`core/`, `coreT/`, `rt`, `ptc.md`, `shell.md`, `features.md`, `register`) are defined
@@ -1214,3 +1221,72 @@ in [`programmatic-tool-calling.md`](programmatic-tool-calling.md) §21 (the "PTC
 - **OQ-3** stands as assumed: one payload knob (TC-22's closure says why). **OQ-4** is restated in TC-20's closure:
   the real OpenSandbox write latency is unmeasured here, and the in-operation WARN is the trigger. **OQ-8**: `gpt-4o`
   did not regress on the new Python wording, so it stays.
+
+## 5. After the PR 2 build — where the implementation departed
+
+*Appended 2026-11-07, after the PR 2 build. The body above is unchanged. Sources: the run's `build/pr2/deviations.md`,
+review 3's non-blocking notes on PR 2, and what was found while building.*
+
+**No PR 2 decision changed.** The slash-skill spans with `invokerType=MAIN_AGENT` and a span-carrier-only LLM metadata
+(§2.1), the submission that carries the submitter's ceiling and is narrowed before the claim (§2.2), the execution-scoped
+monotone ceiling applied at the next iteration boundary, with no suspension once narrowed (§2.3), and TC-24's "no"
+(§2.4) are built as written. The model-visible and documented rules are in
+[`programmatic-tool-calling.md`](programmatic-tool-calling.md) §7.2 and §21 (the "PTC 남은 일 PR 2" table).
+
+### 5.1 Where the build departed from the body
+
+- **One shared helper, not three copies (§2.3 item 4).** The rule each loop applies at an iteration boundary — the
+  admission, the programmatic settings, the allow-list the environment facts read, and the narrowed dispatcher swapped
+  into the iteration's context — lives in one class, `at.aimon.core.toolinvocation.InlineSkillNarrowing`, which caches
+  the narrowed dispatcher per version. The body's file table has no row for it.
+- **The slash loop rebuilds more per version (review 3).** Besides the offer context and the dispatcher, the offered
+  definitions (`filteredTools`) and the system prompt's tool list are rebuilt when the version changes, so the loop never
+  offers or describes a tool its dispatcher would refuse. `ptc.unavailable_reason` is annotated from the current
+  version's offer, not from one offer computed per execution (§2.1's sentence is superseded by §2.3 item 4).
+- **The disjoint background refusal has its own type (review 3).** `DefaultWorkflowRunner` throws
+  `BackgroundRunRefusedException` (a `WorkflowException`), not an `IllegalArgumentException`, and the message names both
+  lists. Both tools report it as itself: through `GraalJsWorkflowTool` an `IllegalArgumentException` would have reached
+  the model as `Invalid parameter: …`, although no parameter was wrong.
+- **Iteration numbering and where an error lands (§2.1).** Each LLM call `k` opens `iteration#k` (from 0); that span also
+  holds the TOOL spans of call `k`'s response. Max-iterations and a stall end the open span in error. The quota check
+  runs before the next span opens, so a reached quota ends the *previous* iteration's span in error — the last one
+  that ran.
+- **Metering (§2.1).** In-tree, nothing reads the two reserved span tags as a usage dimension; `MeteringLlmClient` hands
+  the metadata on as it does on the main and fork paths, where those tags already travel. The span carrier also carries
+  the group key (`LlmCallMetadata.traceId`), which `Spans.traceCarrier` copies by design. `LlmSkillExecutorTracingTest`
+  pins that the recorded metadata has no component, feature, principal or parent component and only the two tags.
+  The CLI and the Spring Boot starter both hand the stack a `TracingLlmClient`, so the LLM span appears under each
+  iteration when tracing is on.
+- **The pre-flight scanner is not consulted once narrowed (§2.3 item 7).** The body allowed "not consulted, or its
+  verdict ignored"; the build does not call it, and logs the one INFO line only when the response holds a `Skill` call.
+- **Test placement and shape (§2.7).**
+  - The approval cases are in `OrcaAgentExecutorSkillSuspendTest`, which already has the scanner fixtures. "`/approve`
+    reports nothing pending" is asserted on the pending-turn registry `/approve` reads (empty), not by driving the
+    command. The "scan is skipped exactly when narrowed" unit check is the same test: the scanner's policy is asked
+    about skill A (iteration 1) and never about B (iteration 2).
+  - The patterned-`Bash` cases run in a sandbox that *declares* python3 and a runtime file system, not on HOST with the
+    `python3` skip rule. Only the offer is judged, from static facts, so nothing runs and no interpreter is needed. The
+    pattern is `Bash(git:*)` rather than `Bash(git status*)`, because a skill's `allowed-tools` string is
+    whitespace-separated. The agent's allow-list also names `Skill` and `Task`, without which the model could not call
+    them.
+  - `BackgroundWorkflowCeilingE2EIntegrationTest` is in `tools.workflow` and drives the real `LlmSkillExecutor`, the real
+    `WorkflowTool` and a real agent-scoped runner whose base carries the agent's wider list, with a recording subagent
+    manager — not `OrcaAgentExecutor`'s `/probe`. Run against a runner that ignores the submitted list, it fails, which
+    is the "see it fail first" check of README rule 5.
+  - Each guard was mutation-checked the same way: the patterned-`Bash` cases 9–11 fail when the facts read the loop's own
+    list instead of the snapshot's.
+
+### 5.2 PR 1 review leftovers cleared in this PR
+
+- `programmatic-tool-calling.md` §12.1 names the TC-31 exception (the no-`DONE` path can still put a host path in
+  `[logs]`).
+- `ShellRuntimeSweepTest`'s join timings: the output-limit case is bounded by the 2 s join itself (`< 2 s`), and the
+  completion case by `< 4.5 s`, clearly under the 5 s the seam delays the sweep.
+- `ShellRuntimeProgramTest`'s unraisable case now raises inside `json`, so its traceback has stdlib frames; CPython's
+  default hook prints their absolute paths and only the runtime's hook drops them. With the runtime's hook removed, the
+  test fails.
+- `ToolApiRenderer.pythonBindable`'s javadoc says the rule is ASCII-only where `str.isidentifier()` is not, and that the
+  difference fails safe.
+- The CHANGELOG's runtime bullet says a program without top-level `await` no longer runs inside a loop.
+- This document's header now lists every section of `programmatic-tool-calling-shell.md` PR 1 changed.
+- The over-wide line in `programmatic-tool-calling-shell.md` §8 is left to PR 3.

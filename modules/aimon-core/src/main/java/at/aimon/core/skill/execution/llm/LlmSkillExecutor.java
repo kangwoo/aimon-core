@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.context.ContextEngine;
@@ -20,6 +21,7 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
 import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
@@ -30,6 +32,7 @@ import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
@@ -54,6 +57,8 @@ import at.aimon.core.skill.hook.SkillHookScope;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.subagent.execution.ForkGoalRenderer;
+import at.aimon.core.toolinvocation.InlineSkillNarrowing;
+import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.CallerProgrammatic;
@@ -61,6 +66,11 @@ import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.code.CodeOfferKeys;
+import at.aimon.core.tools.code.CodeSpanAttributes;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Spans;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * LLM-based implementation of {@link SkillExecutor}.
@@ -212,6 +222,9 @@ public class LlmSkillExecutor implements SkillExecutor {
 
         final Skill skill = context.getSkill();
         final String rawArguments = request.getRawArguments();
+        // The loop's ITERATION spans, under the COMMAND span the caller's metadata names; the OFF instance when the
+        // caller is not traced, so tracing off opens and allocates nothing (TC-23).
+        SkillIterationTrace trace = SkillIterationTrace.OFF;
 
         try {
             final String renderedBody = renderer.render(skill, rawArguments, request.getRenderContext());
@@ -232,10 +245,9 @@ public class LlmSkillExecutor implements SkillExecutor {
             }
             final List<AllowedTool> allowedTools = bounded.get();
             final ProgrammaticToolSettings programmatic = effectiveProgrammatic(skill, context);
-            final String systemPrompt = systemPromptBuilder.build(allowedTools);
 
             final TranscriptBuffer transcriptBuffer = new TranscriptBuffer(
-                    scratchTranscriptLabel(context.getExecutionId()), systemPrompt);
+                    scratchTranscriptLabel(context.getExecutionId()), systemPromptBuilder.build(allowedTools));
             transcriptBuffer.addUserMessage(renderedBody);
 
             // The gates of whoever invoked the skill, narrowed to the skill's registry and allow-list, so a skill can
@@ -250,11 +262,16 @@ public class LlmSkillExecutor implements SkillExecutor {
                     allowedTools, programmatic);
             final ToolCallOrigin origin = ToolCallOrigin.skill(skill.getName());
 
-            // The skill's tools are fixed for the execution, so one offer context serves every iteration: the offer is
-            // made from it and each iteration's tool context binds it, so the ceiling's refusal and the approval gate
-            // judge the descriptors offered (programmatic-tool-calling design decision 9).
-            final ToolOfferContext offerContext = offerContextOf(allowedTools, programmatic, skill, context);
-            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context, offerContext);
+            // The skill's own ceiling, which a model-invoked inline skill the loop activates narrows for the rest of
+            // this execution (programmatic-tool-calling design §7.2). Put afresh into every call's context by
+            // dispatch, never copied from the caller's.
+            final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(allowedTools, programmatic);
+            final InlineSkillNarrowing narrowing = new InlineSkillNarrowing(toolDispatcher, context.getToolRegistry());
+            // The offer, the system prompt and the dispatcher are fixed until the ceiling is narrowed, so one offer
+            // context serves every iteration of a version: the offer is made from it and each iteration's tool context
+            // binds it, so the ceiling's refusal and the approval gate judge the descriptors offered
+            // (programmatic-tool-calling design decision 9).
+            SkillOffer offer = offerFor(ceiling.snapshot(), narrowing, allowedTools, programmatic, skill, context);
 
             // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
             // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
@@ -269,8 +286,10 @@ public class LlmSkillExecutor implements SkillExecutor {
             if (quotaStopBeforeFirstCall.isPresent()) {
                 return quotaStopBeforeFirstCall.get();
             }
-            LlmResponse currentResponse = sendAndCharge(systemPrompt, contextRequest, filteredTools, context,
-                    quotaGuard);
+            trace = SkillIterationTrace.of(context.getToolContext(), skill);
+            trace.next(0, offer.offerContext);
+            LlmResponse currentResponse = sendAndCharge(transcriptBuffer.getSystemPrompt(), contextRequest, offer.tools,
+                    context, quotaGuard, trace.llmCarrier());
             accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
 
             int iterationCount = 0;
@@ -282,6 +301,7 @@ public class LlmSkillExecutor implements SkillExecutor {
                 if (iterationCount >= maxIterations) {
                     final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
                     final String errorMsg = "Max tools execution iterations (" + maxIterations + ") exceeded";
+                    trace.error(errorMsg);
                     return SkillExecutionResult.failure(errorMsg, new IllegalStateException(errorMsg), metadata);
                 }
 
@@ -299,14 +319,15 @@ public class LlmSkillExecutor implements SkillExecutor {
                 // and environment. SkillExecutionContext guarantees a non-null ToolContext (defaults to empty).
                 final List<ToolUseResult> toolResults = truncated
                         ? refuseTruncatedToolUses(skill, currentResponse, iterationCount)
-                        : dispatch(toolDispatcher, origin, offerContext, context.getToolContext(),
-                                currentResponse.getToolUses(), iterationCount);
+                        : dispatch(offer.dispatcher, origin, offer.offerContext, ceiling, trace,
+                                context.getToolContext(), currentResponse.getToolUses(), iterationCount);
 
                 final Message toolResultMessage = Message.toolUseResults(toolResults);
                 transcriptBuffer.addMessage(toolResultMessage);
 
                 // Before the next call, so a stalled skill spends no further request on the streak.
                 if (stalledIterationGuard.recordToolIteration(toolResults, truncated)) {
+                    trace.error(stalledIterationGuard.stopMessage());
                     return stalledFailure(skill, stalledIterationGuard, iterationCount + 1, accumulatedTokens,
                             startTime);
                 }
@@ -314,44 +335,66 @@ public class LlmSkillExecutor implements SkillExecutor {
                 final Optional<SkillExecutionResult> quotaStopBeforeNextCall = quotaStop(skill, quotaGuard,
                         iterationCount + 1, accumulatedTokens, startTime);
                 if (quotaStopBeforeNextCall.isPresent()) {
+                    trace.error(quotaStopBeforeNextCall.get().getResponse());
                     return quotaStopBeforeNextCall.get();
                 }
-                currentResponse = sendAndCharge(transcriptBuffer.getSystemPrompt(), contextRequest, filteredTools,
-                        context, quotaGuard);
-                accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
+                // An inline skill this iteration activated narrows the rest of the execution: the next call is offered,
+                // prompted and dispatched from the narrowed ceiling (the timing rule of §7.2).
+                final InlineSkillCeiling.Snapshot snapshot = ceiling.snapshot();
+                if (snapshot.getVersion() != offer.version) {
+                    offer = offerFor(snapshot, narrowing, allowedTools, programmatic, skill, context);
+                    transcriptBuffer.setSystemPrompt(systemPromptBuilder.build(offer.allowedTools));
+                }
                 iterationCount++;
+                trace.next(iterationCount, offer.offerContext);
+                currentResponse = sendAndCharge(transcriptBuffer.getSystemPrompt(), contextRequest, offer.tools,
+                        context, quotaGuard, trace.llmCarrier());
+                accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
             }
 
-            // A final answer cut off at max_tokens is not a clean one. Keep the partial text — a failure's response
-            // would be an error message instead — mark it with the marker the executors put on a TRUNCATED answer, and
-            // say so on the result (isTruncated) so a caller does not have to read the marker out of the text.
-            if (TruncatedResponses.isTruncated(currentResponse)) {
-                final String flaggedAnswer = currentResponse.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
-                log.warn(
-                        "Skill '{}' final answer truncated at max_tokens after {} tool iterations; returning flagged "
-                                + "partial answer{}",
-                        skill.getName(), iterationCount,
-                        TruncatedResponses.reasoningClause(currentResponse.getTokenUsage()));
-                transcriptBuffer.addMessage(
-                        Message.assistant(flaggedAnswer).withReasoningTraces(currentResponse.getReasoningTraces()));
-                return SkillExecutionResult.truncated(flaggedAnswer,
-                        buildMetadata(iterationCount, accumulatedTokens, startTime));
-            }
-
-            // addAssistantMessage(String) cannot carry traces, and this buffer is discarded at the return below, so
-            // attaching here is inert today. It is done anyway: the rule is that every site building an assistant
-            // message out of an LlmResponse attaches that response's traces, with no per-site judgement about whether
-            // the message will be read back. A rule with an exception is a rule nobody can check with one grep.
-            transcriptBuffer.addMessage(Message.assistant(currentResponse.getTextContent())
-                    .withReasoningTraces(currentResponse.getReasoningTraces()));
-
-            final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
-            return SkillExecutionResult.success(currentResponse.getTextContent(), metadata);
+            return finalAnswer(skill, transcriptBuffer, currentResponse, iterationCount, accumulatedTokens, startTime);
 
         } catch (Exception e) {
+            trace.error(e);
             final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
             return SkillExecutionResult.failure(e, metadata);
+        } finally {
+            // Every exit closes the iteration span still open, whichever iteration it was.
+            trace.close();
         }
+    }
+
+    /**
+     * The result of a loop that ended with a response carrying no tool call: a success, or — when the provider cut the
+     * answer at {@code max_tokens} — a truncated result whose text carries the marker.
+     */
+    private static SkillExecutionResult finalAnswer(Skill skill, TranscriptBuffer transcriptBuffer,
+            LlmResponse currentResponse, int iterationCount, TokenUsage accumulatedTokens, Instant startTime) {
+        // A final answer cut off at max_tokens is not a clean one. Keep the partial text — a failure's response
+        // would be an error message instead — mark it with the marker the executors put on a TRUNCATED answer, and
+        // say so on the result (isTruncated) so a caller does not have to read the marker out of the text.
+        if (TruncatedResponses.isTruncated(currentResponse)) {
+            final String flaggedAnswer = currentResponse.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
+            log.warn(
+                    "Skill '{}' final answer truncated at max_tokens after {} tool iterations; returning flagged "
+                            + "partial answer{}",
+                    skill.getName(), iterationCount,
+                    TruncatedResponses.reasoningClause(currentResponse.getTokenUsage()));
+            transcriptBuffer.addMessage(
+                    Message.assistant(flaggedAnswer).withReasoningTraces(currentResponse.getReasoningTraces()));
+            return SkillExecutionResult.truncated(flaggedAnswer,
+                    buildMetadata(iterationCount, accumulatedTokens, startTime));
+        }
+
+        // addAssistantMessage(String) cannot carry traces, and this buffer is discarded at the return below, so
+        // attaching here is inert today. It is done anyway: the rule is that every site building an assistant
+        // message out of an LlmResponse attaches that response's traces, with no per-site judgement about whether
+        // the message will be read back. A rule with an exception is a rule nobody can check with one grep.
+        transcriptBuffer.addMessage(Message.assistant(currentResponse.getTextContent())
+                .withReasoningTraces(currentResponse.getReasoningTraces()));
+
+        final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
+        return SkillExecutionResult.success(currentResponse.getTextContent(), metadata);
     }
 
     /**
@@ -438,12 +481,19 @@ public class LlmSkillExecutor implements SkillExecutor {
      *            the execution context supplying the model
      * @param quotaGuard
      *            the turn's guard ({@link QuotaGuard#disabled()} when none was bound)
+     * @param metadata
+     *            where the call sits in the span tree — the iteration's span carrier, no attribution — or
+     *            {@link LlmCallMetadata#empty()} when untraced
      * @return the response (never null)
      */
     private LlmResponse sendAndCharge(String systemPrompt, ContextRequest contextRequest, List<ToolDefinition> tools,
-            SkillExecutionContext context, QuotaGuard quotaGuard) {
+            SkillExecutionContext context, QuotaGuard quotaGuard, LlmCallMetadata metadata) {
+        // The metadata overload, so a tracing client nests the LLM span under the iteration. It carries the span
+        // position only (Spans.traceCarrier): the four-argument call this replaced carried no attribution, and the
+        // turn's would change what usage is metered under.
         final LlmResponse response = llmClient.sendMessage(systemPrompt,
-                CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), tools, context.getDefaultModel());
+                CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), tools, context.getDefaultModel(),
+                metadata);
         final String modelName = context.getDefaultModel().getName().orElse(null);
         final Money callCost = costEstimator != CostEstimator.NOOP
                 ? costEstimator.estimate(modelName, response.getTokenUsage())
@@ -527,6 +577,40 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
+     * Builds what one version of the skill's ceiling offers: the allow-list and programmatic settings in force (the
+     * skill's own until a model-invoked inline skill narrows them), the offer context made from them, the definitions
+     * it offers, and the dispatcher held to them. {@code ptc.unavailable_reason} is annotated from this offer context,
+     * so an inline-skill narrowing inside a slash skill shows on the iteration spans that follow it.
+     */
+    private SkillOffer offerFor(InlineSkillCeiling.Snapshot snapshot, InlineSkillNarrowing narrowing,
+            List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic, Skill skill,
+            SkillExecutionContext context) {
+        final List<AllowedTool> effectiveAllowed = InlineSkillNarrowing.factsAllowList(allowedTools, snapshot);
+        final ToolOfferContext offerContext = offerContextOf(effectiveAllowed,
+                InlineSkillNarrowing.programmatic(programmatic, snapshot), skill, context);
+        return new SkillOffer(snapshot.getVersion(), effectiveAllowed, offerContext,
+                offeredTools(skill, effectiveAllowed, context, offerContext), narrowing.dispatcherFor(snapshot));
+    }
+
+    /** One version of the skill loop's offer ({@link #offerFor}); immutable. */
+    private static final class SkillOffer {
+        private final int version;
+        private final List<AllowedTool> allowedTools;
+        private final ToolOfferContext offerContext;
+        private final List<ToolDefinition> tools;
+        private final ToolCallDispatcher dispatcher;
+
+        private SkillOffer(int version, List<AllowedTool> allowedTools, ToolOfferContext offerContext,
+                List<ToolDefinition> tools, ToolCallDispatcher dispatcher) {
+            this.version = version;
+            this.allowedTools = allowedTools;
+            this.offerContext = offerContext;
+            this.tools = tools;
+            this.dispatcher = dispatcher;
+        }
+    }
+
+    /**
      * Builds the skill's offer context: the narrowed registry, the skill's bounded allow-list as the admission filter
      * (by name), and the execution manager's ceiling — the bound its refusal reads.
      *
@@ -562,24 +646,33 @@ public class LlmSkillExecutor implements SkillExecutor {
      * <p>
      * The context each call runs with is built anew from the caller's: the caller's dispatcher is replaced by the
      * narrowed one (a tool that dispatches further — a program, a nested skill — is held to the skill's bounds), the
-     * caller's offer context, if any, by the skill's, and the loop's iteration is published for the Pre/PostTool
-     * contexts.
+     * caller's offer context, if any, by the skill's, and the caller's inline-skill ceiling, if any, by the skill's
+     * own, put afresh so the write-once key can never collide. The loop's iteration is published for the Pre/PostTool
+     * contexts. When the loop is traced, the iteration's metadata replaces the COMMAND span's, and each call runs under
+     * a {@code TOOL} span of its own, so what it starts — a fork, an {@code ExecuteCode} program — nests under it.
      */
+    // Every argument is a distinct value of the running iteration; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private static List<ToolUseResult> dispatch(ToolCallDispatcher dispatcher, ToolCallOrigin origin,
-            ToolOfferContext offerContext, ToolContext callerContext, List<ToolUse> toolUses, int iterationCount) {
+            ToolOfferContext offerContext, InlineSkillCeiling ceiling, SkillIterationTrace trace,
+            ToolContext callerContext, List<ToolUse> toolUses, int iterationCount) {
         final ToolContext.Builder builder = ToolContext.builder();
         callerContext.getContext().forEach((name, value) -> {
             if (!ToolContextKeys.TOOL_CALL_DISPATCHER.name().equals(name)
-                    && !ToolContextKeys.TOOL_OFFER_CONTEXT.name().equals(name)) {
+                    && !ToolContextKeys.TOOL_OFFER_CONTEXT.name().equals(name)
+                    && !ToolContextKeys.INLINE_SKILL_CEILING.name().equals(name)) {
                 builder.put(name, value);
             }
         });
-        final ToolContext skillContext = builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher)
+        builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher)
                 .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext)
-                .put(ToolContextKeys.ITERATION_COUNT, iterationCount).build();
+                .put(ToolContextKeys.INLINE_SKILL_CEILING, ceiling)
+                .put(ToolContextKeys.ITERATION_COUNT, iterationCount);
+        trace.putIterationMetadata(builder);
+        final ToolContext skillContext = builder.build();
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         for (ToolUse toolUse : toolUses) {
-            results.add(ToolDispatchResults.toToolUseResult(dispatcher.dispatch(toolUse, origin, skillContext)));
+            results.add(trace.dispatchTraced(dispatcher, origin, skillContext, toolUse, iterationCount));
         }
         return results;
     }
@@ -704,5 +797,136 @@ public class LlmSkillExecutor implements SkillExecutor {
                         + "(caller allows %s, skill allows %s)", skill.getName(), callerAllowed, declaredTools);
         return SkillExecutionResult.failure(message, new IllegalStateException(message),
                 buildMetadata(0, accumulatedTokens, startTime));
+    }
+
+    /**
+     * The {@code ITERATION} and {@code TOOL} spans of one slash-skill execution (register TC-23), modelled on the
+     * fork's {@code IterationTrace}.
+     *
+     * <p>
+     * Each LLM call of the loop opens an {@code ITERATION} span under the span the caller's
+     * {@link ToolContextKeys#LLM_CALL_METADATA_KEY} names — the COMMAND span on the user-slash path — carrying
+     * {@code iteration}, {@code invokerType=MAIN_AGENT} (a slash skill runs inside the main turn; no new
+     * {@link InvokerType}) and {@code skill=<name>}. The call carries that span's position only, and each tool call of
+     * the iteration opens a {@code TOOL} span under it. Every span operation is fail-safe ({@link Spans}), so a tracer
+     * that throws never fails the skill.
+     *
+     * <p>
+     * {@link #OFF} stands in when the caller is untraced (no tracer, or metadata that names no span): every method is
+     * then a no-op and nothing is allocated. Used by the loop's thread only.
+     */
+    private static final class SkillIterationTrace {
+        /** The untraced instance: opens nothing, allocates nothing. */
+        private static final SkillIterationTrace OFF = new SkillIterationTrace(null, null, null, null);
+
+        private final Tracer tracer;
+        private final LlmCallMetadata parentMetadata;
+        private final TracePayloadPolicy payloadPolicy;
+        private final String skill;
+        /** The open iteration span, or {@code null} before the first or when the parent named none. */
+        private Tracer.Span span;
+        /** The open iteration's metadata, naming {@link #span}; {@code null} with it. */
+        private LlmCallMetadata metadata;
+
+        private SkillIterationTrace(Tracer tracer, LlmCallMetadata parentMetadata, TracePayloadPolicy payloadPolicy,
+                String skill) {
+            this.tracer = tracer;
+            this.parentMetadata = parentMetadata;
+            this.payloadPolicy = payloadPolicy;
+            this.skill = skill;
+        }
+
+        /** Returns the trace of a skill execution under {@code callerContext}, or {@link #OFF} when it is untraced. */
+        private static SkillIterationTrace of(ToolContext callerContext, Skill skill) {
+            final Optional<Tracer> tracer = callerContext.get(ToolContextKeys.TRACER);
+            final Optional<LlmCallMetadata> parent = callerContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY);
+            if (tracer.isEmpty() || parent.isEmpty() || Spans.traceCarrier(parent.get()).isEmpty()) {
+                return OFF;
+            }
+            return new SkillIterationTrace(tracer.get(), parent.get(),
+                    callerContext.get(ToolContextKeys.TRACE_PAYLOAD_POLICY).orElse(TracePayloadPolicy.summaryOnly()),
+                    skill.getName());
+        }
+
+        /**
+         * Closes the open iteration span and opens the next, annotated with why {@code ExecuteCode} was left out of
+         * {@code offerContext}'s offer, if it was.
+         */
+        private void next(int iteration, ToolOfferContext offerContext) {
+            if (tracer == null) {
+                return;
+            }
+            close();
+            span = Spans.startChildOf(tracer, parentMetadata, SpanType.ITERATION, "iteration#" + iteration, null)
+                    .orElse(null);
+            if (span == null) {
+                return;
+            }
+            Spans.setAttributeSafely(span, "iteration", String.valueOf(iteration));
+            Spans.setAttributeSafely(span, "invokerType", InvokerType.MAIN_AGENT.name());
+            Spans.setAttributeSafely(span, "skill", skill);
+            CodeSpanAttributes.annotateIteration(span, offerContext);
+            metadata = Spans.enrichSafely(span, parentMetadata);
+        }
+
+        /** The metadata the iteration's LLM call carries: the span carrier only, or empty when untraced. */
+        private LlmCallMetadata llmCarrier() {
+            return metadata == null
+                    ? LlmCallMetadata.empty()
+                    : Spans.traceCarrier(metadata).orElse(LlmCallMetadata.empty());
+        }
+
+        /** Points the calls' context at the open iteration, so their TOOL spans nest under it, not the COMMAND span. */
+        private void putIterationMetadata(ToolContext.Builder builder) {
+            if (metadata != null) {
+                builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata);
+            }
+        }
+
+        /** Runs one call, under a {@code TOOL} span of its own when the iteration is traced. */
+        private ToolUseResult dispatchTraced(ToolCallDispatcher dispatcher, ToolCallOrigin origin,
+                ToolContext skillContext, ToolUse toolUse, int iterationCount) {
+            final Tracer.Span toolSpan = metadata == null
+                    ? null
+                    : ToolCallTracing.open(tracer, skillContext, toolUse, iterationCount, InvokerType.MAIN_AGENT);
+            if (toolSpan == null) {
+                return ToolDispatchResults.toToolUseResult(dispatcher.dispatch(toolUse, origin, skillContext));
+            }
+            Spans.setAttributeSafely(toolSpan, "skill", skill);
+            final ToolContext callContext = ToolCallTracing.contextUnder(toolSpan, skillContext);
+            try {
+                final ToolUseResult result = ToolDispatchResults
+                        .toToolUseResult(dispatcher.dispatch(toolUse, origin, callContext));
+                ToolCallTracing.recordOutcome(toolSpan, result, payloadPolicy);
+                return result;
+            } catch (RuntimeException | Error e) {
+                ToolCallTracing.recordFailure(toolSpan, e, callContext);
+                throw e;
+            } finally {
+                Spans.closeSafely(toolSpan);
+            }
+        }
+
+        /** Ends the open iteration in error: max-iterations, a stall or a reached quota. */
+        private void error(String message) {
+            if (span != null) {
+                Spans.errorSafely(span, message);
+            }
+        }
+
+        /** Ends the open iteration in error: an exception unwound the loop. */
+        private void error(Throwable failure) {
+            if (span != null) {
+                Spans.errorSafely(span, failure);
+            }
+        }
+
+        private void close() {
+            if (span != null) {
+                Spans.closeSafely(span);
+                span = null;
+                metadata = null;
+            }
+        }
     }
 }

@@ -97,9 +97,12 @@ public final class ToolApiRenderer {
     }
 
     /**
-     * Whether the Python runtime binds {@code name} as a global function: an identifier that is not a keyword, not one
-     * of the runtime's own globals and not a dunder name — the runtime's {@code name.isidentifier() and not
-     * keyword.iskeyword(name) and name not in program_globals}.
+     * Whether the description renders {@code name} as a Python function the program can call directly: an ASCII
+     * identifier that is not a keyword, not one of the runtime's own globals and not a dunder name. This follows the
+     * runtime's {@code name.isidentifier() and not keyword.iskeyword(name) and name not in program_globals}, with one
+     * difference that fails safe: {@code str.isidentifier()} also accepts non-ASCII identifiers, which this rule does
+     * not. Such a tool is rendered in the {@code call_tool("name", args)} form while the runtime still binds it as a
+     * function — the rendered form works either way.
      */
     static boolean pythonBindable(String name) {
         return PY_IDENTIFIER.matcher(name).matches() && !PYTHON_KEYWORDS.contains(name)

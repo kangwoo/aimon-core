@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: a6e0c3db
+source_commit: 05b4e424
 ---
 
 # Built-in Agent/Skill Guide
@@ -162,6 +162,17 @@ The YAML frontmatter at the top of a skill's `SKILL.md` accepts the [Agent Skill
 | `execution.mode` | AIMON | `inline`·`fork` |  | Running inline in the parent agent vs forking a subagent (`inline` by default) |
 | `execution.agent` | AIMON | string | (when fork) | The name of the SubAgent to delegate to when `mode: fork` |
 | `hooks` | AIMON | mapping |  | The `deny`/`shell` actions per `preTool`/`postTool`/`onStart`/`onStop` event (fires in fork mode only) |
+
+`allowed-tools` means the same thing however the skill was invoked. An inline skill the user invokes as `/skill` runs
+its own loop under that list (intersected with the caller's). An inline skill the model invokes through the `Skill` tool
+has no loop, but it narrows the **rest** of the execution that invoked it — the main turn, a fork or a slash skill — to
+the same list. The narrowing applies from the next iteration (other calls in the same response were already chosen, so
+they run as they are) and lasts until that execution ends. Meanwhile the forks and background workflows that execution
+starts are under that ceiling too. A skill whose list shares no tool with the current ceiling is refused with a tool
+error and its instructions are not added. The programmatic tool calling keys (`programmatic-tools` and the rest) are
+narrowed together, so invoking a skill without them takes `ExecuteCode` away for the rest of that execution. The model
+is told in one line of the skill result. The full rule is in
+[programmatic tool calling §7.2](../../design/tool/programmatic-tool-calling.md#72-에이전트-설정).
 
 An example (fork mode):
 

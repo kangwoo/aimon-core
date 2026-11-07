@@ -58,6 +58,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.DispatchOptions;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -109,6 +110,7 @@ import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.internal.DeadlineScheduler;
 import at.aimon.core.toolinvocation.DefaultToolCallDispatcher;
+import at.aimon.core.toolinvocation.InlineSkillNarrowing;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
@@ -688,7 +690,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final ContextView view = applyCompactionGate(lc, iterationCount,
                         budgetDecision == BudgetDecision.SHOULD_COMPACT || lc.contextTargetReached(lastPromptTokens));
                 // TRACE-01: this iteration's LLM call and tool calls nest under its ITERATION span.
-                final IterationTrace trace = IterationTrace.open(lc, iterationCount, offerContextOf(lc));
+                final IterationTrace trace = openIteration(lc, iterationCount);
                 try {
                     // Re-read every iteration so newly activated deferred tools are included; the method says why.
                     final List<ToolDefinition> availableTools = availableToolDefinitions(lc, trace, iterationCount);
@@ -905,7 +907,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 Message.user(SystemReminderFormatter.wrap(GRACE_ROUND_REMINDER_KEY, instruction)), LogOrigin.SYNTHETIC);
         final CancellationSignal cancellationSignal = lc.coordinator.getSignal();
         final ContextView view = applyCompactionGate(lc, graceIteration, false);
-        final IterationTrace trace = IterationTrace.open(lc, graceIteration, offerContextOf(lc));
+        final IterationTrace trace = openIteration(lc, graceIteration);
         final LlmResponse response;
         try {
             try {
@@ -1373,6 +1375,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Its tool-call budget, likewise write-once and before the enrichers: a tool that dispatches calls of its own
         // admits them here, and no enricher can hand it an unlimited one.
         builder.put(ToolContextKeys.TOOL_CALL_QUOTA, toolCalls);
+        // The fork's tool ceiling, starting at its effective scope, which a model-invoked inline skill narrows for the
+        // rest of the fork (programmatic-tool-calling design §7.2). Write-once and before the enrichers.
+        builder.put(ToolContextKeys.INLINE_SKILL_CEILING, InlineSkillCeiling.startingAt(
+                context.getSubagent().getAllowedTools(), context.getSubagent().getMetadata().getProgrammatic()));
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -1487,6 +1493,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Opens one iteration's trace from the fork's inline-skill ceiling as it stands now, read once, so the offer and
+     * the
+     * iteration's dispatcher are built from the same snapshot (TC-26).
+     */
+    private IterationTrace openIteration(LoopContext lc, int iterationCount) {
+        final InlineSkillCeiling.Snapshot ceiling = lc.ceilingSnapshot();
+        return IterationTrace.open(lc, iterationCount, offerContextOf(lc, ceiling), ceiling);
+    }
+
+    /**
      * Builds one iteration's offer context: the fork's registry (re-read, so newly activated deferred tools are in it),
      * its tool scope as the admission filter, and the execution manager's ceiling — the two bounds the refusals read.
      * Bound into the iteration's tool context by {@link IterationTrace#open}, so the ceiling's refusal and the approval
@@ -1496,15 +1512,25 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * The fork's effective programmatic settings and the environment's static facts let {@code ExecuteCode} describe
      * itself for this offer, as the main turn's does. The settings are the definition's opt-in narrowed by the
      * caller's, and the {@code Bash} fact reads the fork's effective (caller-narrowed) allow-list.
+     *
+     * <p>
+     * Once a model-invoked inline skill has narrowed the fork, all three — the admission, the programmatic settings
+     * and the allow-list the {@code Bash} fact reads — come from {@code ceiling} instead, so the offer follows the
+     * skill for the rest of the fork (programmatic-tool-calling design §7.2).
      */
-    private ToolOfferContext offerContextOf(LoopContext lc) {
+    private ToolOfferContext offerContextOf(LoopContext lc, InlineSkillCeiling.Snapshot ceiling) {
         final Subagent subagent = lc.subagent();
-        return CodeOfferKeys.putEnvironmentFacts(
-                ToolOfferContext.builder().registry(lc.sessionRegistry)
-                        .admission(SubagentToolScope.admissionFilter(subagent))
-                        .ceiling(toolExecutionManager.getMaxSideEffectLevel())
-                        .programmatic(subagent.getMetadata().getProgrammatic()).agentName(subagent.getName()),
-                lc.toolContext, subagent.getAllowedTools()).build();
+        return CodeOfferKeys
+                .putEnvironmentFacts(
+                        ToolOfferContext.builder().registry(lc.sessionRegistry)
+                                .admission(InlineSkillNarrowing
+                                        .admission(SubagentToolScope.admissionFilter(subagent), ceiling))
+                                .ceiling(toolExecutionManager.getMaxSideEffectLevel())
+                                .programmatic(InlineSkillNarrowing
+                                        .programmatic(subagent.getMetadata().getProgrammatic(), ceiling))
+                                .agentName(subagent.getName()),
+                        lc.toolContext, InlineSkillNarrowing.factsAllowList(subagent.getAllowedTools(), ceiling))
+                .build();
     }
 
     /**
@@ -2291,20 +2317,23 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.offerContext = offerContext;
         }
 
-        private static IterationTrace open(LoopContext lc, int iterationCount, ToolOfferContext offerContext) {
+        private static IterationTrace open(LoopContext lc, int iterationCount, ToolOfferContext offerContext,
+                InlineSkillCeiling.Snapshot ceiling) {
+            // The fork's own context, or — once an inline skill has narrowed the fork — that context with the
+            // dispatcher narrowed to the skill, so this iteration's calls and the forks they spawn follow it.
+            final ToolContext baseContext = lc.iterationBaseContext(ceiling);
             final Tracer.Span span = Spans.startChildOf(lc.tracer, lc.effectiveMetadata, SpanType.ITERATION,
                     "iteration#" + iterationCount, null).orElse(null);
             if (span == null) {
-                return new IterationTrace(null, lc.effectiveMetadata,
-                        ToolContext.builder().putAll(lc.toolContext.getContext())
-                                .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build(),
+                return new IterationTrace(null, lc.effectiveMetadata, ToolContext.builder()
+                        .putAll(baseContext.getContext()).put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build(),
                         offerContext);
             }
             span.setAttribute("iteration", String.valueOf(iterationCount));
             span.setAttribute("invokerType", InvokerType.SUBAGENT.name());
             span.setAttribute("subagent", lc.subagent().getName());
             final LlmCallMetadata metadata = Spans.enrichSafely(span, lc.effectiveMetadata);
-            final ToolContext.Builder toolContext = ToolContext.builder().putAll(lc.toolContext.getContext())
+            final ToolContext.Builder toolContext = ToolContext.builder().putAll(baseContext.getContext())
                     .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext);
             if (metadata != lc.effectiveMetadata) {
                 // The tracer beside metadata that names this iteration, so a tool that makes calls of its own
@@ -2520,6 +2549,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
          * whenever that tool first shows up (it may be activated later, through tool search).
          */
         private boolean reportToolShadowWarned;
+        /**
+         * Applies the fork's inline-skill ceiling to its dispatcher, created the first time an inline skill narrows the
+         * fork. Written and read only on the loop's thread.
+         */
+        private InlineSkillNarrowing inlineSkillNarrowing;
 
         private LoopContext(Builder b) {
             this.context = b.context;
@@ -2582,6 +2616,31 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
         private Subagent subagent() {
             return context.getSubagent();
+        }
+
+        /** The fork's inline-skill ceiling as it stands now, read once per iteration (TC-26). */
+        private InlineSkillCeiling.Snapshot ceilingSnapshot() {
+            return InlineSkillNarrowing.snapshotOf(toolContext, subagent().getAllowedTools(),
+                    subagent().getMetadata().getProgrammatic());
+        }
+
+        /**
+         * The context an iteration's tool context is built from: the fork's own while the ceiling is untouched,
+         * otherwise that context with its dispatcher narrowed to {@code ceiling} (built once per version). A context
+         * with no dispatcher bound is left as it is; the call is refused when dispatched.
+         */
+        private ToolContext iterationBaseContext(InlineSkillCeiling.Snapshot ceiling) {
+            if (!ceiling.isNarrowed()) {
+                return toolContext;
+            }
+            if (inlineSkillNarrowing == null) {
+                final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
+                if (dispatcher.isEmpty()) {
+                    return toolContext;
+                }
+                inlineSkillNarrowing = new InlineSkillNarrowing(dispatcher.get(), context.getToolRegistry());
+            }
+            return InlineSkillNarrowing.withDispatcher(toolContext, inlineSkillNarrowing.dispatcherFor(ceiling));
         }
 
         private HookRegistry hookRegistry() {

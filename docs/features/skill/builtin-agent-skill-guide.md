@@ -158,6 +158,14 @@ description: "코드 리뷰 가이드"
 | `execution.agent` | AIMON | string | (fork시) | `mode: fork`일 때 위임 대상 SubAgent 이름 |
 | `hooks` | AIMON | mapping |  | `preTool`/`postTool`/`onStart`/`onStop` 이벤트별 `deny`·`shell` 액션 (fork-mode 한정 발화) |
 
+`allowed-tools` 는 스킬이 어떻게 불렸든 같은 뜻이다. 사용자가 `/skill` 로 부른 인라인 스킬은 자기 루프를 그 목록(호출자의 목록과의
+교집합)으로 돌린다. 모델이 `Skill` 도구로 부른 인라인 스킬은 루프가 없지만, 그것을 부른 실행 — 메인 턴, fork, 슬래시 스킬 — 의 **남은
+부분**을 같은 목록으로 좁힌다. 좁히기는 다음 iteration 부터 걸리고(같은 응답의 다른 호출은 이미 고른 것이라 그대로 돈다) 그 실행이
+끝날 때까지 간다. 그동안 그 실행이 띄우는 fork 와 background 워크플로도 그 천장 아래에 있다. 목록이 현재 천장과 하나도 겹치지 않는
+스킬은 도구 오류로 거절되고 지시문이 들어가지 않는다. 프로그래매틱 도구 호출 키(`programmatic-tools` 등)도 같이 좁혀지므로, 키가 없는
+스킬을 부르면 그 실행의 남은 부분에서 `ExecuteCode` 가 빠진다. 모델은 스킬 결과의 한 줄로 이를 듣는다. 규칙 전체는
+[프로그래매틱 도구 호출 §7.2](../../design/tool/programmatic-tool-calling.md#72-에이전트-설정) 에 있다.
+
 예시 (fork-mode):
 
 ```yaml

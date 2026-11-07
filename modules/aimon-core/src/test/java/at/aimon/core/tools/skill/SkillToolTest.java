@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeIds;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
@@ -294,6 +296,91 @@ class SkillToolTest {
 
         // Assert
         assertThat(capturedContext[0].getSkillBaseDir()).isEmpty();
+    }
+
+    @Test
+    void testExecute_InlineSkill_NarrowsABoundCeilingAndTellsTheModel() {
+        // TC-26: an inline activation narrows the execution's ceiling and says so in its result.
+        mockRegistry.addSkill(restrictedSkill("reader", "Read", ProgrammaticToolSettings.none()));
+        final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(List.of(),
+                ProgrammaticToolSettings.builder().tools(List.of("Read")).build());
+        final ToolContext context = ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, ceiling).build();
+
+        final ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "reader")), context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).contains("Instructions:")
+                .contains("For the rest of this turn only these tools are available.")
+                .contains("ExecuteCode is not available for the rest of this turn.");
+        assertThat(ceiling.snapshot().getVersion()).isEqualTo(1);
+        assertThat(ceiling.snapshot().getAllowedTools()).containsExactly(AllowedTool.parse("Read"));
+        assertThat(ceiling.snapshot().getSkills()).containsExactly("reader");
+    }
+
+    @Test
+    void testExecute_InlineSkill_DisjointFromTheCeiling_ErrorAndNoInstructions() {
+        mockRegistry.addSkill(restrictedSkill("writer", "Write", ProgrammaticToolSettings.none()));
+        final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(List.of(AllowedTool.parse("Read")),
+                ProgrammaticToolSettings.none());
+        final ToolContext context = ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, ceiling).build();
+
+        final ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "writer")), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("nothing in common").doesNotContain("Instructions:");
+        assertThat(ceiling.snapshot().getVersion()).isZero();
+    }
+
+    @Test
+    void testExecute_InlineSkill_WithoutACeiling_Unchanged() {
+        mockRegistry.addSkill(restrictedSkill("reader", "Read", ProgrammaticToolSettings.none()));
+
+        final ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "reader")), emptyContext);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).contains("Instructions:").doesNotContain("For the rest of this turn");
+    }
+
+    @Test
+    void testExecute_InlineSkill_ThatNarrowsNothing_AddsNoLine() {
+        mockRegistry.addSkill(restrictedSkill("plain", null, ProgrammaticToolSettings.none()));
+        final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.none());
+
+        final ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "plain")),
+                ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, ceiling).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).doesNotContain("For the rest of this turn")
+                .doesNotContain("ExecuteCode is not available");
+        assertThat(ceiling.snapshot().getVersion()).isZero();
+    }
+
+    @Test
+    void testExecute_AskDecision_InANarrowedTurn_SaysAskAgainInANewTurn() {
+        mockRegistry.addSkill(restrictedSkill("deploy", null, ProgrammaticToolSettings.none()));
+        final SkillTool asking = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(),
+                new NoOpSkillForkExecutor(), new at.aimon.core.skill.hook.NoOpSkillHookActivator(),
+                request -> at.aimon.core.skill.policy.SkillInvocationDecision.ASK);
+        final InlineSkillCeiling narrowed = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.none());
+        narrowed.narrow("a", List.of(AllowedTool.parse("Read"), AllowedTool.parse("Skill")),
+                ProgrammaticToolSettings.none());
+
+        final ToolResult inNarrowedTurn = asking.execute(ToolInput.of(Map.of("skill", "deploy")),
+                ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, narrowed).build());
+        final ToolResult elsewhere = asking.execute(ToolInput.of(Map.of("skill", "deploy")), emptyContext);
+
+        assertThat(inNarrowedTurn.isError()).isTrue();
+        assertThat(inNarrowedTurn.getContent()).contains("ask for it again in a new turn");
+        assertThat(elsewhere.getContent()).contains("no approval channel is available");
+    }
+
+    private static Skill restrictedSkill(String name, String allowedTools, ProgrammaticToolSettings programmatic) {
+        final SkillMetadata.Builder metadata = SkillMetadata.builder().name(name).description(name)
+                .programmatic(programmatic);
+        if (allowedTools != null) {
+            metadata.allowedTools(allowedTools);
+        }
+        return Skill.builder().name(name).metadata(metadata.build()).content(SkillContent.of(name + " body")).build();
     }
 
     @Test

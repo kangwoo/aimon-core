@@ -32,6 +32,9 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.AgentImplPackage;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.base.BasePackage;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -311,13 +314,14 @@ class PackageDependencyArchitectureTest {
         // and the resolve helper, never environment.impl.
         // Usage-quota addition: a background run carries the submitting execution's QuotaGuard onto its per-run
         // launch context (usage-quota §4.3) — the guard value only, never a ledger or a quota impl.
-        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should()
-                .onlyDependOnClassesThat(JavaClass.Predicates
-                        .belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class, Subagent.class,
-                                SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
-                                TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
-                                ExecutionEnvironmentProvider.class, EnvironmentRequest.class,
-                                ExecutionEnvironments.class, QuotaGuard.class)
+        // Background-ceiling addition (TC-25): a background run is narrowed by its submitter's allow-list and
+        // programmatic settings (BackgroundSubmission) — the value types and the intersection helper only.
+        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(
+                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class,
+                        Subagent.class, SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
+                        TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
+                        ExecutionEnvironmentProvider.class, EnvironmentRequest.class, ExecutionEnvironments.class,
+                        QuotaGuard.class, AllowedTool.class, AllowedTools.class, ProgrammaticToolSettings.class)
                         .or(JavaClass.Predicates.resideInAnyPackage(PKG_WORKFLOW, PKG_CORE, PKG_FILESYSTEM_CORE,
                                 PKG_AGENT_INTERRUPT, PKG_LLM_COST, PKG_JAVA, PKG_SLF4J, PKG_JACKSON)));
 

@@ -7,6 +7,45 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: PTC leftovers — slash-skill spans, the background-run and inline-skill ceilings
+
+`docs/design/tool/ptc-leftovers-core.md` (PR 2). **One breaking SPI change** — `WorkflowRunner.runInBackground` —
+listed first; the behaviour changes follow it.
+
+- **Breaking:** `WorkflowRunner.runInBackground(WorkflowScript, RunId, QuotaGuard)` is replaced by
+  `runInBackground(WorkflowScript, RunId, BackgroundSubmission)`. The new value `BackgroundSubmission` (in
+  `at.aimon.core.workflow`) carries what a background run takes from its submitter: the quota guard, as before, and now
+  the submitter's allow-list and programmatic settings. Callers that passed a guard pass
+  `BackgroundSubmission.builder().quotaGuard(guard).build()`; `BackgroundSubmission.none()` takes nothing. The default
+  method still delegates to the two-argument form.
+- **Changed: a background `Workflow` / `WorkflowJs` run is bounded by the loop that started it.** The agent-scoped
+  runner narrows its base launch context by the submission — the allow-list to the intersection, the programmatic
+  settings to the submitter's narrowed by the agent's — before it claims the run. A run started from a slash skill, a
+  fork or a turn an inline skill narrowed can no longer reach tools the agent allows but that loop does not. When the
+  two allow-lists share no tool, the submission is refused (`BackgroundRunRefusedException`, a tool error that says
+  so). The run id now includes a digest of the submitter's ceiling, so the same request from a narrower caller starts
+  its own run instead of joining one in flight under a wider ceiling (backlog TC-25).
+- **Changed (model-visible): an inline skill the model invokes through `Skill` narrows the rest of the execution.** Its
+  `allowed-tools` and programmatic keys now bound the turn, fork or slash skill that invoked it, from the next
+  iteration until that execution ends: the offer, the environment facts (a patterned `Bash` turns the shell engine
+  off) and the dispatcher — so the forks and background runs started afterwards — follow the skill. Calls in the same
+  response as the `Skill` call run as offered. A skill without programmatic keys takes `ExecuteCode` away for the rest
+  of the execution in an agent that has it, as on the slash path. The skill result says what was narrowed ("For the
+  rest of this turn only these tools are available." / "ExecuteCode is not available for the rest of this turn.").
+  A skill whose allow-list shares no tool with the current ceiling is refused without its instructions. A turn an
+  inline skill has narrowed no longer suspends for skill approval; an approval-requiring skill there fails with
+  "… cannot be asked for in a turn an inline skill has narrowed; ask for it again in a new turn." New:
+  `at.aimon.core.agent.tool.InlineSkillCeiling`, write-once `ToolContextKeys.INLINE_SKILL_CEILING`,
+  `at.aimon.core.toolinvocation.InlineSkillNarrowing` (backlog TC-26).
+- **Changed: the slash-skill loop is traced.** `LlmSkillExecutor` opens an `ITERATION` span per LLM call under the
+  COMMAND span (`invokerType=MAIN_AGENT`, `skill=<name>`, `ptc.unavailable_reason`) and a `TOOL` span per call; a
+  skill's `ExecuteCode` nested calls nest under that call's span instead of the COMMAND span. Its LLM calls use the
+  metadata overload carrying the span position only, so usage attribution is unchanged (backlog TC-23).
+- **Decided:** no declaration lets a subagent open programmatic tool calling where its caller has none — the permission
+  is the root agent's `programmatic-tools` (backlog TC-24, closed).
+- **Build only:** `ShellRuntimeSweepTest`'s join timings tolerate a loaded runner, and the unraisable-hook case in
+  `ShellRuntimeProgramTest` fails without the runtime's hook.
+
 ### Changed: PTC leftovers — model-visible error text, the Python runtime's event loop, nested-span payloads
 
 `docs/design/tool/ptc-leftovers-core.md` (PR 1). **One breaking signature change** — `ExecuteCodeLanguageNotice` —
@@ -30,7 +69,9 @@ listed first; the behaviour changes follow it.
   call) no longer show the runtime's frames, the run directory's host path or the interpreter's install path in
   `[logs]`; the program's frames now show their code line (backlog TC-29).
 - **Changed: the Python runtime runs an event loop only for a program with top-level `await`.** A program without
-  top-level `await` runs synchronously, so its own `asyncio.run(main())` works; `asyncio` and `json` are pre-imported.
+  top-level `await` runs synchronously, so its own `asyncio.run(main())` works — and it no longer runs inside a loop, so
+  a top-level `asyncio.get_running_loop()` or `asyncio.create_task(...)` now raises "no running event loop"; `asyncio`
+  and `json` are pre-imported.
   The `ExecuteCode` description (model-visible) now says "Use top-level await (a program without top-level await may run
   its own asyncio.run(main()) instead). asyncio and json are already imported." instead of "never call asyncio.run()".
   A tool named `asyncio`, `json`, `ToolError`, `call_tool`, a Python keyword or a dunder name is rendered as

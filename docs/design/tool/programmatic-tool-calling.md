@@ -5,8 +5,9 @@
 > 공개 API 호환을 깨는 항목이 있다(§5). 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B), `ExecuteCode`·엔진 SPI·GraalJS
 > 엔진·모듈 개명·계약 스위트(조각 C), 셸 엔진의 코어 쪽 절반(조각 D1 — 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope`)이다.
 > 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 그 저장소에 있다(aimon-sandbox#49). §12.2 의 트레이스와
-> §6.2 의 언어 변경 알림은 [기능 마무리 설계](ptc-features-core.md)로 들어왔고, 그 뒤의 비차단 지적과 오류 텍스트는
-> [남은 일 설계](ptc-leftovers-core.md)가 다뤘다. 구현이 본문과 다른 점은 §21.
+> §6.2 의 언어 변경 알림은 [기능 마무리 설계](ptc-features-core.md)로 들어왔고, 그 뒤의 비차단 지적과 오류 텍스트, 슬래시 스킬
+> 루프의 span, 백그라운드 `Workflow` 와 모델이 부른 인라인 스킬의 천장은 [남은 일 설계](ptc-leftovers-core.md)가 다뤘다. 구현이
+> 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -373,6 +374,27 @@ shell-engine-tool-scope: host  # 선택. 애플리케이션 값보다 좁게만 
 더 좁힌다 — 포크 모드에서는 스킬이 곧 포크이기 때문이다. 인라인 스킬은 키를 선언하지 않으면 그 스킬이 띄우는 포크에게 "아무것도
 없음" 이다. 이 비대칭은 의도다(§21 B-DV1).
 
+**모델이 부른 인라인 스킬.** 모델이 `Skill` 로 인라인 스킬을 부르면 스킬 루프는 없고 지시문이 대화에 들어갈 뿐이다. 그래도 그 스킬의
+`allowed-tools` 와 PTC 키는 슬래시 경로에서와 같은 뜻을 갖는다 — 그것을 부른 실행(턴, 포크, 슬래시 스킬)의 **남은 부분**을 좁힌다.
+`SkillTool` 이 실행마다 하나 묶인 `InlineSkillCeiling`(도구 문맥 키 `INLINE_SKILL_CEILING`)을 좁히고, 루프는 다음 iteration 경계에서
+그 스냅샷으로 제안·환경 사실·디스패처를 다시 만든다. 허용 목록은 교집합, PTC 설정은 스킬의 선언을 현재 값으로 좁힌 것이라 키가 없는
+스킬은 `none()` 을 남긴다(슬래시 경로와 같다). 규칙은 넷이다.
+
+- **시점.** 좁히기는 다음 iteration 부터다. `Skill` 호출과 같은 응답에 든 호출은 모델이 스킬을 읽기 전에 골랐으므로 그 응답이
+  제안받은 천장 아래에서 돈다(결정 13 의 동결). 병렬 디스패치에서도 결정적이다.
+- **범위.** 실행이 끝날 때까지다. 한 실행 안의 인라인 스킬 여럿은 누적해 교집합을 만들고 넓히지 않는다. 다음 턴은 에이전트의 값에서
+  시작한다.
+- **환경 사실.** 스냅샷의 허용 목록으로 다시 계산한다. 그래서 `Bash` 를 패턴으로 좁힌 스킬 뒤에는 셸 엔진이 꺼진다 — 셸 엔진의
+  프로그램은 제한 없는 `python3` 프로세스라, 그대로 두면 스킬의 `Bash(git:*)` 를 우회한다.
+- **거절과 승인.** 허용 목록이 현재 천장과 겹치지 않는 스킬은 지시문을 넣지 않고 도구 오류로 거절한다. 인라인 스킬이 좁힌 턴은 승인을
+  기다리며 멈추지(SK-11.4) 않는다 — 멈춘 실행을 이어 가는 다음 실행은 에이전트의 천장에서 시작하기 때문이다. 그 턴의 승인 필요
+  스킬은 `SkillTool` 에서 "새 턴에서 다시 요청하라" 는 오류로 닫힌다.
+
+**백그라운드 `Workflow`.** 에이전트 단위 실행기에서 도는 백그라운드 실행도 그것을 띄운 루프의 천장을 넘지 못한다. 제출이 호출자의
+허용 목록과 PTC 설정(`BackgroundSubmission`)을 싣고, 실행기가 자기 기본 런치 문맥을 그것으로 좁힌다. 둘이 겹치지 않으면 실행을
+점유하기 전에 거절한다. 실행 id 에는 천장의 다이제스트가 들어가, 같은 요청이라도 더 좁은 호출자가 더 넓은 천장의 실행에 합류하지
+못한다.
+
 ### 7.3 호출 가능 집합
 
 다음 순서로 계산한다.
@@ -539,7 +561,8 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 줄, 캐럿" 순이면 — 마지막 줄 대신 첫 줄(메시지 줄)을 싣고, 그 아래에 소스 줄과 캐럿을 두 칸 들여 캐럿이 가리키는 열을 지킨 채 붙인다.
 소스 줄이 200 자를 넘으면(압축된 코드) 메시지 줄만 싣는다. 규칙은 코어에 있고 엔진을 가리지 않는다. Python 런타임은 잡히지 않은 예외를
 프로그램 자신의 프레임만으로 로그에 남기므로([셸 엔진](programmatic-tool-calling-shell.md) §6), `[logs]` 에 런타임 프레임이나 호스트
-경로가 실리지 않는다. `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
+경로가 실리지 않는다. 예외는 런타임이 `DONE` 을 보내기 전에 죽은 경우다 — 그때는 셸의 stderr 꼬리가 `[logs]` 가 되어, 출력기를 설치하기
+전에 난 traceback 의 호스트 경로가 실릴 수 있다([TC-31](../../backlog/tool-contract-open-items.md)). `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
 `notRetryable` 이다.
 
 `TIMED_OUT` · `LIMIT_EXCEEDED` 의 메시지는 멈추기 전까지 프로그램이 쓴 표준 출력도 `[output before the stop]` 아래에 싣는다 —
@@ -552,7 +575,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 
 | 대상 | 무엇이 남는가 |
 |---|---|
-| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` |
+| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason`. 슬래시 스킬 루프도 COMMAND span 아래에 LLM 호출마다 ITERATION span(`invokerType=MAIN_AGENT`, `skill=<이름>`)과 호출마다 TOOL span 을 남기므로, 그 스킬의 `ExecuteCode` 중첩 호출은 그 호출의 TOOL span 아래에 붙는다 |
 | 훅 | 중첩 호출마다 PreTool/PostTool (경로 포함) |
 | UI | `ExecuteCode` 결과의 `renderPayload` 에 코드와 중첩 호출 목록(이름, 입력 요약, 결과 길이, 오류 여부). LLM 으로 직렬화되지 않는다 |
 | 트랜스크립트 | `ExecuteCode` 의 tool_use(코드 포함)와 §12.1 의 관찰 |
@@ -800,7 +823,7 @@ PTC 기능 마무리 PR 1([설계 기록](ptc-features-core.md) — 트레이스
 | 본문 | 구현 | 이유 |
 |---|---|---|
 | `unrestricted` 이면 `ptc.tool_scope`(셸 엔진 §12.2) | **A-DV1.** 범위에 묶인 엔진의 실행마다 실효 값을 싣는다 | 상위 집합이다. `environment`·`host` 로 좁힌 실행도 trace 에서 보인다 |
-| iteration span 의 `ptc.unavailable_reason`(§12.2) | **A-DV2.** 메인 루프만. 슬래시 스킬 루프에는 ITERATION·TOOL span 이 없어 그 속성도 없다 — 그 스킬의 `ExecuteCode` 가 낸 중첩 호출은 COMMAND span 아래에 붙는다. 포크 루프는 PR 2 에서 갖췄다(포크의 iteration span 에도 같은 속성) | 스킬 루프에 트레이서를 들이는 것은 이 변경의 범위 밖이다 — [TC-23](../../backlog/tool-contract-open-items.md) |
+| iteration span 의 `ptc.unavailable_reason`(§12.2) | **A-DV2.** 메인 루프만. 포크 루프는 PR 2 에서 갖췄다(포크의 iteration span 에도 같은 속성). 슬래시 스킬 루프는 남은 일 PR 2 에서 ITERATION·TOOL span 을 얻어 같은 속성을 싣고, 그 스킬의 `ExecuteCode` 중첩 호출은 COMMAND span 이 아니라 그 호출의 TOOL span 아래에 붙는다 — 아래 남은 일 PR 2 표 | 당시 스킬 루프에 트레이서를 들이는 것은 범위 밖이었다 — [TC-23](../../backlog/tool-contract-open-items.md), 닫힘 |
 | §12.1 의 요약 줄 `[ExecuteCode: …]` | **A-DV3.** `[ExecuteCode (Python): …]` — 언어를 싣는다 | §6.2 의 알림이 읽는 영속 표지다 |
 | "같은 세션의 직전 언어"(§6.2) | **A-DV4.** 세션 필드 없이 view 의 가장 새로운 읽을 수 있는 표지에서 읽는다. 읽을 수 없는 프로그램만 보이면 보수적 알림을 한 번. 첫 도구 결과에 싣고, 도구 호출이 없는 iteration 은 미룬다 | `SessionRecord` 필드는 코덱과 세 백엔드에 걸친 스키마 변경이고, `LiveSession` 필드는 노드 이동에서 사라진다. 대화가 이미 그 사실을 증명한다 |
 | 중첩 호출마다 TOOL span(§12.2) | **A-DV5.** 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 span(`ptc.refused`) | trace 가 `renderPayload` 와 같은 호출을 나열한다 |
@@ -811,7 +834,7 @@ PTC 기능 마무리 PR 2([설계 기록](ptc-features-core.md) Part B — 포�
 
 | 본문 | 구현 | 이유 |
 |---|---|---|
-| (본문 없음) 서브에이전트·스킬이 PTC 를 쓰는가, 부모 설정을 물려주는가 | **B-DV1.** 자기 정의가 opt-in 하고 호출자의 실효 설정이 허용할 때만: 실효 = 자기 `.narrowedBy(호출자)`(§7.2 의 표). PTC 없는 호출자는 "아무것도 없음"(닫힌 쪽). "호출자" 에는 슬래시 스킬도 든다 — 스킬 안에서 띄운 포크는 스킬의 실효 설정으로 좁혀지고, 그 값은 `ToolCallDispatcher.narrow(registry, allowedTools, programmatic)` 이 실어 나른다(호환을 깨는 SPI 변경, [단일 입구](tool-call-dispatcher.md) §6). 포크 모드 스킬은 대상 서브에이전트의 선언을 쓰고 스킬이 키를 선언했을 때만 더 좁히지만, 인라인 스킬은 키가 없으면 그 스킬이 띄우는 포크에게 "아무것도 없음" 이다. 예외 둘: 백그라운드 `Workflow` 실행은 런타임의 기본 런처(에이전트의 설정)로 돌아 그것을 띄운 스킬·포크가 아니라 에이전트로 좁혀진다 — 허용 목록의 기존 동작과 같다. 모델이 부른 `Skill` 이 인라인 스킬이면 스킬 루프가 없고 지시문이 메인 턴에 주입될 뿐이라, 그 턴에서 띄운 포크의 천장은 에이전트다 | 본문이 정하지 않았고 TASK 가 "에이전트는 좁히기만" 과 맞는 가장 좁은 규칙을 요구했다. 그대로 물려주면 정의가 opt-in 하지 않은 도구가 생기고, 자기 정의만 보면 PTC 를 켜지 않은 운영자 아래에서 코드가 돈다. 스킬 루프가 호출마다 에이전트의 설정을 실어 보내면 PTC 없는 스킬이 포크에게 에이전트의 PTC 를 준다 — 그래서 값은 디스패처에 있고 좁히기가 그것을 나른다 |
+| (본문 없음) 서브에이전트·스킬이 PTC 를 쓰는가, 부모 설정을 물려주는가 | **B-DV1.** 자기 정의가 opt-in 하고 호출자의 실효 설정이 허용할 때만: 실효 = 자기 `.narrowedBy(호출자)`(§7.2 의 표). PTC 없는 호출자는 "아무것도 없음"(닫힌 쪽). "호출자" 에는 슬래시 스킬도 든다 — 스킬 안에서 띄운 포크는 스킬의 실효 설정으로 좁혀지고, 그 값은 `ToolCallDispatcher.narrow(registry, allowedTools, programmatic)` 이 실어 나른다(호환을 깨는 SPI 변경, [단일 입구](tool-call-dispatcher.md) §6). 포크 모드 스킬은 대상 서브에이전트의 선언을 쓰고 스킬이 키를 선언했을 때만 더 좁히지만, 인라인 스킬은 키가 없으면 그 스킬이 띄우는 포크에게 "아무것도 없음" 이다. 이 PR 이 둔 예외 둘 — 백그라운드 `Workflow` 실행은 에이전트로만 좁혀졌고, 모델이 부른 인라인 스킬은 그 턴을 좁히지 않았다 — 은 남은 일 PR 2 에서 없앴다(아래 그 표, [TC-25](../../backlog/tool-contract-open-items.md)·[TC-26](../../backlog/tool-contract-open-items.md)) | 본문이 정하지 않았고 TASK 가 "에이전트는 좁히기만" 과 맞는 가장 좁은 규칙을 요구했다. 그대로 물려주면 정의가 opt-in 하지 않은 도구가 생기고, 자기 정의만 보면 PTC 를 켜지 않은 운영자 아래에서 코드가 돈다. 스킬 루프가 호출마다 에이전트의 설정을 실어 보내면 PTC 없는 스킬이 포크에게 에이전트의 PTC 를 준다 — 그래서 값은 디스패처에 있고 좁히기가 그것을 나른다 |
 | CLI 셸 엔진(조각 D1 편차 "CLI 는 셸 엔진을 조립하지 않고") | **B-DV2.** `programmatic.enablePython`(기본 꺼짐) 뒤에 조립하고 `programmatic.shellEngineToolScope` 를 둔다. 엔진은 CLI 소유로, 스택 종료(`SCRIPT_ENGINES`)와 스택 생성 실패 경로 모두에서 닫힌다. 한도·범위는 조립된 엔진 전체에 적용된다 | 스택처럼 늘 켜면 로컬에서 돌 수 없는 엔진에 응답 스레드가 생긴다. CLI 의 `enableJs` 와 같은 opt-in. 조립해 두면 `programmatic-engine: python` 인 에이전트가 "엔진이 없다" 대신 "여기서는 돌 수 없다" 는 정확한 이유를 받고, 샌드박스 환경이 생겨도 조립을 다시 바꿀 필요가 없다 |
 | 실제 모델 E2E 를 `:aimon-core:llmTest` 로(TASK) | **B-DV3.** `:aimon-cli:llmTest`. 태그 없는 클래스에 `@EnabledIfSystemProperty(aimon.llmTest)` 를 달고 그 속성은 이 태스크만 넣는다 — `test`·`checkAll`·CI·릴리스 게이트 밖 | 코어 테스트 클래스패스는 LLM 클라이언트를 보지 못한다. 태그를 쓰면 `ReleaseGateMatchesCiGateTest` 가 게이트 태스크를 요구하는데, CI 에서 도는 것이 바로 피해야 할 일이다 |
 | `renderPayload` 의 키(§12.1) | `stdout`(관찰이 자르기 전의 표준 출력)과, 있으면 `returnValue` 를 더했다 | E2E 가 "프로그램이 출력한 것만 돌아왔다" 를 기계적으로 확인한다. 모델에게는 보내지 않는다 |
@@ -825,4 +848,14 @@ PTC 남은 일 PR 1([설계 기록](ptc-leftovers-core.md) — 모델이 보는 
 | 중첩 호출 TOOL span 의 출력은 요약만(§12.2, 기능 마무리 PR 1) | 도구 문맥 키 `TRACE_PAYLOAD_POLICY` 를 `TRACER` 가 묶이는 모든 자리(메인 루프, 슬래시 명령, 포크, 루틴)에 실행기의 정책으로 묶고, 브리지가 그것으로 결과를 기록한다. 키가 없으면 요약만이다([TC-22](../../backlog/tool-contract-open-items.md)) | 내용 기록을 켠 운영자는 같은 도구의 결과를 직접 경로에서 이미 trace 에 받는다. 중첩 결과는 같은 도구의 결과이고 상한은 같은 `truncate` 다. 중첩 전용 정책은 요청한 이 없는 두 번째 설정이다 |
 | 스크립트 오류는 메시지의 마지막 줄(§12.1) | 마지막 줄이 캐럿이면 메시지 줄과, 정렬을 지킨 소스·캐럿 발췌(§12.1)([TC-28](../../backlog/tool-contract-open-items.md)) | GraalJS 구문 오류가 모델에게 `ExecuteCode script error:  ^` 로만 갔다. 엔진의 메시지는 이미 맞았고 코어가 고른 줄이 틀렸다 |
 | `[logs]` 는 프로그램의 stderr 꼬리(§12.1) | Python 런타임이 잡히지 않은 예외를 프로그램 자신의 프레임만으로 찍는다 — 메인 스레드, 스레드, `asyncio` 로거, unraisable, 경고([셸 엔진](programmatic-tool-calling-shell.md) §6)([TC-29](../../backlog/tool-contract-open-items.md)) | traceback 이 런타임 프레임과 실행 디렉터리·인터프리터의 호스트 경로를 모델에게 실었다. 호스트 쪽 경로 지우기는 기각 — `[logs]` 는 임의의 프로그램 출력이라 정규식이 데이터와 런타임 프레임을 가르지 못한다 |
+
+PTC 남은 일 PR 2([설계 기록](ptc-leftovers-core.md) — 슬래시 스킬 루프의 span, 백그라운드 실행과 인라인 스킬의 천장, TC-24 결정)가
+위의 표와 본문을 바꾼 점:
+
+| 본문·위의 표 | 구현 | 이유 |
+|---|---|---|
+| 슬래시 스킬 루프에는 span 이 없다(A-DV2) | 루프가 LLM 호출마다 COMMAND span 아래에 ITERATION span(`iteration`, `invokerType=MAIN_AGENT`, `skill`, `ptc.unavailable_reason`), 호출마다 TOOL span(`tool.path=direct`, `skill`)을 연다. LLM 호출은 span 위치만 싣는 메타데이터로 보내 사용량 귀속이 바뀌지 않는다([TC-23](../../backlog/tool-contract-open-items.md)) | `InvokerType` 에 새 값을 더하면 사용량·트레이스 소비자의 모든 분기와 저장된 귀속에 번진다. 슬래시 스킬은 실제로 메인 턴 안에서 돈다 — 구분은 `skill` 속성이 한다 |
+| 백그라운드 `Workflow` 는 에이전트로만 좁혀진다(B-DV1 의 예외) | `WorkflowRunner.runInBackground(script, runId, BackgroundSubmission)` 이 호출자의 쿼터 가드·허용 목록·PTC 설정을 싣고, 실행기가 점유 전에 기본 런치 문맥을 그것으로 좁힌다. 겹치지 않으면 `BackgroundRunRefusedException`. 실행 id 에 천장 다이제스트(§7.2)([TC-25](../../backlog/tool-contract-open-items.md)) | 실행은 호출보다 오래 살아야 하고 풀과 재개 캐시는 에이전트 단위다 — 호출마다 실행기를 만드는 대신 값을 싣는다. 점유 뒤에 던지면 같은 id 의 제출이 모두 "이 노드에 없다" 로 실패한다 |
+| 모델이 부른 인라인 스킬은 천장을 바꾸지 않는다(B-DV1 의 예외) | 실행 단위 `InlineSkillCeiling` 을 `SkillTool` 이 좁히고 세 루프가 다음 iteration 에 적용한다. 좁혀진 턴은 승인 대기로 멈추지 않는다(§7.2)([TC-26](../../backlog/tool-contract-open-items.md)) | 한 스킬은 어느 경로로 불려도 같은 뜻이어야 한다. 디스패치 시점에 살아 있는 천장으로 거르면 같은 병렬 묶음이 좁히기와 경주하고, 모델이 본 제안과 거절이 어긋난다 |
+| (결정) 호출자에게 PTC 가 없을 때 서브에이전트가 스스로 PTC 를 여는 선언 | 두지 않는다([TC-24](../../backlog/tool-contract-open-items.md), 결정 "아니오") | 모든 천장은 "에이전트는 좁히기만" 위에 서 있다. 그 권한은 이미 루트의 `programmatic-tools` 로 있고, 사용자 계층의 정의 파일이 코드 경로의 데이터 범위를 여는 길이 된다 |
 | Python 설명 지침 "최상위 `await`, `asyncio.run()` 금지"(위의 PR 2 표) | 런타임이 최상위 `await` 를 쓴 프로그램에만 이벤트 루프를 띄우고 `asyncio`·`json` 을 미리 import 한다. 지침은 "최상위 `await` 를 쓰라(없는 프로그램은 스스로 `asyncio.run(main())` 을 불러도 된다), `asyncio` 와 `json` 은 이미 import 되어 있다" 로 바뀌었다(§6.3) | 문구만으로는 `gpt-4o-mini` 가 프로그램 열하나 중 다섯에서 `asyncio.run` 이나 import 없는 `asyncio` 로 실패했다. 두 관용구를 다 받아들이면 실패 유형 자체가 사라진다. 바꾼 뒤 실제 모델 E2E 에서 `gpt-4o`·`gpt-4o-mini` 의 Python 이 각각 프로그램 하나로 통과했다 |

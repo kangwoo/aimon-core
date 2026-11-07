@@ -1,7 +1,5 @@
 package at.aimon.core.workflow;
 
-import at.aimon.core.agent.quota.QuotaGuard;
-
 /**
  * Runs {@link WorkflowScript}s, foreground or in the background.
  *
@@ -93,30 +91,39 @@ public interface WorkflowRunner extends AutoCloseable, WorkflowRunController {
     <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId);
 
     /**
-     * {@link #runInBackground(WorkflowScript, RunId)}, with the run's subagents charged to the submitting execution's
-     * usage quota.
+     * {@link #runInBackground(WorkflowScript, RunId)}, with what the run takes from the call that submitted it: the
+     * submitting execution's usage quota and its tool ceiling.
      *
      * <p>
-     * The one thing a background run <em>does</em> take from the call that submitted it. Everything else stays the
-     * base launch context's, as above; but a run that also left the quota behind would be a way around it — a user
-     * whose session is out of quota could start the same work in the background and have it run unmetered.
+     * Everything else stays the base launch context's, as above. But a run that left the quota behind would be a way
+     * around it — a user whose session is out of quota could start the same work in the background and have it run
+     * unmetered — and a run that left the ceiling behind would let a skill or a fork escape its own: the base launch
+     * context carries the agent's allow-list and programmatic settings, not the submitter's (register TC-25). The
+     * runner therefore narrows its base by the submission: the allow-list becomes the intersection of the two, the
+     * programmatic settings the submitter's narrowed by the base's. When the two allow-lists share no tool the
+     * submission is refused with {@link at.aimon.core.workflow.exception.BackgroundRunRefusedException}, before any run
+     * is claimed.
      *
      * <p>
-     * The default ignores {@code quotaGuard} and delegates, which is right only for a runner that starts no subagent.
+     * The default ignores {@code submission} and delegates, which is right only for a runner that starts no subagent.
      * {@code DefaultWorkflowRunner} overrides it. Joining a run already in flight under {@code runId} keeps that run's
-     * guard.
+     * guard and ceiling; a caller that must not join a run started under another ceiling puts
+     * {@link BackgroundSubmission#ceilingDigest()} into {@code runId}, as {@code Workflow} and {@code WorkflowJs} do.
      *
      * @param script
      *            the script to run (must not be null)
      * @param runId
      *            the run identifier (must not be null)
-     * @param quotaGuard
-     *            the submitting execution's guard, or {@code null} for the base launch context's
+     * @param submission
+     *            what the run takes from its submitter (must not be null; {@link BackgroundSubmission#none()} for
+     *            nothing)
      * @param <T>
      *            the script's result type
      * @return a handle to the background run
+     * @throws at.aimon.core.workflow.exception.BackgroundRunRefusedException
+     *             if the submitter's allow-list and the base's share no tool
      */
-    default <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+    default <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, BackgroundSubmission submission) {
         return runInBackground(script, runId);
     }
 

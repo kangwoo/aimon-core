@@ -92,6 +92,7 @@ import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.stream.ToolResultReady;
 import at.aimon.core.agent.stream.ToolUseStarted;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -163,6 +164,7 @@ import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.toolinvocation.DefaultToolCallDispatcher;
+import at.aimon.core.toolinvocation.InlineSkillNarrowing;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
@@ -176,6 +178,7 @@ import at.aimon.core.tools.code.ExecuteCodeLanguageNotice;
 import at.aimon.core.tools.code.ExecuteCodeTool;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
+import at.aimon.core.tools.skill.SkillTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
@@ -958,6 +961,11 @@ public class OrcaAgentExecutor
         // The gates every tool call of this turn passes. Write-once and before the enrichers, so no enricher can
         // swap them out.
         builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, toolCallDispatcher);
+        // The turn's tool ceiling, which a model-invoked inline skill narrows for the rest of the turn; the loop
+        // applies it from the next iteration (programmatic-tool-calling design §7.2). Write-once and before the
+        // enrichers, like the dispatcher it narrows.
+        builder.put(ToolContextKeys.INLINE_SKILL_CEILING, InlineSkillCeiling
+                .startingAt(scope.getAgent().getAllowedTools(), scope.getAgent().getMetadata().getProgrammatic()));
 
         applyEnrichers(builder, scope);
 
@@ -1711,6 +1719,10 @@ public class OrcaAgentExecutor
         final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
                 messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
                 transcriptManager.getLogReader().orElse(null), toolCallDispatcher);
+        // Applies the turn's inline-skill ceiling at each iteration boundary: the turn's dispatcher until a
+        // model-invoked inline skill narrows it, then that dispatcher narrowed to the skill (TC-26).
+        final InlineSkillNarrowing inlineSkillNarrowing = new InlineSkillNarrowing(toolCallDispatcher,
+                scope.agentRuntime.getToolRegistry());
         // Entries addressed to this session that arrived while it was idle are read by the first LLM call, not left for
         // the first tool-using iteration's tail (see injectSessionQueuedMessages).
         injectSessionQueuedMessages(scope);
@@ -1866,12 +1878,22 @@ public class OrcaAgentExecutor
                     // (programmatic-tool-calling design decision 9).
                     // The agent's programmatic settings and the environment's static facts let ExecuteCode
                     // describe itself for this offer (programmatic-tool-calling design §6.2, §7.3).
-                    final ToolOfferContext offerContext = CodeOfferKeys.putEnvironmentFacts(
-                            ToolOfferContext.builder().registry(sessionRegistry).admission(agentAdmits)
-                                    .ceiling(maxSideEffectLevel)
-                                    .programmatic(scope.getAgent().getMetadata().getProgrammatic())
-                                    .agentName(scope.getAgent().getName()),
-                            toolContext, scope.getAgent().getAllowedTools()).build();
+                    // Once a model-invoked inline skill has narrowed the turn, the offer, the environment facts and
+                    // the dispatcher of this iteration are all built from the ceiling read here, so what is offered
+                    // and what is run cannot disagree (programmatic-tool-calling design §7.2).
+                    final InlineSkillCeiling.Snapshot ceilingSnapshot = InlineSkillNarrowing.snapshotOf(toolContext,
+                            scope.getAgent().getAllowedTools(), scope.getAgent().getMetadata().getProgrammatic());
+                    final ToolOfferContext offerContext = CodeOfferKeys
+                            .putEnvironmentFacts(
+                                    ToolOfferContext.builder().registry(sessionRegistry)
+                                            .admission(InlineSkillNarrowing.admission(agentAdmits, ceilingSnapshot))
+                                            .ceiling(maxSideEffectLevel)
+                                            .programmatic(InlineSkillNarrowing.programmatic(
+                                                    scope.getAgent().getMetadata().getProgrammatic(), ceilingSnapshot))
+                                            .agentName(scope.getAgent().getName()),
+                                    toolContext, InlineSkillNarrowing.factsAllowList(scope.getAgent().getAllowedTools(),
+                                            ceilingSnapshot))
+                            .build();
                     final List<ToolDescriptor> offered = offerContext.offer();
                     final List<ToolDefinition> availableTools = offered.stream().map(ToolDescriptor::getDefinition)
                             .toList();
@@ -1881,7 +1903,10 @@ public class OrcaAgentExecutor
                     // read from the conversation this iteration sends; delivered on its first tool result.
                     final Optional<String> languageNotice = languageNotice(scope, compactionDecision.getView(),
                             offered);
-                    final ToolContext iterationToolContext = ToolContext.builder().putAll(toolContext.getContext())
+                    final ToolContext iterationToolContext = ToolContext.builder()
+                            .putAll(InlineSkillNarrowing
+                                    .withDispatcher(toolContext, inlineSkillNarrowing.dispatcherFor(ceilingSnapshot))
+                                    .getContext())
                             .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build();
                     warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
 
@@ -1954,7 +1979,19 @@ public class OrcaAgentExecutor
                     // scanner is unconfigured (headless context) so the legacy fail-closed path through SkillTool
                     // continues to apply. Also skipped for a cut response: its calls are refused below, and nobody
                     // should be asked to approve a call whose arguments may be the part that was cut.
-                    if (skillPreflightScanner != null && response.hasToolUses() && !truncated) {
+                    //
+                    // Not once an inline skill has narrowed the turn (§2.3 item 7 of the ptc-leftovers design): a
+                    // suspension ends the execution, and the resumed one would start from the agent's ceiling while
+                    // the skill's instructions are still in view. The response is dispatched instead, and an
+                    // approval-requiring Skill call takes SkillTool's fail-closed path.
+                    final InlineSkillCeiling.Snapshot preflightCeiling = InlineSkillNarrowing.snapshotOf(toolContext,
+                            scope.getAgent().getAllowedTools(), scope.getAgent().getMetadata().getProgrammatic());
+                    if (skillPreflightScanner != null && response.hasToolUses() && !truncated
+                            && preflightCeiling.isNarrowed()) {
+                        logPreflightSkippedForNarrowedTurn(scope, response, preflightCeiling);
+                    }
+                    if (skillPreflightScanner != null && response.hasToolUses() && !truncated
+                            && !preflightCeiling.isNarrowed()) {
                         final SkillPreflightScanResult scan = skillPreflightScanner.scan(response.getToolUses(),
                                 scope.agentRuntime.getId(), scope.transcriptBuffer.getSessionId(),
                                 scope.getPrincipal());
@@ -2856,6 +2893,23 @@ public class OrcaAgentExecutor
             throw e;
         } finally {
             toolSpan.close();
+        }
+    }
+
+    /**
+     * Logs, once per response, that the SK-11.4 pre-flight approval scan was skipped because an inline skill has
+     * narrowed the turn — only when the response calls {@code Skill}, the one tool the scan judges. An
+     * approval-requiring skill among those calls then fails closed in {@code SkillTool} with a message that says why.
+     */
+    private static void logPreflightSkippedForNarrowedTurn(ExecutionScope scope, LlmResponse response,
+            InlineSkillCeiling.Snapshot ceiling) {
+        final List<String> skillCalls = response.getToolUses().stream()
+                .filter(toolUse -> SkillTool.TOOL_NAME.equals(toolUse.getName())).map(ToolUse::getId).toList();
+        if (!skillCalls.isEmpty()) {
+            log.info(
+                    "Turn of session {} is narrowed by inline skill(s) {}: pre-flight approval scan skipped for Skill "
+                            + "call(s) {}; an approval-requiring skill fails closed instead of suspending the turn",
+                    scope.transcriptBuffer.getSessionId().value(), ceiling.getSkills(), skillCalls);
         }
     }
 

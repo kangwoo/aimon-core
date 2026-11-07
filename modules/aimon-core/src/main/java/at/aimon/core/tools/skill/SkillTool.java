@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.Constants;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DataReach;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -64,6 +65,14 @@ import at.aimon.core.tools.ToolContextKeys;
  * <li>Tool restriction validation
  * <li>Support for namespaced skill names (e.g., "ms-office-suite:pdf")
  * </ul>
+ *
+ * <p>
+ * An inline skill's {@code allowed-tools} and programmatic settings bound the rest of the execution that activated it
+ * — the turn, the fork or the slash skill — from that execution's next iteration: the activation narrows the
+ * {@link InlineSkillCeiling} bound under {@link ToolContextKeys#INLINE_SKILL_CEILING}, and the loop builds its offer
+ * and dispatcher from it ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). An inline skill whose
+ * allow-list shares no tool with the current ceiling is refused before its instructions are injected. Without the key
+ * (an embedder outside those loops) an inline skill narrows nothing.
  *
  * <p>
  * Thread-safe as long as SkillRegistry is thread-safe.
@@ -345,7 +354,7 @@ public class SkillTool extends AbstractTool {
                     .principal(context.get(ToolContextKeys.PRINCIPAL).orElse(null)).build());
             if (decision != SkillInvocationDecision.ALLOW) {
                 log.info("Skill invocation rejected by policy: skill={}, decision={}", skill.getName(), decision);
-                return ToolResult.error(formatPolicyRejection(skill, decision));
+                return ToolResult.error(formatPolicyRejection(skill, decision, context));
             }
 
             // Activate any per-skill hooks for the duration of the skill body. The scope spans rendering and (for
@@ -404,9 +413,29 @@ public class SkillTool extends AbstractTool {
                             outcome.getErrorMessage().orElse("(no message)")));
                 }
 
+                // An inline skill's allow-list and programmatic settings bound the rest of the execution that
+                // activated it, from that execution's next iteration (programmatic-tool-calling design §7.2). Refused
+                // before its instructions are injected when the two allow-lists share no tool.
+                final Optional<InlineSkillCeiling> ceiling = context.get(ToolContextKeys.INLINE_SKILL_CEILING);
+                final String ceilingNote;
+                if (ceiling.isPresent()) {
+                    final InlineSkillCeiling.Snapshot before = ceiling.get().snapshot();
+                    final Optional<String> refusal = ceiling.get().narrow(skill.getName(),
+                            skill.getMetadata().getAllowedTools(), skill.getMetadata().getProgrammatic());
+                    if (refusal.isPresent()) {
+                        log.info("Inline skill refused: {}", refusal.get());
+                        return ToolResult.error(refusal.get());
+                    }
+                    ceilingNote = ceilingNote(skill, before, ceiling.get().snapshot());
+                } else {
+                    log.debug("Inline skill '{}' activated without an inline-skill ceiling bound: its allowed-tools "
+                            + "and programmatic settings bound nothing", skill.getName());
+                    ceilingNote = "";
+                }
+
                 // Format result with skill information (inline mode)
                 final String formattedResult = formatSkillResult(skill, renderedInstructions,
-                        renderContext.getSkillBaseDir().orElse(null));
+                        renderContext.getSkillBaseDir().orElse(null), ceilingNote);
 
                 return ToolResult.success(formattedResult);
             }
@@ -423,12 +452,19 @@ public class SkillTool extends AbstractTool {
         }
     }
 
-    private static String formatPolicyRejection(Skill skill, SkillInvocationDecision decision) {
+    private static String formatPolicyRejection(Skill skill, SkillInvocationDecision decision, ToolContext context) {
         return switch (decision) {
             case DENY -> String.format("Skill invocation denied by policy: '%s'.", skill.getName());
-            case ASK -> String.format(
-                    "Skill '%s' requires user approval, but no approval channel is available in this context.",
-                    skill.getName());
+            // A turn an inline skill has narrowed never suspends for approval (the narrowing would not survive the
+            // resumption), so the approval is asked for in a new turn instead.
+            case ASK -> context.get(ToolContextKeys.INLINE_SKILL_CEILING)
+                    .filter(ceiling -> ceiling.snapshot().isNarrowed()).isPresent()
+                            ? String.format(
+                                    "Skill '%s' requires user approval, which cannot be asked for in a turn an "
+                                            + "inline skill has narrowed; ask for it again in a new turn.",
+                                    skill.getName())
+                            : String.format("Skill '%s' requires user approval, but no approval channel is available "
+                                    + "in this context.", skill.getName());
             default ->
                 String.format("Skill invocation rejected by policy: '%s' (decision=%s).", skill.getName(), decision);
         };
@@ -454,9 +490,11 @@ public class SkillTool extends AbstractTool {
      *            The instructions text produced by the renderer
      * @param stagedDir
      *            The directory the skill was staged to (its {@code ${AIMON_SKILL_DIR}}), or null when it was not staged
+     * @param ceilingNote
+     *            what the activation narrowed for the rest of the execution ({@link #ceilingNote}), or empty
      * @return A formatted string representation
      */
-    private String formatSkillResult(Skill skill, String renderedInstructions, String stagedDir) {
+    private String formatSkillResult(Skill skill, String renderedInstructions, String stagedDir, String ceilingNote) {
         final StringBuilder output = new StringBuilder();
 
         output.append("=== Skill Activated ===").append(Constants.NEWLINE);
@@ -471,6 +509,9 @@ public class SkillTool extends AbstractTool {
             output.append(Constants.DOUBLE_NEWLINE);
         } else {
             output.append("Allowed Tools: No restrictions").append(Constants.DOUBLE_NEWLINE);
+        }
+        if (!ceilingNote.isEmpty()) {
+            output.append(ceilingNote).append(Constants.DOUBLE_NEWLINE);
         }
 
         // Include available files if present. Every path is under the staged copy — the directory the execution's
@@ -500,6 +541,29 @@ public class SkillTool extends AbstractTool {
         output.append(renderedInstructions).append(Constants.NEWLINE);
 
         return output.toString();
+    }
+
+    /**
+     * Tells the model what an inline activation narrowed for the rest of the execution, rather than leaving it to
+     * discover refusals: the allow-list when the skill declares one, and {@code ExecuteCode} when its programmatic
+     * settings dropped from enabled to none. Empty when the activation changed nothing.
+     */
+    private static String ceilingNote(Skill skill, InlineSkillCeiling.Snapshot before,
+            InlineSkillCeiling.Snapshot after) {
+        if (after.getVersion() == before.getVersion()) {
+            return "";
+        }
+        final StringBuilder note = new StringBuilder();
+        if (skill.hasToolRestrictions()) {
+            note.append("For the rest of this turn only these tools are available.");
+        }
+        if (before.getProgrammatic().isEnabled() && !after.getProgrammatic().isEnabled()) {
+            if (note.length() > 0) {
+                note.append(' ');
+            }
+            note.append("ExecuteCode is not available for the rest of this turn.");
+        }
+        return note.toString();
     }
 
     private static void appendCategory(StringBuilder output, String heading, Map<String, String> entries) {

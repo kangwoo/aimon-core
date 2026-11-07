@@ -41,6 +41,7 @@ import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.AgentStepResult;
 import at.aimon.core.workflow.AgentTask;
+import at.aimon.core.workflow.BackgroundSubmission;
 import at.aimon.core.workflow.JudgedResult;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.Verdict;
@@ -48,6 +49,7 @@ import at.aimon.core.workflow.WorkflowPatterns;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunners;
 import at.aimon.core.workflow.WorkflowScript;
+import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 
 /**
  * Runs a built-in multi-perspective workflow: fans the given prompt out to several perspective sub-agents in
@@ -300,15 +302,22 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                     hookSkills);
         }
         // Fire-and-forget on the shared runner's own base launch context: a background run does NOT inherit the
-        // invoking execution's agent runtime id, principal, or trace attribution — only its quota guard (below). The
-        // run id is derived from
-        // the full request (prompt + perspectives + synthesize) so distinct requests get distinct runs, while
-        // an identical request that is still in flight is joined idempotently rather than duplicated.
-        final RunId runId = RunId.from("workflow", runDiscriminator(prompt, perspectives, synthesize, strategy));
-        // The exception to "takes nothing": the run is charged to this execution's quota, or it would be a way around
-        // it.
-        backgroundRunner.runInBackground(script(prompt, perspectives, synthesize, strategy), runId,
-                context.get(ToolContextKeys.QUOTA_GUARD).orElse(null));
+        // invoking execution's agent runtime id, principal, or trace attribution — only its quota guard and its tool
+        // ceiling (the submission below). The run id is derived from the full request (prompt + perspectives +
+        // synthesize) and the caller's ceiling, so distinct requests get distinct runs, an identical request from a
+        // narrower caller does not join a run started under a wider ceiling, and an identical request from the same
+        // caller that is still in flight is joined idempotently rather than duplicated.
+        final BackgroundSubmission submission = BackgroundSubmissions.of(context);
+        final RunId runId = RunId.from("workflow",
+                runDiscriminator(prompt, perspectives, synthesize, strategy) + "-" + submission.ceilingDigest());
+        // The exceptions to "takes nothing": the run is charged to this execution's quota, or it would be a way around
+        // it, and is bounded by the calling loop's ceiling, or a skill or fork could escape its own (TC-25).
+        try {
+            backgroundRunner.runInBackground(script(prompt, perspectives, synthesize, strategy), runId, submission);
+        } catch (BackgroundRunRefusedException e) {
+            log.info("Workflow (background) refused: {}", e.getMessage());
+            throw new ToolExecutionException(e.getMessage());
+        }
         log.debug("Workflow (background): runId='{}' strategy={} perspectives={} synthesize={}", runId.value(),
                 strategy, perspectives, synthesize);
         return "Started background workflow run '" + runId.value() + "' over " + perspectives.size()
