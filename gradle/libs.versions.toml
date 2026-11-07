@@ -204,7 +204,7 @@ okhttp = "5.5.1"
 javalin = "7.2.4"
 
 # AI & LLM
-openai = "4.90.0"
+openai = "4.94.0"
 anthropic = "3.3.0"
 jtokkit = "1.1.0"
 
