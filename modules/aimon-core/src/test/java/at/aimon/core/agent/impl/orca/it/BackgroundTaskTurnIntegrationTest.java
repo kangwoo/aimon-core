@@ -31,9 +31,8 @@ import at.aimon.core.subagent.task.BackgroundTaskState;
  *
  * <p>
  * A background {@code Task} is the only tool call in this suite whose effect outlives the tool call itself: it returns
- * a
- * task id immediately and the fork keeps running on another thread, so the parent turn continues while work is still in
- * flight. Every assertion here is about that seam — the id round-trips, {@code AgentOutput} finds the fork's answer,
+ * a task id immediately and the fork keeps running on another thread, so the parent turn continues while work is still
+ * in flight. Every assertion here is about that seam — the id round-trips, {@code AgentOutput} finds the fork's answer,
  * {@code TaskList}/{@code TaskStop} see the same task, and one runtime's task id is worthless to another.
  *
  * <h2>Why the fork is parked in the LLM client, not in a tool</h2>
@@ -41,8 +40,7 @@ import at.aimon.core.subagent.task.BackgroundTaskState;
  * <p>
  * Several tests need the background task to be provably <b>still running</b> at a chosen moment. Parking it inside a
  * tool would depend on the fork's tool registry containing that tool; parking it in its scripted LLM response does not
- * —
- * every fork must call the model at least once. {@link #parkedUntil} is that gate, and it fails loudly rather than
+ * — every fork must call the model at least once. {@link #parkedUntil} is that gate, and it fails loudly rather than
  * hanging: if the parent never opens the gate, the fork's wait times out and the test fails with a message naming the
  * cause.
  *
@@ -115,8 +113,7 @@ class BackgroundTaskTurnIntegrationTest {
      * <p>
      * Throws rather than returning empty: a launch that published no id means the tests below would go on to poll the
      * string {@code "null"}, and the resulting "Task not found" would look like a control-plane bug instead of a
-     * missing
-     * id.
+     * missing id.
      */
     private static String taskIdFrom(ScriptedLlmClient.Call call) {
         final Matcher matcher = TASK_ID.matcher(call.lastObservation());
@@ -387,10 +384,10 @@ class BackgroundTaskTurnIntegrationTest {
      * That claim only holds if both agents are looking at the <b>same</b> control plane, which is why the intruder is
      * built with {@link OrcaRuntimeItSupport.Options#shareSubagentManagerWith}. On the harness default each node gets
      * its own manager, and the assertion below would pass because the intruder's task store is empty — true of a
-     * runtime with every ownership check deleted. Sharing is also the production shape: one
-     * {@code OrcaAgentExecutor}, and therefore one task store, serves every runtime
-     * {@code OrcaAgentRuntimeManager} creates. With it shared, "Task not found" can only come from
-     * {@code ScopedSubagentTaskController} refusing a task stamped with a different {@code AgentRuntimeId}.
+     * runtime with every ownership check deleted. Sharing is also the production shape: one {@code OrcaAgentExecutor},
+     * and therefore one task store, serves every runtime {@code OrcaAgentRuntimeManager} creates. With it shared, "Task
+     * not found" can only come from {@code ScopedSubagentTaskController} refusing a task stamped with a different
+     * {@code AgentRuntimeId}.
      *
      * <p>
      * The id is proven live and readable on its own runtime first. Without that half, the "not found" below would also

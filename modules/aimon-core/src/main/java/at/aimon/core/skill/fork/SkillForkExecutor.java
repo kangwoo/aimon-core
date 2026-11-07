@@ -9,8 +9,8 @@ import at.aimon.core.subagent.execution.ForkGoalRenderer;
  *
  * <p>
  * {@code SkillTool} (model path) and {@code LlmSkillExecutor} (user-slash path) consult this executor when a skill
- * declares {@code execution.mode: fork}. The rendered skill body is
- * forwarded as the subagent's goal; the subagent's final answer is returned to the calling LLM.
+ * declares {@code execution.mode: fork}. The rendered skill body is forwarded as the subagent's goal; the subagent's
+ * final answer is returned to the calling LLM.
  *
  * <p>
  * <b>The fork must dispatch its hooks against the registry in the tool context</b>

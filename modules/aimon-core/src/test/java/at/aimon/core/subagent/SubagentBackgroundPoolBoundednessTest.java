@@ -40,8 +40,7 @@ import at.aimon.core.subagent.task.InMemoryBackgroundTaskStore;
  * {@link DefaultSubagentExecutionManager#newBackgroundExecutor(SubagentBackgroundConfig)} is a fixed
  * {@link java.util.concurrent.ThreadPoolExecutor} ({@code core == max == maxConcurrency}, a bounded queue, and an
  * abort-on-saturation policy) shared by every session that launches background work. When many callers fan tasks
- * in
- * at once, two invariants must hold: the number of subagents executing simultaneously never exceeds
+ * in at once, two invariants must hold: the number of subagents executing simultaneously never exceeds
  * {@code maxConcurrency}, and every task that cannot be admitted (all workers busy and the queue full) is settled
  * deterministically as {@code FAILED} with a "saturated" reason rather than silently dropped or run over-cap.
  *

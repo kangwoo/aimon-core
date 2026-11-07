@@ -5,10 +5,9 @@ package at.aimon.core.hook.rewake;
  *
  * <p>
  * The listener is the bridge between scheduling (delay / cron / external event) and the actual hook re-dispatch logic.
- * The contract is intentionally minimal — the listener receives the envelope and is responsible for
- * resolving the originating {@link at.aimon.core.agent.AgentRuntime AgentRuntime}, rebuilding the
- * appropriate hook context, and re-invoking the originating hook.
- * {@code DefaultRewakeFireListener} performs that orchestration.
+ * The contract is intentionally minimal — the listener receives the envelope and is responsible for resolving the
+ * originating {@link at.aimon.core.agent.AgentRuntime AgentRuntime}, rebuilding the appropriate hook context, and
+ * re-invoking the originating hook. {@code DefaultRewakeFireListener} performs that orchestration.
  *
  * <p>
  * Implementations must be thread-safe — multiple fires may be delivered concurrently.

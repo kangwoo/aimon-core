@@ -1114,8 +1114,7 @@ visible answer` · effort 처방 · `thinkingBudgetTokens` 부재를 더했고, 
 답하고, WARN 이 `max_tokens` · iteration · 도구 이름을 적고, 루프는 이어진다. 두 실행기 모두 프로바이더 중립의
 `StopReason` 을 `at.aimon.core.agent.budget.TruncatedResponses` 한 곳에서 읽는다. 설계와 기각한 대안은
 [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
-에, 기록의 정정은
-옛 `thinking-reporting-and-dialect-records.md` §16.10(지금은
+에, 기록의 정정은 옛 `thinking-reporting-and-dialect-records.md` §16.10(지금은
 [`../design/llm/anthropic-thinking.md` §6.4](../design/llm/anthropic-thinking.md#64-clamp-경고의-범위--clamp-만))에 있다.
 
 **처방이 열어 둔 것을 한쪽으로 정했다 (규칙 다섯).** 이 항목은 잘린 도구 호출을 *여전히 실행할지* 를 열어 두었다.

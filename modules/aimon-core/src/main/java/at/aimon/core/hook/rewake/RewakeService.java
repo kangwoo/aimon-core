@@ -29,8 +29,7 @@ import java.util.Map;
  *
  * <p>
  * Implementations must be thread-safe. The service is application-scoped — its lifetime spans the entire JVM, not a
- * single session or {@link at.aimon.core.agent.AgentRuntime AgentRuntime}. See
- * {@code .claude/rules/scheduling.md}.
+ * single session or {@link at.aimon.core.agent.AgentRuntime AgentRuntime}. See {@code .claude/rules/scheduling.md}.
  */
 public interface RewakeService {
 

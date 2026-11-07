@@ -17,11 +17,10 @@ import at.aimon.core.base.exception.AimonException;
  *
  * <p>
  * <b>Never signals "no such session".</b> Absence is a normal outcome with its own encoding on every method that can
- * observe it: an empty {@code Optional} from {@code load}, a no-op from
- * {@code setTotalsAndBudgetOverride} / {@code resetCompactionFailureCount}, {@code 0} from
- * {@code incrementCompactionFailureCount}. A backend that threw here for a missing record would make the
- * distributed stores behave differently from {@code InMemorySessionRecordStore} on the path that every session takes
- * on its first turn.
+ * observe it: an empty {@code Optional} from {@code load}, a no-op from {@code setTotalsAndBudgetOverride} /
+ * {@code resetCompactionFailureCount}, {@code 0} from {@code incrementCompactionFailureCount}. A backend that threw
+ * here for a missing record would make the distributed stores behave differently from
+ * {@code InMemorySessionRecordStore} on the path that every session takes on its first turn.
  *
  * <p>
  * Companion of {@link SessionLeaseException}, which plays the same role for the lease SPI.

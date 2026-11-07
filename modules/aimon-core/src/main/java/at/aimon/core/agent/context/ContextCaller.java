@@ -12,8 +12,8 @@ import at.aimon.core.base.Principal;
  * Both halves are optional and answer different questions. {@link #getExecutionId()} names a run that has <em>no
  * session of its own</em> &mdash; a subagent fork &mdash; so that a compaction the engine performs fires its hooks
  * with that identity instead of the transcript label, which for such a run is a wrapped execution id rather than a
- * session. It is absent for a session's turn, whose buffer's session id is the honest identity.
- * {@link #getPrincipal()} names the user the call is attributed to, when the caller knows one.
+ * session. It is absent for a session's turn, whose buffer's session id is the honest identity. {@link #getPrincipal()}
+ * names the user the call is attributed to, when the caller knows one.
  *
  * <p>
  * Immutable value object built via {@link Builder}.

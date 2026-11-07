@@ -32,8 +32,7 @@ import at.aimon.core.agent.session.SessionId;
  * <p>
  * {@code AgentRuntime} is <strong>agent-scoped</strong> (one instance per {@code (Agent, discriminator)};
  * see {@code docs/design/agent-execution/agent-runtime-scope.md}). The {@link AgentRuntimeId}
- * threaded into
- * each {@link #open} call is derived by the manager from {@code SubmitRequest.agentRef} and an optional
+ * threaded into each {@link #open} call is derived by the manager from {@code SubmitRequest.agentRef} and an optional
  * {@code SubmitRequest.contextDiscriminator}; the opener's job is to <em>look up</em> the matching pre-registered
  * context and bind it to a fresh {@link LiveSession}, not to register one lazily. Implementations <strong>must
  * not</strong> create a fresh {@code AgentRuntime} per {@link #open} call. The application must register the
@@ -121,8 +120,7 @@ public interface LiveSessionOpener {
 
     /**
      * Convenience overload that delegates to
-     * {@link #open(SessionId, AgentRuntimeId, LiveSessionOptions, OpenAttributes)} with
-     * {@link OpenAttributes#empty()}.
+     * {@link #open(SessionId, AgentRuntimeId, LiveSessionOptions, OpenAttributes)} with {@link OpenAttributes#empty()}.
      *
      * <p>
      * Provided so simple callers (and adapters from {@link LiveSessionFactory}) can ignore the attribute channel

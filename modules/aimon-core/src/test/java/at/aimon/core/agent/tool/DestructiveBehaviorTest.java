@@ -9,9 +9,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The axis has no ordering to test — that is the point of it being a {@code *Behavior} rather than a {@code *Level},
- * and
- * the absence of a {@code permits}-style method is what this pins. What is left is the default, which every existing
- * tool inherits without being edited.
+ * and the absence of a {@code permits}-style method is what this pins. What is left is the default, which every
+ * existing tool inherits without being edited.
  */
 @DisplayName("DestructiveBehavior Tests")
 class DestructiveBehaviorTest {

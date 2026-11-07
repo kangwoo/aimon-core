@@ -94,8 +94,7 @@ public final class LlmRetryPolicy {
      * Behaviour:
      * <ul>
      * <li>Total attempts: up to 3 (1 initial + 2 retries) — covers 429 rate-limiting with two backoffs and 5xx
-     * overloads
-     * with one.
+     * overloads with one.
      * <li>Backoff base: 500&nbsp;ms with exponential doubling and ±20% jitter.
      * <li>Retryable exceptions: {@link LlmRateLimitedException} and {@link LlmOverloadedException}.
      * </ul>

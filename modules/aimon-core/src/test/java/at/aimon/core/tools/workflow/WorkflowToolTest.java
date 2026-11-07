@@ -32,8 +32,7 @@ import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Drives {@link WorkflowTool} end-to-end through the <b>real</b> {@link DefaultSubagentExecutionManager} using
- * code
- * behaviors for the perspective/synthesizer sub-agents — so the whole path (tool → WorkflowRunner → real manager)
+ * code behaviors for the perspective/synthesizer sub-agents — so the whole path (tool → WorkflowRunner → real manager)
  * runs with no LLM. The ReAct/LLM executor is verified never to be touched.
  */
 @DisplayName("WorkflowTool — multi-perspective workflow over the real execution manager (no LLM)")

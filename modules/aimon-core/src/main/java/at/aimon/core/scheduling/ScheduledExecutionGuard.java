@@ -25,8 +25,7 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * releases the lease, node B's fire of the same cron time — late by a GC pause, CPU throttling, or a misfire recovery —
  * finds it free and runs the occurrence again. Holding the lease past the run would block the next occurrence instead.
  * A lease keyed on the {@link ScheduledFire#getOccurrenceKey() occurrence} fails the other way: S and S+1 have
- * different
- * keys, so a long run of S overlaps S+1, and a misfire older than the last run takes a key nobody holds.
+ * different keys, so a long run of S overlaps S+1, and a misfire older than the last run takes a key nobody holds.
  *
  * <p>
  * A distributed guard needs both halves: <b>one lease per task, and the last slot that began, compared by size.</b>
@@ -36,10 +35,10 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  *
  * <p>
  * The manager always calls {@link #tryBegin(ScheduledFire)}. Its default forwards to
- * {@link #tryBegin(ScheduledTaskId)},
- * so an existing guard keeps working unchanged and keeps its task-id semantics; a guard that wants occurrence semantics
- * overrides it. The fire's slot is empty when the scheduler did not supply one — fall back to the task id then.
- * {@link InMemoryScheduledExecutionGuard} keeps the task-id behaviour: on one node, overlap is the only hazard.
+ * {@link #tryBegin(ScheduledTaskId)}, so an existing guard keeps working unchanged and keeps its task-id semantics; a
+ * guard that wants occurrence semantics overrides it. The fire's slot is empty when the scheduler did not supply one —
+ * fall back to the task id then. {@link InMemoryScheduledExecutionGuard} keeps the task-id behaviour: on one node,
+ * overlap is the only hazard.
  *
  * <p>
  * Following the project's multi-instance design rule, the guard is an interface with an in-memory default

@@ -66,11 +66,11 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * execution manager.
  * <li><b>No verdict</b> &mdash; a transport failure ({@code CALL_FAILED}), a call interrupted from outside
  * ({@code CANCELLED}), an exchange that ran out of {@link HttpAction#getTimeout() time} before its last body byte
- * ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
- * body says &mdash; a refusal is spelled {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a
- * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a decision
- * field whose value is not one {@link DecisionDocument} knows, a {@code hookSpecificOutput} or an
- * {@code updatedInput} that is not an object, two {@code updatedInput} objects that differ.
+ * ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its body says &mdash; a refusal is spelled
+ * {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a decision ({@code INVALID_RESPONSE}): a
+ * body declared {@code application/json} that does not parse, a decision field whose value is not one
+ * {@link DecisionDocument} knows, a {@code hookSpecificOutput} or an {@code updatedInput} that is not an object, two
+ * {@code updatedInput} objects that differ.
  * </ul>
  * {@link #run} is the advisory reading of the same call: it logs a missing verdict at WARN and returns
  * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems; an {@code ask}

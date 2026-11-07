@@ -21,8 +21,7 @@ import at.aimon.core.mcp.transport.McpTransport;
  *
  * <p>
  * Communicates with an MCP server via the provided {@link McpTransport}, handling JSON-RPC protocol operations
- * including
- * initialization, tool listing, and tool calling.
+ * including initialization, tool listing, and tool calling.
  *
  * <h2>Thread Safety</h2>
  * <p>

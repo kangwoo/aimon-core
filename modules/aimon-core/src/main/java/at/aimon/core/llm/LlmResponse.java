@@ -316,9 +316,8 @@ public final class LlmResponse {
      *
      * <p>
      * Returns {@link Optional#empty()} when the reason is {@link StopReason#UNKNOWN} (either the provider did not
-     * report
-     * one, or the response was built via a legacy factory that predates stop-reason capture). A present value can be
-     * inspected via {@link StopReason#isTruncated()} to detect a {@code max_tokens} cut-off.
+     * report one, or the response was built via a legacy factory that predates stop-reason capture). A present value
+     * can be inspected via {@link StopReason#isTruncated()} to detect a {@code max_tokens} cut-off.
      *
      * @return the stop reason, or empty when unknown
      */

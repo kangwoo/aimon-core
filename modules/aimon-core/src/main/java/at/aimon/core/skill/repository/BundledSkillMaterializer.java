@@ -22,8 +22,7 @@ import at.aimon.core.skill.exception.SkillRepositoryException;
  *
  * <p>
  * Bundled skills ship inside the application's class path (an exploded {@code build/resources} tree in development, or
- * a
- * packaged JAR in production). Neither layout is reachable through the agent's {@code Read}/{@code Bash} tools, which
+ * a packaged JAR in production). Neither layout is reachable through the agent's {@code Read}/{@code Bash} tools, which
  * operate on the workspace {@link VirtualFileSystem}: JAR entries are not files at all, and exploded resources resolve
  * to absolute OS paths outside the workspace sandbox. Materializing each bundled skill tree into a workspace directory
  * (for example {@code .aimon/bundled-skills/<name>/}) makes its {@code scripts/}, {@code references/}, {@code assets/},
@@ -97,8 +96,7 @@ public final class BundledSkillMaterializer {
      *            The destination virtual filesystem (must not be null)
      * @param targetDir
      *            The destination directory on {@code fileSystem} (e.g. {@code "bundled-skills"} on the control store);
-     *            must not be
-     *            null
+     *            must not be null
      * @return The names of the skills that were materialized (i.e. that contained a {@code SKILL.md})
      * @throws NullPointerException
      *             if any argument is null

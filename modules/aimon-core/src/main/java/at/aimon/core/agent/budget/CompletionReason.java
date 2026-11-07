@@ -63,8 +63,7 @@ public enum CompletionReason {
      * Execution was suspended pending out-of-band approval for one or more skill invocations (SK-11.4). The agent
      * loop performs an "atomic suspension": no assistant message or tool_result for the current LLM iteration is
      * committed to {@code TranscriptBuffer}. A subsequent resume re-issues the LLM call from the same memory state, and
-     * the
-     * pre-flight scan finds the now-cached approval decisions and lets the turn proceed. Distinct from
+     * the pre-flight scan finds the now-cached approval decisions and lets the turn proceed. Distinct from
      * {@link #INTERRUPTED} which represents user-driven cancellation that does NOT expect a resume.
      */
     SUSPENDED,

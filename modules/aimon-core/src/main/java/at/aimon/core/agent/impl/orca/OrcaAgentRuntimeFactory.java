@@ -302,9 +302,8 @@ public class OrcaAgentRuntimeFactory {
 
     /**
      * SK-11.5: configures the {@link PendingTurnRegistry} surfaced to {@link OrcaProviderDependencies} so the system
-     * command provider can register {@code /pending}, {@code /deny}, and (paired with
-     * {@link #withAgentApprovalStore}) {@code /approve}. When {@code null} (the default) those commands are
-     * skipped at registration time.
+     * command provider can register {@code /pending}, {@code /deny}, and (paired with {@link #withAgentApprovalStore})
+     * {@code /approve}. When {@code null} (the default) those commands are skipped at registration time.
      *
      * @param pendingTurnRegistry
      *            the registry (may be {@code null} to clear the override)
@@ -346,9 +345,9 @@ public class OrcaAgentRuntimeFactory {
 
     /**
      * SK-11.5: configures the {@link SkillInvocationPolicy} surfaced to {@link OrcaProviderDependencies} so
-     * {@link OrcaSkillToolProvider} wires {@code SkillTool} with a policy that matches the
-     * {@code OrcaAgentExecutor}'s pre-flight scanner. When {@code null} (the default) {@code SkillTool} falls back
-     * to {@code AlwaysAllowSkillInvocationPolicy}.
+     * {@link OrcaSkillToolProvider} wires {@code SkillTool} with a policy that matches the {@code OrcaAgentExecutor}'s
+     * pre-flight scanner. When {@code null} (the default) {@code SkillTool} falls back to
+     * {@code AlwaysAllowSkillInvocationPolicy}.
      *
      * @param skillInvocationPolicy
      *            the policy (may be {@code null} to clear the override)
@@ -704,8 +703,7 @@ public class OrcaAgentRuntimeFactory {
      * carrying a resolvable base directory and full file map. It shadows the class path layer for every skill that was
      * successfully materialized;
      * <li>a {@link at.aimon.core.skill.repository.VfsSkillRepository}-backed registry over {@code userSkillsDirectory}
-     * — user-authored skills, which
-     * override bundled skills of the same name.
+     * — user-authored skills, which override bundled skills of the same name.
      * </ol>
      *
      * <p>

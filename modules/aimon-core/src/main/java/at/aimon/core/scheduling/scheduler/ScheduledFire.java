@@ -136,8 +136,8 @@ public final class ScheduledFire {
     /**
      * A key naming this occurrence of the task, the same on every node: {@code <taskId>@<slot epoch millis>}. For logs
      * and records about an occurrence. It is not a lease key: a lease per occurrence would let slot S+1 overlap a run
-     * of
-     * S, and would not refuse a misfire older than the last run. See {@code ScheduledExecutionGuard} for what to use.
+     * of S, and would not refuse a misfire older than the last run. See {@code ScheduledExecutionGuard} for what to
+     * use.
      *
      * @return the occurrence key, or empty when the slot is unknown
      */

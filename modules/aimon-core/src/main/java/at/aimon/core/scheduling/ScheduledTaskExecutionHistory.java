@@ -97,9 +97,8 @@ public final class ScheduledTaskExecutionHistory {
 
     /**
      * Whether a step of this run ended with its effect unknown ({@link StepResult#isOutcomeUnknown()}): its last
-     * attempt
-     * timed out, so the tool may have done its work after all. The run is still recorded as failed; this says that
-     * "failed" does not prove nothing happened.
+     * attempt timed out, so the tool may have done its work after all. The run is still recorded as failed; this says
+     * that "failed" does not prove nothing happened.
      *
      * @return {@code true} if a step's effect is unknown
      */

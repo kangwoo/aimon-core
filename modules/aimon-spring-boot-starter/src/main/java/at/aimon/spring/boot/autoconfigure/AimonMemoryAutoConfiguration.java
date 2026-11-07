@@ -35,9 +35,9 @@ import at.aimon.core.memory.redaction.StrictRedactionPolicy;
  * <p>
  * Off by default, like knowledge, but for a sharper reason. A knowledge store that is wired and empty answers
  * queries with silence; a memory that is wired at the wrong peer answers them with somebody else's history. Both
- * failures are quiet, and only one of them is also a privacy incident — which is why
- * {@code aimon.memory.workspace-id} and, under the default peer mode, {@code aimon.memory.peer-id} have no
- * defaults at all. See {@code AimonProperties.validateMemory()}.
+ * failures are quiet, and only one of them is also a privacy incident — which is why {@code aimon.memory.workspace-id}
+ * and, under the default peer mode, {@code aimon.memory.peer-id} have no defaults at all. See
+ * {@code AimonProperties.validateMemory()}.
  *
  * <h2>What this slice cannot give you</h2>
  *

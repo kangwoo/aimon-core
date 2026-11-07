@@ -129,9 +129,8 @@ class QuartzCronTranslatorTest {
 
     /**
      * The test that would have caught the day-of-week off-by-one on its own: rather than asserting on the text, it
-     * walks
-     * both engines forward and compares when they actually fire. A translation that is one day out cannot survive it,
-     * and neither can one that quietly drops a field.
+     * walks both engines forward and compares when they actually fire. A translation that is one day out cannot survive
+     * it, and neither can one that quietly drops a field.
      */
     @Nested
     @DisplayName("equivalence with the source dialect")

@@ -42,8 +42,8 @@ import at.aimon.session.routing.metrics.SessionMetrics;
  * <p>
  * The lease store and the repository are handed in as two separate backends and composed into one
  * {@link SessionStore} in {@link Builder#build()}, mirroring what the production builder does. Two harnesses
- * sharing
- * both backends therefore behave like two nodes: each has its own store, so each tracks only the leases it won itself.
+ * sharing both backends therefore behave like two nodes: each has its own store, so each tracks only the leases it won
+ * itself.
  */
 public final class TestManagerHarness implements AutoCloseable {
 
@@ -86,8 +86,7 @@ public final class TestManagerHarness implements AutoCloseable {
      * <p>
      * Deliberately the backend and not the manager's {@code SessionStore}: a lease won here is won by an outsider,
      * which is the point — acquiring through the manager's own store would register the lease as locally held and let
-     * the
-     * manager's fenced writes sail through.
+     * the manager's fenced writes sail through.
      *
      * @return the shared lease store
      */

@@ -18,9 +18,8 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
 /**
  * A {@link VirtualFileSystem} decorator that applies {@link PathRule}s by root-anchored prefix
  * (execution-environment-files design §4). The local execution environment wraps its workspace in one so the model's
- * file
- * tools cannot see the control store ({@code .aimon/} → {@link PathRule.Access#DENY}) and cannot modify staged skill
- * copies ({@code .aimon-staged/} → {@link PathRule.Access#READ_ONLY}).
+ * file tools cannot see the control store ({@code .aimon/} → {@link PathRule.Access#DENY}) and cannot modify staged
+ * skill copies ({@code .aimon-staged/} → {@link PathRule.Access#READ_ONLY}).
  *
  * <p>
  * Paths are resolved with {@link VfsPaths#resolveUnder} against the delegate's working directory before matching —
@@ -36,8 +35,7 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * <p>
  * This is a guard against the model's file tools editing framework state by accident, not a security boundary: a
  * shell in the same environment still reaches the files (execution-environment design §1, non-goals). It <b>borrows</b>
- * the delegate:
- * {@link #initialize()} and {@link #close()} do nothing.
+ * the delegate: {@link #initialize()} and {@link #close()} do nothing.
  */
 public final class PathRuleVirtualFileSystem implements VirtualFileSystem {
 

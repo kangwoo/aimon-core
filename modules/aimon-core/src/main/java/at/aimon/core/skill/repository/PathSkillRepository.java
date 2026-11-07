@@ -59,8 +59,7 @@ import at.aimon.core.skill.exception.SkillRepositoryException;
  *
  * <p>
  * <b>Symbolic links when staging</b> (execution-environment-staging design §10). A skill directory, or anything inside
- * it,
- * may be a symbolic link. Staging follows it when its real path lies inside {@code skillsBasePath} or inside one of
+ * it, may be a symbolic link. Staging follows it when its real path lies inside {@code skillsBasePath} or inside one of
  * the {@linkplain Builder#allowedLinkRoot allowed link roots}; a link that resolves anywhere else makes the skill fail
  * to load with an error naming the link, rather than stage without the files behind it. By default there are no
  * allowed link roots, so only links within the skills directory are followed. An agent bundle read from disk takes

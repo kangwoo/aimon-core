@@ -58,9 +58,9 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * dispatcher at once. The loop's iteration <i>head</i> and <i>tail</i> checks cannot see inside that batch, so a trip
  * landing while tool 1 runs used to leave tools 2..N executing to completion — a user who pressed Ctrl+C at the first
  * of five tool calls still watched the other four run. The interrupt design
- * ({@code docs/design/agent-execution/interrupt.md} §7) mandates a check immediately before each
- * {@code toolUse}, with the remainder short-circuited to an {@code Interrupted — skipped} error result; the gate now
- * lives in {@code OrcaAgentExecutor#toolRunner}, the single callback every dispatch shape invokes per tool.
+ * ({@code docs/design/agent-execution/interrupt.md} §7) mandates a check immediately before each {@code toolUse}, with
+ * the remainder short-circuited to an {@code Interrupted — skipped} error result; the gate now lives in
+ * {@code OrcaAgentExecutor#toolRunner}, the single callback every dispatch shape invokes per tool.
  *
  * <p>
  * The existing {@code OrcaAgentExecutorInterruptTest} could not have caught the divergence: all five of its cases use

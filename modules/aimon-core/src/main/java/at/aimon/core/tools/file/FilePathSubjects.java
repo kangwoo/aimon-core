@@ -30,8 +30,8 @@ import at.aimon.core.tools.ToolContextKeys;
  * A relative path is resolved against the working directory of the execution's environment — its
  * {@code EnvironmentDescriptor}, the directory the shell and the file tools agree on (in an isolated workflow branch,
  * the branch root) — and only that: with no environment in the context there is no answer, and the subject is empty.
- * Falling back to the process CWD would make the verdict
- * depend on where the JVM was started, which the person writing the pattern cannot see.
+ * Falling back to the process CWD would make the verdict depend on where the JVM was started, which the person writing
+ * the pattern cannot see.
  *
  * <h2>Lexical only</h2>
  *

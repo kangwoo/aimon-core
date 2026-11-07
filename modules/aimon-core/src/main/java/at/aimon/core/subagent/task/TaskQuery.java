@@ -12,8 +12,7 @@ import at.aimon.core.base.Principal;
  * <p>
  * Each criterion is optional; an absent criterion matches everything. {@link #all()} returns the unfiltered query.
  * Filtering by {@code agentRuntimeId} is the primary scoping tool in a multi-instance deployment — a caller lists only
- * the
- * tasks belonging to its own agent runtime.
+ * the tasks belonging to its own agent runtime.
  */
 public final class TaskQuery {
 

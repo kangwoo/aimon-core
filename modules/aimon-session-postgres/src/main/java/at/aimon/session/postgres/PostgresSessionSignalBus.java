@@ -210,8 +210,7 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
      * fails alone. The statement's own error is logged and, if anything is thrown, attached to it as suppressed: a
      * statement that fails for a reason that is not a row (a timeout, a read-only standby) looks the same from here,
      * and the log is where that shows. Savepoints would find the row too, but at a round trip per row inside a
-     * transaction that holds
-     * every id it has taken until it commits; see the note on the high-water mark below.
+     * transaction that holds every id it has taken until it commits; see the note on the high-water mark below.
      *
      * <p>
      * <b>Nothing is published twice.</b> The fallback runs only when the statement failed, which is before a commit

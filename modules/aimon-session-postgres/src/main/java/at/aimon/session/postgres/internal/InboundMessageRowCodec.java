@@ -60,8 +60,8 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  * an inbox entry nobody can decode is a turn nobody runs.
  * <li><b>This build reading a newer entry</b> — the mirror of the case above, and the one this format created: a
  * node one release ahead can write a sixth {@code InputType}. Decoding goes through
- * {@link at.aimon.core.subagent.task.codec.UserInputCodec#decodeOrText(com.fasterxml.jackson.databind.JsonNode,
- * String, String)}, which falls back to the same {@code asText()} rendering and logs at {@code WARN} naming this
+ * {@link at.aimon.core.subagent.task.codec.UserInputCodec#decodeOrText(com.fasterxml.jackson.databind.JsonNode, String,
+ * String)}, which falls back to the same {@code asText()} rendering and logs at {@code WARN} naming this
  * session. Refusing would not
  * reject one entry: {@code collect} removes entries from the backend <em>before</em> this codec runs, so a throw
  * destroys everything that call collected.

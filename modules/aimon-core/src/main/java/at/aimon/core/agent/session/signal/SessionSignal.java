@@ -10,8 +10,8 @@ import at.aimon.core.agent.session.SessionId;
  *
  * <p>
  * Carries the {@link SignalKind} (interrupt, evict, yield, message-enqueued, event, turn-result, status), the
- * {@link SessionId} the signal applies to, the originating node id (so the receiving node can dedup
- * self-broadcast), and an opaque payload map. Immutable value object built via {@link Builder}.
+ * {@link SessionId} the signal applies to, the originating node id (so the receiving node can dedup self-broadcast),
+ * and an opaque payload map. Immutable value object built via {@link Builder}.
  */
 public final class SessionSignal {
 

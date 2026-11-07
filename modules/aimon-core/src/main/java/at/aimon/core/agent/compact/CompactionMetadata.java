@@ -162,8 +162,8 @@ public final class CompactionMetadata {
      * Whether the view was still at or above the blocking limit after this compaction. The rolling context engine
      * reaches that only at the blocking limit, when the messages the model has not answered yet keep the view there
      * after everything before them was absorbed; the default context engine, in view mode, when even a summary of the
-     * whole view does not fit. The view is then sent as it is (context-engine §13.10). Always
-     * {@code false} when the limit was not reported.
+     * whole view does not fit. The view is then sent as it is (context-engine §13.10). Always {@code false} when the
+     * limit was not reported.
      *
      * @return true when {@link #getBlockingLimit()} is reported and {@link #getPostCompactTokenCount()} reaches it
      */

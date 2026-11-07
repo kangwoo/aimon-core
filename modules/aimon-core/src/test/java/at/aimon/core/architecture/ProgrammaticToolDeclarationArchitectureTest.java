@@ -59,8 +59,8 @@ class ProgrammaticToolDeclarationArchitectureTest {
 
     /**
      * Classes the walk does not enter, nested classes included, because a class-level graph reads them as reaching a
-     * decision-15 type that no
-     * tool going through them calls. Each needs the reason a tool reaching it does not call a model or start a fork.
+     * decision-15 type that no tool going through them calls. Each needs the reason a tool reaching it does not call a
+     * model or start a fork.
      *
      * <ul>
      * <li>{@code ToolContextKeys} — a registry of typed key constants. Its keys name {@code WikiKnowledgeBase.class}

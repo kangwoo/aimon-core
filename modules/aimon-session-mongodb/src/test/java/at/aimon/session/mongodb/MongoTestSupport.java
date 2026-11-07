@@ -57,8 +57,7 @@ public final class MongoTestSupport {
 
     /**
      * Drops any existing collections and reapplies the DDL from {@code init.js} (translated to driver calls). Tests
-     * call
-     * this in {@code @BeforeEach} so each run starts from a known schema.
+     * call this in {@code @BeforeEach} so each run starts from a known schema.
      */
     public static void dropAndApplyDdl() {
         final MongoDatabase db = sharedDatabase();

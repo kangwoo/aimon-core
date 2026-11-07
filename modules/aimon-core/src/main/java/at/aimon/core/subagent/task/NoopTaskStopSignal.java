@@ -8,12 +8,9 @@ import java.util.function.Consumer;
  *
  * <p>
  * The default for a single-node deployment. With this signal installed, {@code Task.stop} still cancels tasks running
- * on
- * the local node directly through the handle registry; only <em>cross-node</em> propagation is disabled, so behaviour
- * is
- * byte-for-byte the pre-cross-node baseline. A scale-out deployment swaps in {@link InMemoryTaskStopSignal} (single
- * JVM)
- * or a shared-backend implementation (Redis pub/sub, ...).
+ * on the local node directly through the handle registry; only <em>cross-node</em> propagation is disabled, so
+ * behaviour is byte-for-byte the pre-cross-node baseline. A scale-out deployment swaps in
+ * {@link InMemoryTaskStopSignal} (single JVM) or a shared-backend implementation (Redis pub/sub, ...).
  */
 public final class NoopTaskStopSignal implements TaskStopSignal {
 

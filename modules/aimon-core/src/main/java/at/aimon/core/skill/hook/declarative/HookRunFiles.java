@@ -35,9 +35,8 @@ import at.aimon.core.skill.hook.action.HookScriptDirectory;
  * loaded is served until it reloads <em>or its entry is evicted</em> &mdash; the rule staging follows (EE-3), with the
  * copy in JVM memory instead of in the workspace, and as staging's copy is served only while it exists. Once evicted,
  * the next firing reads the source again: a skill edited since it was loaded then runs as it is now. A scanned skill
- * whose source changed since it was loaded is scanned again and served as it is now,
- * with one WARN; a skill assembled by hand is refused instead, because its directory may hold files it deliberately
- * left out.</li>
+ * whose source changed since it was loaded is scanned again and served as it is now, with one WARN; a skill assembled
+ * by hand is refused instead, because its directory may hold files it deliberately left out.</li>
  * </ul>
  *
  * <p>

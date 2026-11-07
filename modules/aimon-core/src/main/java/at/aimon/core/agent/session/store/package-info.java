@@ -28,14 +28,11 @@
  *
  * <p>
  * Election used to be {@code ConversationLock} in {@code aimon-session-base}, one module up from the record it
- * protected.
- * That split was not sustainable once the two had to be decided together: the SPI is keyed by
+ * protected. That split was not sustainable once the two had to be decided together: the SPI is keyed by
  * {@link at.aimon.core.agent.session.SessionId}, which lives here, so the module dependency can only point
- * one
- * way. The four distributed election backends ({@code aimon-session-redis}, {@code -postgres}, {@code -mongodb}, and
- * the
- * in-process default) implement the SPI from here and are unaffected by the move — their wire formats, key prefixes and
- * DDL are untouched.
+ * one way. The four distributed election backends ({@code aimon-session-redis}, {@code -postgres}, {@code -mongodb},
+ * and the in-process default) implement the SPI from here and are unaffected by the move — their wire formats, key
+ * prefixes and DDL are untouched.
  *
  * <h2>Which scope is which</h2>
  *
@@ -43,10 +40,8 @@
  * {@code SessionLeaseStore} and {@code SessionRecordStore} are <b>application-scoped</b> and shared by every
  * node. {@code DefaultSessionStore} is <b>node-scoped</b> — one per session manager — because it remembers which
  * leases the local node holds so record writes can be fenced without threading a token through the ReAct call chain.
- * This
- * is the {@code InMemoryTodoRepository} situation from the scope model: the instance's own lifetime and the scope of
- * what
- * it is keyed by are different questions.
+ * This is the {@code InMemoryTodoRepository} situation from the scope model: the instance's own lifetime and the scope
+ * of what it is keyed by are different questions.
  *
  * <p>
  * Everything here is named {@code Session*}, and that is what the restructure bought. Under the old vocabulary these

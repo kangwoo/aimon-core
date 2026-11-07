@@ -94,8 +94,7 @@ public final class WorkflowPatterns {
      *            the subagent that synthesizes the final answer from the winner (nullable — then no synthesis)
      * @param scoreSchema
      *            the JSON schema requesting a {@code {score: number}} verdict (nullable — then every candidate scores
-     *            as
-     *            NaN and none is selected)
+     *            as NaN and none is selected)
      * @return the judged result
      */
     public static JudgedResult judgePanel(WorkflowContext ctx, List<AgentTask> attempts, Subagent judge, int panelSize,

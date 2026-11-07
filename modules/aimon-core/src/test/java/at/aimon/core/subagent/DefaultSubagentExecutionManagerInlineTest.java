@@ -35,8 +35,7 @@ import at.aimon.core.subagent.execution.SubagentExecutor;
  * Covers the inline single-subagent execution primitive
  * {@link SubagentExecutionManager#execute(SubagentLaunchContext, Subagent, String)}: running a code-defined
  * {@link Subagent} once without registering it in the environment's {@link SubagentRegistry}. This is the foundation
- * the
- * workflow layer's {@code agent()} call builds on.
+ * the workflow layer's {@code agent()} call builds on.
  */
 @DisplayName("DefaultSubagentExecutionManager — inline subagent execution")
 class DefaultSubagentExecutionManagerInlineTest {

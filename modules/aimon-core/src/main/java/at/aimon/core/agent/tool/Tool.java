@@ -178,8 +178,8 @@ public interface Tool {
      * <li>{@link InterruptBehavior#NON_INTERRUPTIBLE} — no propagation; the tool runs to completion and interrupts are
      * deferred to the next iteration boundary.
      * <li>{@link InterruptBehavior#COOPERATIVE} — the tool polls the
-     * {@link at.aimon.core.agent.interrupt.CancellationSignal}
-     * exposed through {@link ToolContext} and returns early when cancelled.
+     * {@link at.aimon.core.agent.interrupt.CancellationSignal} exposed through {@link ToolContext} and returns early
+     * when cancelled.
      * <li>{@link InterruptBehavior#THREAD_INTERRUPT} — the executor may call {@code Thread.interrupt()} on the tool's
      * thread when the signal trips.
      * <li>{@link InterruptBehavior#EXTERNALLY_TERMINATED} — the tool registers a terminator callback via the
@@ -226,8 +226,8 @@ public interface Tool {
      * <p>
      * This is a different axis from {@link #getConcurrencyBehavior()} and neither can be derived from the other — a
      * read-only tool may still be {@link ConcurrencyBehavior#SEQUENTIAL} (contention on a rate-limited endpoint), and
-     * an
-     * idempotent <em>mutating</em> tool may be {@link ConcurrencyBehavior#CONCURRENT_SAFE}. Declare both independently.
+     * an idempotent <em>mutating</em> tool may be {@link ConcurrencyBehavior#CONCURRENT_SAFE}. Declare both
+     * independently.
      *
      * <p>
      * Two components read this declaration. {@code OrcaAgentExecutor} withholds the definitions of tools that exceed
@@ -307,9 +307,8 @@ public interface Tool {
      * This is a declaration about the tool's contract, not a policy: {@code false} says calling it from code breaks
      * something — it calls an LLM or starts a fork (nested work that grows outside the script's limits and budget), it
      * changes the set of tools (which a running script has frozen), or it waits for user input (a script never waits
-     * for
-     * a person). Which tools code may actually call is decided by the agent's {@code programmatic-tools} configuration,
-     * within this declaration ({@code docs/design/tool/programmatic-tool-calling.md} §7, decision 15).
+     * for a person). Which tools code may actually call is decided by the agent's {@code programmatic-tools}
+     * configuration, within this declaration ({@code docs/design/tool/programmatic-tool-calling.md} §7, decision 15).
      *
      * <p>
      * The default is {@code true}, except for a {@link ConcurrencyBehavior#DEDICATED_THREAD} tool, which is

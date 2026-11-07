@@ -64,8 +64,7 @@ import at.aimon.core.tools.monitor.MonitorStore;
  * monitor puts messages into a session's conversation that nobody typed, and a {@code command} monitor runs a shell
  * command for up to half an hour. The built-in {@code shell} source exists only when Bash does — turning Bash off turns
  * command monitors off with it, allowed-tools list or not. Host sources
- * ({@link Builder#addMonitorSource(MonitorSourceFactory)}) are how a
- * stack offers monitors without a shell.
+ * ({@link Builder#addMonitorSource(MonitorSourceFactory)}) are how a stack offers monitors without a shell.
  */
 public final class ToolSpec {
 
@@ -310,8 +309,7 @@ public final class ToolSpec {
 
     /**
      * Returns whether programmatic tool calling is assembled: the stack creates every code execution engine on the
-     * class
-     * path ({@code ServiceLoader}, {@code at.aimon.core.programmatic.CodeExecutionEngineFactory}), owns them, and
+     * class path ({@code ServiceLoader}, {@code at.aimon.core.programmatic.CodeExecutionEngineFactory}), owns them, and
      * registers {@code ExecuteCode} over them. An agent still opens tools to code in its own definition
      * ({@code programmatic-tools}).
      *

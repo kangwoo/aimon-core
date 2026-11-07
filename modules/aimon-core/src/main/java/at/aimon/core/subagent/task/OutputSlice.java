@@ -7,8 +7,7 @@ import java.util.Objects;
  *
  * <p>
  * The slice carries a run of characters starting at the requested {@code fromOffset} together with the cursor the
- * caller
- * should present next ({@link #getNextOffset()}), so incremental "tail the progress log" polling is a simple
+ * caller should present next ({@link #getNextOffset()}), so incremental "tail the progress log" polling is a simple
  * offset-advancing loop:
  *
  * <pre>

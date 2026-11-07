@@ -56,15 +56,15 @@ import at.aimon.core.shell.VirtualShell;
  * branch — {@code .worktrees/other/x} relative or absolute, or the branch's own {@code .worktrees/k/x} written
  * relative, in any letter case — is not a spelling of a branch path, so the scope cannot reduce it. It used to land
  * nested in the branch ({@code .worktrees/k/.worktrees/other/x}), outside the branch's rules, and a merge promoted it
- * into that other directory. The scope now refuses every operation on such a path, and leaves a
- * {@code .worktrees/} directory at the branch root — one a shell made, which bypasses the file tools — out of the
- * branch's listings, so a merge never sees it. This is the scope's reservation of its own directory name, not a path
- * rule: the branch rules above are still exactly the parent's, and the reservation holds for an assembly with no
- * rules. Only the name at the branch root is taken ({@code docs/.worktrees/x} is an ordinary file), and the branch's
- * own absolute root ({@code {workspace}/.worktrees/k/x}, as its shell prints it) keeps meaning the branch's
- * {@code x}. What is unchanged is the workspace root: the parent's file tools can still write under
- * {@code .worktrees/}, and the keys the workflow runner derives repeat from run to run ({@code a0} for every run's
- * first isolated step), so successive or concurrent runs in one workspace share a branch directory.
+ * into that other directory. The scope now refuses every operation on such a path, and leaves a {@code .worktrees/}
+ * directory at the branch root — one a shell made, which bypasses the file tools — out of the branch's listings, so a
+ * merge never sees it. This is the scope's reservation of its own directory name, not a path rule: the branch rules
+ * above are still exactly the parent's, and the reservation holds for an assembly with no rules. Only the name at the
+ * branch root is taken ({@code docs/.worktrees/x} is an ordinary file), and the branch's own absolute root
+ * ({@code {workspace}/.worktrees/k/x}, as its shell prints it) keeps meaning the branch's {@code x}. What is unchanged
+ * is the workspace root: the parent's file tools can still write under {@code .worktrees/}, and the keys the workflow
+ * runner derives repeat from run to run ({@code a0} for every run's first isolated step), so successive or concurrent
+ * runs in one workspace share a branch directory.
  *
  * <p>
  * <b>No nesting.</b> {@link #isolate} throws: a branch cannot be isolated again (a scope over a scope loses absolute

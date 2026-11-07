@@ -12,9 +12,9 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  *
  * <p>
  * Sampling suppression is one rule, not two: a model that refuses a caller-chosen {@code temperature} refuses it on
- * either endpoint, and the operator who set it deserves the same warning either way. Copying
- * the rule into a second request builder would create a second place for it to drift, and the drift would be silent —
- * a request that succeeds with settings other than the configured ones.
+ * either endpoint, and the operator who set it deserves the same warning either way. Copying the rule into a second
+ * request builder would create a second place for it to drift, and the drift would be silent — a request that succeeds
+ * with settings other than the configured ones.
  *
  * <p>
  * The reasoning-effort rules split along the same seam, and the split is the point. <strong>Which rungs a model
@@ -53,10 +53,10 @@ final class OpenAiRequestParameters {
      * <p>
      * Measured 2026-09-09: rejection is by <em>value</em>, not by presence. {@code gpt-5-nano} and {@code o4-mini}
      * answer 200 to {@code temperature: 1.0} and 400 to {@code 0.0} (<em>"Only the default (1) value is
-     * supported"</em>).
-     * Suppression is still right — omitting yields that same default, so nothing is lost on the wire and every other
-     * value is spared a 400 — but a caller who explicitly sets 1.0 gets a divergence warning for a call the API would
-     * have accepted. Modelling "only the default is accepted" precisely was judged not worth a new capability shape.
+     * supported"</em>). Suppression is still right — omitting yields that same default, so nothing is lost on the wire
+     * and every other value is spared a 400 — but a caller who explicitly sets 1.0 gets a divergence warning for a call
+     * the API would have accepted. Modelling "only the default is accepted" precisely was judged not worth a new
+     * capability shape.
      *
      * <p>
      * When sampling is accepted, a parameter is set if and only if somebody put a value on the request: the request's

@@ -13,9 +13,7 @@ import at.aimon.core.subagent.Subagent;
  * <p>
  * Both the ReAct path ({@link DefaultSubagentExecutor}) and the code-behavior path
  * ({@code at.aimon.core.subagent.behavior.SubagentBehaviorRunner}) resolve these identically, so the logic lives here
- * once
- * —
- * a change made in lockstep rather than duplicated in two files.
+ * once — a change made in lockstep rather than duplicated in two files.
  */
 public final class SubagentLlmDefaults {
 
@@ -53,9 +51,9 @@ public final class SubagentLlmDefaults {
      *
      * <p>
      * <b>Max-tokens the spawning agent does not state stays unset</b>, for the same reason as the sampling parameters
-     * below: the client then applies the limit it was configured with ({@code AnthropicConfig} and
-     * {@code OpenAIConfig} both fall back to their own {@code maxTokens}), as it does for the parent's own requests. A
-     * literal here used to pin every such fork to 4096 output tokens whatever the client had been built with.
+     * below: the client then applies the limit it was configured with ({@code AnthropicConfig} and {@code OpenAIConfig}
+     * both fall back to their own {@code maxTokens}), as it does for the parent's own requests. A literal here used to
+     * pin every such fork to 4096 output tokens whatever the client had been built with.
      *
      * <p>
      * <b>A sampling parameter the spawning agent does not state stays unset.</b> {@code temperature}, {@code topP} and

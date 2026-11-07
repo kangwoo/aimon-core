@@ -459,8 +459,7 @@ aimon:
   its own under one of those three subtrees names that slice in `spring.autoconfigure.exclude`. An application that declares its own `LlmClient`
   bean reaches neither branch, so its declaration is neither refused nor read — that application consumes it
   itself, which is what `AimonProperties.modelCapabilityRegistry(properties.getLlm())` is public for.
-  The CLI key on the same axis is camelCase and
-  lives in
+  The CLI key on the same axis is camelCase and lives in
   [`aimon-core-integration-via-cli-reference.en.md`](aimon-core-integration-via-cli-reference.en.md).
 - `aimon.llm.reasoning-effort` says **how hard the model should think** — one of `none` · `minimal` · `low` ·
   `medium` · `high`, with relaxed binding folding the case. Unlike the `anthropic` block just below it,

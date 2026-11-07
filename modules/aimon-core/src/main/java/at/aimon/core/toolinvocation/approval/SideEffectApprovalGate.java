@@ -209,16 +209,14 @@ public final class SideEffectApprovalGate {
      *
      * <p>
      * An {@link ToolDescriptor#isApprovalDelegated() approval-delegated} descriptor passes without a question. A call
-     * on
-     * the {@link ToolCallPath#CODE code path} is never asked about: only a remembered answer decides it, and without
+     * on the {@link ToolCallPath#CODE code path} is never asked about: only a remembered answer decides it, and without
      * one it is refused.
      *
      * <p>
      * {@code toolUse} is read for the prompt only. The decision keys on the approval key, never on the arguments:
-     * keying
-     * on arguments would make {@code Bash} a fresh question per command, which is the prompt storm the store exists to
-     * prevent. The user is told as much, because a prompt that shows one call and silently buys the rest is a prompt
-     * that misleads.
+     * keying on arguments would make {@code Bash} a fresh question per command, which is the prompt storm the store
+     * exists to prevent. The user is told as much, because a prompt that shows one call and silently buys the rest is a
+     * prompt that misleads.
      *
      * @param descriptor
      *            the descriptor of the resolved tool about to be dispatched, from the iteration's offer context (must

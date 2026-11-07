@@ -23,9 +23,8 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * Same sampling rule as the Chat path, for the same SDK reason: {@code temperature(Optional.empty())} and
  * {@code topP((Double) null)} both route through {@code JsonField.ofNullable} and put {@code "temperature": null} on
  * the wire, and {@code null} is not the one value these models accept, so it fails like any other. So omission is
- * "never
- * call the setter", and it is implemented through the shared {@link OpenAiRequestParameters#applySampling} so the two
- * endpoints cannot drift.
+ * "never call the setter", and it is implemented through the shared {@link OpenAiRequestParameters#applySampling} so
+ * the two endpoints cannot drift.
  *
  * <p>
  * Two differences from Chat are deliberate:
@@ -158,8 +157,7 @@ final class OpenAIResponsesRequestFactory {
      * The two parts are independent on purpose. The effort keeps both of its existing gates
      * ({@code supportsReasoningEffort}, then {@code maySendEffort}) with exactly their old semantics: a value that
      * fails either is omitted and reported, and now simply contributes nothing to the object rather than returning
-     * early from the whole method. The summary now has one gate,
-     * {@link ModelCapabilities#supportsReasoningSummary()}.
+     * early from the whole method. The summary now has one gate, {@link ModelCapabilities#supportsReasoningSummary()}.
      *
      * <p>
      * <strong>It used to have none, and the reasoning for that was right about the case it covered and silent about

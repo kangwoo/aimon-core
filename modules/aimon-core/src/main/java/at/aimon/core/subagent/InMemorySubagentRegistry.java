@@ -25,10 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * <b>Reload is a deliberate no-op.</b> Code-defined subagents have no external source to re-read.
  * {@link CompositeSubagentRegistry} propagates {@link #reloadAll()} / {@link #reloadSubagent(String)} unconditionally
- * to
- * every layer, so these methods MUST retain the in-memory state (no throw, no clear) — otherwise a file hot-reload
- * would
- * silently wipe the code-defined subagents.
+ * to every layer, so these methods MUST retain the in-memory state (no throw, no clear) — otherwise a file hot-reload
+ * would silently wipe the code-defined subagents.
  *
  * <p>
  * Thread-safe: backed by a {@link ConcurrentHashMap}.

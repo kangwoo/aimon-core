@@ -26,8 +26,8 @@ import ch.qos.logback.core.read.ListAppender;
  * All three backends remove an entry from storage <em>before</em> the codec runs, so a decode failure used to take
  * the whole batch with it: the readable messages were deleted and returned to nobody, and their submitters were left
  * waiting on turns that no node would ever run. The contract here is the fix, and it is a contract rather than three
- * tests because the three backends have to answer it identically — the design is
- * <a href="../../../../../../../../docs/design/session/inbox.md">inbox.md</a>.
+ * tests because the three backends have to answer it identically — the design is <a
+ * href="../../../../../../../../docs/design/session/inbox.md">inbox.md</a>.
  *
  * <p>
  * A backend joins by subclassing, implementing the three hooks below, and tagging itself {@code @Tag("docker")}.

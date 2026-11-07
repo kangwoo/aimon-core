@@ -295,13 +295,11 @@ final class AnthropicStreamingMapper {
 
     /**
      * Handles {@code content_block_stop}. When it closes a tool_use block, that block's arguments are fully streamed,
-     * so
-     * finalize the slot from the aggregator (a non-mutating read — {@code toLlmResponse()} remains authoritative) and
-     * emit one TOOL_USE_READY to the sink so the executor can start the tool during the remaining stream (design
-     * §4.1).
-     * Anthropic streams content blocks sequentially, so blocks close in ascending index order — the same order they
-     * appear in the final response, which is the order the anchor rule needs. Blocks of a kind that was never started
-     * are ignored.
+     * so finalize the slot from the aggregator (a non-mutating read — {@code toLlmResponse()} remains authoritative)
+     * and emit one TOOL_USE_READY to the sink so the executor can start the tool during the remaining stream (design
+     * §4.1). Anthropic streams content blocks sequentially, so blocks close in ascending index order — the same order
+     * they appear in the final response, which is the order the anchor rule needs. Blocks of a kind that was never
+     * started are ignored.
      */
     private void onContentBlockStop(RawContentBlockStopEvent event) {
         final long blockIndex = event.index();

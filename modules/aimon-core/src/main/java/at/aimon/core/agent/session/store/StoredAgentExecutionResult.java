@@ -18,8 +18,7 @@ import at.aimon.core.agent.session.signal.SessionSignal;
  * <ul>
  * <li><b>Idempotency replay</b> — every {@link IdempotencyStore} backend caches {@link IdempotencyEntry.Status#DONE}
  * results and rebuilds them on replay. The three backends each carried a byte-identical private copy of this class;
- * they
- * now share this one.
+ * they now share this one.
  * <li><b>Forwarded turns</b> — the holder publishes the terminal result of a forwarded turn on the
  * {@link SessionSignal.SignalKind#TURN_RESULT} rail, and the origin node rebuilds it to complete the future it
  * handed its caller (design §7.1 F6/F7).

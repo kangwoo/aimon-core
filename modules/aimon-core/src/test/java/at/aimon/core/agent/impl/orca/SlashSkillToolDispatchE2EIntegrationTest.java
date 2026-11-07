@@ -73,9 +73,8 @@ import at.aimon.core.tools.file.WriteTool;
  * <p>
  * A skill invoked as {@code /audit} runs its own ReAct loop, and that loop used to reach the agent's real
  * {@code ToolRegistry} through {@code ToolExecutionManager.executeAll} directly — no {@code PermissionRequest} hooks,
- * no
- * side-effect approval gate, no {@code PreTool} / {@code PostTool}. A tool the agent could not have run without asking
- * ran without asking as soon as the user typed a slash.
+ * no side-effect approval gate, no {@code PreTool} / {@code PostTool}. A tool the agent could not have run without
+ * asking ran without asking as soon as the user typed a slash.
  *
  * <p>
  * {@code OrcaAgentExecutor.executeCommand} now binds the agent's {@code ToolCallDispatcher} into the command

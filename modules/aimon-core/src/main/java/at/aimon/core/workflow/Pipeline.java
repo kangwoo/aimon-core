@@ -13,8 +13,7 @@ import java.util.function.Function;
  * Java generics cannot express an arbitrary-N pipeline through a single erased signature, so the two-stage
  * {@link WorkflowContext#pipeline(List, java.util.function.Function, java.util.function.BiFunction)} overload does
  * not generalise. This builder threads the intermediate type through each {@link Stage#then} call, giving compile-time
- * type safety for any number of stages. It is pure static composition — it desugars to
- * {@link WorkflowContext#parallel}
+ * type safety for any number of stages. It is pure static composition — it desugars to {@link WorkflowContext#parallel}
  * over per-item stage chains and adds no new execution primitive to the {@link WorkflowContext} SPI.
  *
  * <p>

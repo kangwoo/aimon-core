@@ -13,9 +13,8 @@ import at.aimon.core.agent.ExecutionId;
  *
  * <p>
  * Created per-request (not per-context) so that artifacts from different requests do not mix. Injected into
- * {@link at.aimon.core.agent.tool.ToolContext} under
- * {@code at.aimon.core.tools.ToolContextKeys#ARTIFACT_COLLECTOR} so that tools can register artifacts during
- * execution.
+ * {@link at.aimon.core.agent.tool.ToolContext} under {@code at.aimon.core.tools.ToolContextKeys#ARTIFACT_COLLECTOR} so
+ * that tools can register artifacts during execution.
  *
  * <p>
  * Thread-safe. Uses {@link CopyOnWriteArrayList} internally, so tools dispatched in parallel
@@ -156,8 +155,8 @@ public class ArtifactCollector {
      * <p>
      * The whole slice comes out of a single snapshot, so a concurrent {@link #add} can neither shift the window nor
      * invalidate it mid-read. An out-of-range {@code fromIndex} yields an empty list rather than throwing: it only
-     * means
-     * nothing was added since the mark, and one iteration's artifact bookkeeping is not worth failing a turn over.
+     * means nothing was added since the mark, and one iteration's artifact bookkeeping is not worth failing a turn
+     * over.
      *
      * @param fromIndex
      *            The number of artifacts already collected when the window opened; negative values are treated as 0

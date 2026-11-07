@@ -22,16 +22,13 @@ import at.aimon.core.llm.LlmResponse;
 
 /**
  * Characterization test for the <b>unsupported</b> case of two turns racing on the <b>same</b> {@code sessionId}
- * at
- * once. The supported concurrency model is different sessions of the same agent; running two turns against one
- * session is a caller error. This test does not endorse that usage — it pins down that the executor
- * <i>tolerates</i>
+ * at once. The supported concurrency model is different sessions of the same agent; running two turns against one
+ * session is a caller error. This test does not endorse that usage — it pins down that the executor <i>tolerates</i>
  * it rather than corrupting global state: both turns are pinned together at the LLM-call boundary (proving genuine
  * overlap), and the contract we lock in is that each turn completes without a thrown exception or deadlock and returns
  * its own well-formed result (a deterministic final answer plus at least its own user+assistant pair in the returned
  * history). Which turn's write ultimately wins on the shared memory is deliberately left unspecified — this test
- * asserts
- * tolerance, not a particular last-writer-wins ordering.
+ * asserts tolerance, not a particular last-writer-wins ordering.
  *
  * <p>
  * If a future change made concurrent same-session turns throw or deadlock, this test would fail and force an

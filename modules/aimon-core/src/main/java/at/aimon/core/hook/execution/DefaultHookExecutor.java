@@ -31,9 +31,8 @@ import at.aimon.core.hook.rewake.RewakeSpec;
  *
  * <p>
  * For {@link PreToolContext} hooks, accumulates {@link HookResult#getUpdatedInput()} across the chain — each hook sees
- * a
- * context whose {@code currentInput()} reflects mutations applied by previously run hooks. For {@link PostToolContext}
- * hooks the same is done with {@link HookResult#getUpdatedOutput()}.
+ * a context whose {@code currentInput()} reflects mutations applied by previously run hooks. For
+ * {@link PostToolContext} hooks the same is done with {@link HookResult#getUpdatedOutput()}.
  *
  * <p>
  * The final accumulated input/output is materialised on the last emitted {@link HookResult} (so callers can pull it via
@@ -268,9 +267,9 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * <p>
      * Exceptions inside the hook, and a pool that refuses it, are mapped through
      * {@link HookExecutionPolicy#onException(Exception)} — unless the hook declares fail-closed, in which case both
-     * block ({@link #onThrown}, {@link #onRejected}). Timeouts are
-     * mapped according to {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)} — the hook's own declaration,
-     * or the policy's {@link HookExecutionPolicy#timeoutBehavior()} when it made none: {@code FAIL_OPEN} returns
+     * block ({@link #onThrown}, {@link #onRejected}). Timeouts are mapped according to
+     * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)} — the hook's own declaration, or the policy's
+     * {@link HookExecutionPolicy#timeoutBehavior()} when it made none: {@code FAIL_OPEN} returns
      * {@link HookResult#success()} (with a WARN log), {@code FAIL_CLOSED} returns a BLOCKED result with a descriptive
      * feedback (with an ERROR log). An interrupted wait is always BLOCKED ({@link #onInterrupted}), unless the hook
      * {@linkplain ExecutionHook#ignoresInterrupt() asks to be waited for}.
@@ -316,8 +315,7 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * A failure <i>of the hook</i> goes through {@link #onThrown} ({@link HookExecutionPolicy#onException(Exception)}
      * unless the hook declares fail-closed); expiry goes through
      * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}. An interrupt goes through neither — see
-     * {@link #onInterrupted}
-     * for why it is answered with BLOCKED regardless of the policy.
+     * {@link #onInterrupted} for why it is answered with BLOCKED regardless of the policy.
      *
      * <p>
      * A hook that {@linkplain ExecutionHook#ignoresInterrupt() ignores an interrupt} is not cancelled by one: the wait

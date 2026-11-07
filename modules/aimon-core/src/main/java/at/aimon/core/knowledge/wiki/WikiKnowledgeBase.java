@@ -188,10 +188,10 @@ public interface WikiKnowledgeBase extends ApplicationScoped, AutoCloseable {
 
     /**
      * Runs a synthesis pass over the existing pages in the given scope, producing higher-level
-     * {@link WikiPageType#OVERVIEW} and {@link WikiPageType#SYNTHESIS} pages via the wired
-     * {@link SynthesisStrategy}. This is the second-pass workflow described in
-     * {@code docs/references/llm-wiki.md}: after a wiki has accumulated enough entity / concept pages, the LLM
-     * is asked to step back and write topic overviews and cross-cluster syntheses.
+     * {@link WikiPageType#OVERVIEW} and {@link WikiPageType#SYNTHESIS} pages via the wired {@link SynthesisStrategy}.
+     * This is the second-pass workflow described in {@code docs/references/llm-wiki.md}: after a wiki has accumulated
+     * enough entity / concept pages, the LLM is asked to step back and write topic overviews and cross-cluster
+     * syntheses.
      *
      * <p>
      * The default implementation throws {@link UnsupportedOperationException} so existing

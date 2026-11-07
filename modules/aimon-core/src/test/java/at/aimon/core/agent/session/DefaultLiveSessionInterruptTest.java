@@ -59,11 +59,10 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  *
  * <p>
  * The tests bypass {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutor} and wire a
- * {@link CapturingStreamingExecutor}
- * that publishes a {@link DefaultInterruptCoordinator} through the request's interrupt observer and parks on a
- * controllable future. This keeps the session-wiring surface (observer capture, ref clearing, queue listener
- * registration / filtering, interrupt forwarding, close-time unsubscribe) isolated from the executor's own interrupt
- * handling — which has dedicated coverage in {@code OrcaAgentExecutorInterruptTest}.
+ * {@link CapturingStreamingExecutor} that publishes a {@link DefaultInterruptCoordinator} through the request's
+ * interrupt observer and parks on a controllable future. This keeps the session-wiring surface (observer capture, ref
+ * clearing, queue listener registration / filtering, interrupt forwarding, close-time unsubscribe) isolated from the
+ * executor's own interrupt handling — which has dedicated coverage in {@code OrcaAgentExecutorInterruptTest}.
  */
 @DisplayName("DefaultLiveSession interrupt wiring")
 class DefaultLiveSessionInterruptTest {
@@ -516,8 +515,8 @@ class DefaultLiveSessionInterruptTest {
     /**
      * Streaming executor stub that emulates the Orca executor's interrupt contract: creates a fresh
      * {@link DefaultInterruptCoordinator} per invocation and publishes it to the request's interrupt observer before
-     * parking on a caller-controlled future. Tests observe the published coordinator via
-     * {@link #capturedCoordinator} and release the parked future via {@link #completeNext}.
+     * parking on a caller-controlled future. Tests observe the published coordinator via {@link #capturedCoordinator}
+     * and release the parked future via {@link #completeNext}.
      */
     private static final class CapturingStreamingExecutor
             implements

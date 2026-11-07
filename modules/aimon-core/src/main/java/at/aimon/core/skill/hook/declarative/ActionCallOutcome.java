@@ -14,8 +14,8 @@ import at.aimon.core.hook.execution.HookResult;
  * a non-2xx status, an MCP server that is not connected), or whose answer cannot be read as a decision, gave none; the
  * caller then decides what the missing verdict means, exactly as it does for a shell command that produced no exit
  * status. The "no verdict" side is therefore carried as a
- * {@link ShellHookOutcome#notRun(ShellHookOutcome.Unrun, String)
- * not-run outcome} and judged by the same rule ({@code ShellHookVerdicts}) rather than by a second one.
+ * {@link ShellHookOutcome#notRun(ShellHookOutcome.Unrun, String) not-run outcome} and judged by the same rule
+ * ({@code ShellHookVerdicts}) rather than by a second one.
  *
  * <p>
  * The detail of a not-run outcome is a fixed phrase, an HTTP status or an exception's type — never a URL, a header, a

@@ -25,11 +25,9 @@ import at.aimon.core.subagent.task.BackgroundTaskState;
  *
  * <p>
  * The {@code state} field is emitted verbatim (Jackson does not escape the enum name), so the store's terminal-guard
- * Lua
- * script can match {@code "state":"COMPLETED"} / {@code "FAILED"} / {@code "KILLED"} as a plain substring —
- * user-supplied
- * strings (e.g. {@code description}) can never forge that token because Jackson backslash-escapes the quotes inside
- * them.
+ * Lua script can match {@code "state":"COMPLETED"} / {@code "FAILED"} / {@code "KILLED"} as a plain substring —
+ * user-supplied strings (e.g. {@code description}) can never forge that token because Jackson backslash-escapes the
+ * quotes inside them.
  *
  * <p>
  * <b>{@code contextId} is a frozen wire key.</b> The agent-scope refactor renamed the accessor to

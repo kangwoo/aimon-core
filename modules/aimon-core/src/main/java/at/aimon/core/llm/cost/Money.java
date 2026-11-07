@@ -9,8 +9,7 @@ import java.util.Objects;
  *
  * <p>
  * Backed by {@link BigDecimal} so cost arithmetic (price-per-token multiplications and cross-iteration sums) stays
- * exact
- * — no binary floating-point drift. All arithmetic operations require both operands to share the same
+ * exact — no binary floating-point drift. All arithmetic operations require both operands to share the same
  * {@link #getCurrency() currency}; mixing currencies throws an {@link IllegalArgumentException} rather than silently
  * producing a nonsensical amount.
  *

@@ -218,8 +218,8 @@ class MongoScheduledExecutionGuardTest {
     /**
      * What makes the claim immune to this machine's clock, which no test against a container on the same machine can
      * show: the two clocks agree there, so a build reading the application's clock would pass. Every time in the
-     * request
-     * has to be {@code $$NOW}, and the only dates in it are the fire's slot and the "before everything" constant.
+     * request has to be {@code $$NOW}, and the only dates in it are the fire's slot and the "before everything"
+     * constant.
      */
     @Test
     @DisplayName("the claim sends $$NOW for every time, and no date but the slot: the application's clock has no say")

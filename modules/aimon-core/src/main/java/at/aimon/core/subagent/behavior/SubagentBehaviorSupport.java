@@ -101,8 +101,8 @@ public interface SubagentBehaviorSupport {
      *
      * <p>
      * The gateway's {@code <TranscriptBuffer>} type parameter only matters for prompt-too-long recovery (unused by
-     * the
-     * default gateway); a behavior calls {@code sendMessage(...)} without constructing any {@code TranscriptBuffer}.
+     * the default gateway); a behavior calls {@code sendMessage(...)} without constructing any
+     * {@code TranscriptBuffer}.
      *
      * @return the gateway, or empty if no LLM client is available
      */
@@ -130,8 +130,7 @@ public interface SubagentBehaviorSupport {
 
     /**
      * Returns a {@link ToolRegistry} filtered to the subagent's allow-list (by tool name), or the full registry when
-     * the
-     * subagent declares no tool restrictions — the same allow-list scope the ReAct path enforces at dispatch.
+     * the subagent declares no tool restrictions — the same allow-list scope the ReAct path enforces at dispatch.
      *
      * <p>
      * This is <b>exposed, not enforced</b>: a behavior is trusted Java code and can still reach every tool via

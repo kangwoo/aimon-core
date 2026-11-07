@@ -48,8 +48,7 @@ import at.aimon.core.hook.event.OnSessionStartContext;
  * Each call to {@link #submit(String)} builds a fresh {@link OrcaAgentExecutionRequest} internally using the
  * session's fixed {@link SessionId} and injects the session default {@link ExecutionBudget} from the options.
  * Because the same {@code SessionId} is reused across every turn, the executor's transcript manager
- * transparently
- * loads and appends to the same {@code TranscriptBuffer} — preserving history, artifacts,
+ * transparently loads and appends to the same {@code TranscriptBuffer} — preserving history, artifacts,
  * and CQ-03 mid-turn queue semantics between turns.
  *
  * <h2>Resource ownership</h2>
@@ -68,9 +67,9 @@ import at.aimon.core.hook.event.OnSessionStartContext;
  *
  * <p>
  * The session depends on the {@link AgentExecutor} abstraction rather than on a concrete implementation. Any executor
- * that produces {@link OrcaAgentExecutionResult} from {@link OrcaAgentRuntime} and
- * {@link OrcaAgentExecutionRequest} is acceptable — this keeps the session testable with a lightweight stub and lets
- * application code wrap the executor (e.g., via {@code InterceptingAgentExecutor}) without modifying session code.
+ * that produces {@link OrcaAgentExecutionResult} from {@link OrcaAgentRuntime} and {@link OrcaAgentExecutionRequest} is
+ * acceptable — this keeps the session testable with a lightweight stub and lets application code wrap the executor
+ * (e.g., via {@code InterceptingAgentExecutor}) without modifying session code.
  *
  * <h2>Thread-safety</h2>
  *
@@ -99,8 +98,8 @@ public final class DefaultLiveSession implements LiveSession {
     private final MessageQueueManager messageQueueManager;
     /**
      * Optional hook execution manager — when non-null, {@link #close()} fires {@code OnSessionEnd} hooks and the
-     * constructor fires {@code OnSessionStart} hooks. Legacy callers that omit it via the older
-     * 4-/5-arg constructors continue to work without firing the session-lifecycle chain.
+     * constructor fires {@code OnSessionStart} hooks. Legacy callers that omit it via the older 4-/5-arg constructors
+     * continue to work without firing the session-lifecycle chain.
      */
     private final HookExecutionManager hookExecutionManager;
     private volatile LiveSessionOptions options;
@@ -146,10 +145,10 @@ public final class DefaultLiveSession implements LiveSession {
      * Session-cumulative totals folded across every completed turn (turn count, iterations, token usage), so
      * {@link #status()} can report "this session used N tokens across M turns". Updated atomically via
      * {@link AtomicReference#updateAndGet} in {@link #clearActiveTurn} so overlapping turns (allowed only when no
-     * {@link MessageQueueManager} is wired) accumulate without losing updates. Starts at
-     * {@link SessionTotals#empty()} and only moves forward — survives {@link #close()}; a turn
-     * still in flight when {@link #close()} is called is folded once it settles. Turns that never publish a tracker
-     * (e.g. slash-command turns, which bypass the ReAct loop) are excluded.
+     * {@link MessageQueueManager} is wired) accumulate without losing updates. Starts at {@link SessionTotals#empty()}
+     * and only moves forward — survives {@link #close()}; a turn still in flight when {@link #close()} is called is
+     * folded once it settles. Turns that never publish a tracker (e.g. slash-command turns, which bypass the ReAct
+     * loop) are excluded.
      */
     private final AtomicReference<SessionTotals> sessionTotals = new AtomicReference<>(SessionTotals.empty());
     /**
@@ -181,8 +180,8 @@ public final class DefaultLiveSession implements LiveSession {
 
     /**
      * Creates a new session without a message-queue integration. Equivalent to the
-     * {@link #DefaultLiveSession(SessionId, OrcaAgentRuntime, AgentExecutor, LiveSessionOptions,
-     * MessageQueueManager) 5-arg constructor} with a {@code null} queue — {@link #offerAsync} will always return
+     * {@link #DefaultLiveSession(SessionId, OrcaAgentRuntime, AgentExecutor, LiveSessionOptions, MessageQueueManager)
+     * 5-arg constructor} with a {@code null} queue — {@link #offerAsync} will always return
      * {@link SubmitOutcome.Kind#EXECUTED} (never enqueue) and falls back to direct execution even under concurrent
      * access.
      */
@@ -443,8 +442,7 @@ public final class DefaultLiveSession implements LiveSession {
      * reported counters may be marginally stale relative to a concurrently advancing turn. Once a turn finishes the
      * live progress disappears; the turn's contribution is folded into the cumulative
      * {@link LiveSessionStatus#getSessionTotals() sessionTotals}, which stay visible after the session
-     * returns to
-     * {@code IDLE} / {@code CLOSED}.
+     * returns to {@code IDLE} / {@code CLOSED}.
      */
     @Override
     public LiveSessionStatus status() {
@@ -561,12 +559,9 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * Shared by {@link #submit(UserInput, SubmitOptions)} (which issues the id itself) and by the non-streaming
-     * fallback in
-     * {@link #submitAsync(TurnId, UserInput, SubmitOptions, Consumer)} (which must honour the caller's id). Routing
-     * both
-     * through here is what keeps {@link #currentTurnId()} reporting the id the caller passed even when the wired
-     * executor
-     * cannot stream.
+     * fallback in {@link #submitAsync(TurnId, UserInput, SubmitOptions, Consumer)} (which must honour the caller's id).
+     * Routing both through here is what keeps {@link #currentTurnId()} reporting the id the caller passed even when the
+     * wired executor cannot stream.
      */
     private AgentExecutionResult submitUnderTurn(TurnId turnId, UserInput input, SubmitOptions submitOptions) {
         final ActiveTurn turn = new ActiveTurn(turnId);
@@ -938,10 +933,9 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * <b>Context id contract:</b> the caller must build {@code input} with this session's
-     * {@link at.aimon.core.agent.AgentRuntime#getId()} as the {@code agentRuntimeId} so the CQ-03
-     * mid-turn drain in the Orca ReAct loop matches the input to the active turn. The web manager's
-     * {@code SessionInbox} forwarding path rebuilds the {@link QueuedInput} with the local ctxId before
-     * dispatching here (see routing design §3.4).
+     * {@link at.aimon.core.agent.AgentRuntime#getId()} as the {@code agentRuntimeId} so the CQ-03 mid-turn drain in the
+     * Orca ReAct loop matches the input to the active turn. The web manager's {@code SessionInbox} forwarding path
+     * rebuilds the {@link QueuedInput} with the local ctxId before dispatching here (see routing design §3.4).
      */
     @Override
     public void enqueueMidTurnInput(QueuedInput input) {
@@ -969,8 +963,8 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * The interrupt is a <b>request</b>, not a join: {@code close()} does not block until the turn observes it. The
-     * turn folds its counters into {@link #sessionTotals} whenever it settles, as
-     * {@link #clearActiveTurn(ActiveTurn)} works off the turn handle rather than the evicted session ref.
+     * turn folds its counters into {@link #sessionTotals} whenever it settles, as {@link #clearActiveTurn(ActiveTurn)}
+     * works off the turn handle rather than the evicted session ref.
      */
     @Override
     public void close() {

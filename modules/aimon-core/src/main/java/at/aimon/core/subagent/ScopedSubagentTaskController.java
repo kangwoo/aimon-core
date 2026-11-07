@@ -29,8 +29,7 @@ import at.aimon.core.subagent.task.TaskQuery;
  *
  * <p>
  * Because scoping keys off the task's stored {@code agentRuntimeId} (not the owning node), a same-context task running
- * on
- * another node in a scale-out deployment is still visible and stoppable, while a foreign-context task is denied on
+ * on another node in a scale-out deployment is still visible and stoppable, while a foreign-context task is denied on
  * every node.
  */
 public final class ScopedSubagentTaskController implements SubagentTaskController {
@@ -55,8 +54,7 @@ public final class ScopedSubagentTaskController implements SubagentTaskControlle
 
     /**
      * Wraps {@code delegate} so it is confined to {@code agentRuntimeId} when present, or returns {@code delegate}
-     * unchanged
-     * when it is empty.
+     * unchanged when it is empty.
      *
      * <p>
      * The empty case preserves legacy unscoped behavior for call paths that do not carry an agent runtime id (unit

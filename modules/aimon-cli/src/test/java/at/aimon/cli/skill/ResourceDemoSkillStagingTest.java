@@ -49,10 +49,9 @@ import at.aimon.core.tools.skill.SkillTool;
 /**
  * The CLI's bundled {@code resource-demo} skill keeps working now that {@code ${AIMON_SKILL_DIR}} is always a staged
  * copy (execution-environment-staging design §12): whichever repository the skill comes from — the materialized copy
- * the CLI
- * actually runs, the bundle's own file-based repository ({@code gradle run} / IDE), or the classpath (a packaged jar
- * whose materialization was skipped) — the model is handed one path under {@code .aimon-staged/} that its file tools
- * can read and its shell can run scripts from, and that the file tools cannot modify.
+ * the CLI actually runs, the bundle's own file-based repository ({@code gradle run} / IDE), or the classpath (a
+ * packaged jar whose materialization was skipped) — the model is handed one path under {@code .aimon-staged/} that its
+ * file tools can read and its shell can run scripts from, and that the file tools cannot modify.
  */
 @DisplayName("resource-demo is staged into the workspace from every skill repository shape")
 class ResourceDemoSkillStagingTest {

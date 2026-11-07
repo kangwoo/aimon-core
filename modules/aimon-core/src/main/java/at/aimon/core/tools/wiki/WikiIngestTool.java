@@ -30,11 +30,10 @@ import at.aimon.core.tools.ToolContextKeys;
  *
  * <p>
  * Reads raw source documents from the specified directory on the execution environment's {@link VirtualFileSystem},
- * processes them,
- * and indexes them in the {@link WikiKnowledgeBase}. The wiki knowledge base and scope are obtained from the
- * {@link ToolContext} using {@link ToolContextKeys#WIKI_KNOWLEDGE_BASE} and {@link ToolContextKeys#WIKI_SCOPE}.
- * The file system is the one the model's other file tools use: the execution environment's, obtained from
- * {@link ToolContextKeys#EXECUTION_ENVIRONMENT} on every call.
+ * processes them, and indexes them in the {@link WikiKnowledgeBase}. The wiki knowledge base and scope are obtained
+ * from the {@link ToolContext} using {@link ToolContextKeys#WIKI_KNOWLEDGE_BASE} and
+ * {@link ToolContextKeys#WIKI_SCOPE}. The file system is the one the model's other file tools use: the execution
+ * environment's, obtained from {@link ToolContextKeys#EXECUTION_ENVIRONMENT} on every call.
  *
  * <p>
  * Usage by LLM:
@@ -170,8 +169,7 @@ public class WikiIngestTool extends AbstractTool {
 
     /**
      * Not callable from model-written code: the wiki knowledge base calls an LLM, whose tokens and cost a script's
-     * budget does not see ({@code docs/design/tool/programmatic-tool-calling.md}
-     * decision 15).
+     * budget does not see ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
      */
     @Override
     public boolean isCodeCallable() {

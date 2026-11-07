@@ -45,8 +45,8 @@ import org.slf4j.LoggerFactory;
  * <li><b>Files that are there but cannot be read</b> &mdash; a non-regular file (e.g. a directory at the expected
  * path), an I/O error (permission denied, transient FS errors), or a path whose existence cannot be determined
  * (an unsearchable parent directory; the message carries the underlying exception class and message) &mdash; raise
- * {@link HookConfigParseException} as well. Treating such a layer
- * as absent would take every guard it declares off without a word, which is the failure a parse error is.
+ * {@link HookConfigParseException} as well. Treating such a layer as absent would take every guard it declares off
+ * without a word, which is the failure a parse error is.
  * <li><b>What the caller does with the exception</b> &mdash; at startup it stops the host
  * ({@link HookRegistryReloader#bootstrap()} propagates it); on a hot reload the previous config stays in force
  * ({@link HookRegistryReloader#reload}).

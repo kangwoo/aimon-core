@@ -28,8 +28,8 @@ import at.aimon.core.subagent.task.TaskQuery;
  * <p>
  * Each task snapshot is one row in {@code background_task}, keyed by {@code task_id}. The owning {@link Principal} is
  * flattened into three nullable columns ({@code owner_type} / {@code owner_id} / {@code owner_display_name}); every
- * other
- * field maps to its own typed column. {@code put} is an {@code INSERT ... ON CONFLICT (task_id) DO UPDATE} upsert.
+ * other field maps to its own typed column. {@code put} is an {@code INSERT ... ON CONFLICT (task_id) DO UPDATE}
+ * upsert.
  *
  * <p>
  * <b>Terminal-guarded transitions.</b> {@link #transition(String, BackgroundTaskState)} and
@@ -37,13 +37,11 @@ import at.aimon.core.subagent.task.TaskQuery;
  * (terminal) RETURNING ...} — the guard is evaluated atomically by Postgres, so an unknown task, an already
  * {@link BackgroundTaskState#isTerminal() terminal} task, and a lost race all yield {@link Optional#empty()}. A
  * heartbeat can therefore never resurrect a task that completed or was stopped concurrently. When a transition targets
- * a
- * terminal state the end time is stamped from {@link Clock#instant()}.
+ * a terminal state the end time is stamped from {@link Clock#instant()}.
  *
  * <p>
  * {@link #list(TaskQuery)} fetches every row, decodes each snapshot, and returns those the query matches — mirroring
- * the
- * reference stores so filter semantics stay identical across backends. All backend errors surface as
+ * the reference stores so filter semantics stay identical across backends. All backend errors surface as
  * {@link IllegalStateException} — the JDBC {@link SQLException} never crosses the module boundary.
  */
 public final class PostgresBackgroundTaskStore implements BackgroundTaskStore {

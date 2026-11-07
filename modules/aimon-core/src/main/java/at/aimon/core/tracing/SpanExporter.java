@@ -5,8 +5,8 @@ package at.aimon.core.tracing;
  *
  * <p>
  * External modules (e.g. {@code aimon-tracing-otlp}) map spans to OpenTelemetry GenAI semantic conventions so traces
- * can
- * be viewed in Jaeger / Tempo / Phoenix / Langfuse. {@link #export(TraceSpan)} must be non-blocking and never throw.
+ * can be viewed in Jaeger / Tempo / Phoenix / Langfuse. {@link #export(TraceSpan)} must be non-blocking and never
+ * throw.
  */
 public interface SpanExporter {
 

@@ -18,12 +18,10 @@ import at.aimon.core.agent.interrupt.InterruptReason;
  * <p>
  * When the fan-out pool became an unbounded cached pool, thread count stopped bounding LLM concurrency, so this
  * runner-owned {@link Semaphore} became the authoritative LLM-concurrency limit. A permit is acquired <b>only around
- * the
- * terminal leaf</b> (the {@code manager.execute} call) and released immediately after — never held across a fan-out
+ * the terminal leaf</b> (the {@code manager.execute} call) and released immediately after — never held across a fan-out
  * join or the opaque dispatcher thunk. Gating the thunk would hold a permit across a nested join and reintroduce a
  * permit-starvation deadlock (design §6.2); gating only the non-recursive leaf keeps the wait-for graph acyclic,
- * so
- * no permit-holder ever waits on another permit.
+ * so no permit-holder ever waits on another permit.
  *
  * <p>
  * <b>Acquire release contract (design §6.2).</b> A blocked {@link #around} is released by exactly two paths: (i)

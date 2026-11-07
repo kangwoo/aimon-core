@@ -27,10 +27,9 @@ import org.slf4j.LoggerFactory;
  * <p>
  * The transition goes through {@link BackgroundTaskStore#transition(String, BackgroundTaskState)}, whose terminal-guard
  * makes reaping idempotent and safe against a late completion: if the real owner finishes (or another reaper wins)
- * first
- * the task is already terminal and the reap is a no-op. A task with no recorded heartbeat is treated as heartbeated at
- * its {@link BackgroundTask#getStartTime() start time}, so a stalled task started before lease tracking was enabled
- * still ages normally rather than being reaped immediately or never.
+ * first the task is already terminal and the reap is a no-op. A task with no recorded heartbeat is treated as
+ * heartbeated at its {@link BackgroundTask#getStartTime() start time}, so a stalled task started before lease tracking
+ * was enabled still ages normally rather than being reaped immediately or never.
  *
  * <p>
  * <b>Lease false-positive.</b> If a node is merely stalled (a stop-the-world pause longer than the TTL) rather than

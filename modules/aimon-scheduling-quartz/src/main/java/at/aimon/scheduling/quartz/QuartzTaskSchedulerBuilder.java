@@ -242,8 +242,7 @@ public final class QuartzTaskSchedulerBuilder {
      * Each fire reaches it as a {@link at.aimon.core.scheduling.scheduler.ScheduledFire} carrying Quartz's scheduled
      * fire time and its cron slot. Pass {@code ScheduledTaskManager.asExecutor()}, or the executor a
      * {@code SchedulingEngineBuilder.taskSchedulerFactory} hands over; a {@code taskId -> ...} lambda implements only
-     * the
-     * task-id half and drops the slot a distributed guard needs.
+     * the task-id half and drops the slot a distributed guard needs.
      *
      * @param taskExecutor
      *            the task executor

@@ -6,8 +6,8 @@ import at.aimon.core.base.exception.AimonException;
 
 /**
  * Thrown by a fail-closed {@link at.aimon.core.agent.quota.QuotaGuard} when its
- * {@link at.aimon.core.agent.quota.UsageLedger}
- * failed, so the quota could not be judged or the usage could not be recorded.
+ * {@link at.aimon.core.agent.quota.UsageLedger} failed, so the quota could not be judged or the usage could not be
+ * recorded.
  *
  * <p>
  * An execution that sees it ends with {@link at.aimon.core.agent.budget.CompletionReason#ERROR}, not

@@ -78,9 +78,8 @@ public interface SessionRecordStore {
      * Atomically merges the message state from {@code snapshot} into the persisted record while preserving "side"
      * fields, none of which a {@link SessionSnapshot} represents — {@code compactionFailureCount} (written by the
      * compaction guard through {@link #incrementCompactionFailureCount(SessionId)} and
-     * {@link #resetCompactionFailureCount(SessionId)}),
-     * {@code agentRef} and {@code owner} (established by {@link #provision(SessionId, String)} and
-     * {@link #provision(SessionId, String, Principal)}), and the pair
+     * {@link #resetCompactionFailureCount(SessionId)}), {@code agentRef} and {@code owner} (established by
+     * {@link #provision(SessionId, String)} and {@link #provision(SessionId, String, Principal)}), and the pair
      * {@code sessionTotals} / {@code budgetOverride} (written by the live session that runs the session's turns,
      * through {@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget)}). If no record
      * exists yet, a fresh record is created from the snapshot, with every side field at its default.
@@ -215,8 +214,8 @@ public interface SessionRecordStore {
      *
      * <p>
      * No-op when no record exists yet: this write follows provisioning, whether by
-     * {@link #provision(SessionId, String)} at claim time or by
-     * {@link #mergeFromSnapshot(SessionSnapshot)} on the first turn.
+     * {@link #provision(SessionId, String)} at claim time or by {@link #mergeFromSnapshot(SessionSnapshot)} on the
+     * first turn.
      *
      * @implSpec Must write both fields, and only these two, in one operation that is mutually exclusive against a
      *           concurrent {@link #mergeFromSnapshot(SessionSnapshot)}. The race is not merely a multi-node
@@ -278,9 +277,9 @@ public interface SessionRecordStore {
      * a single successful compaction has in full, so there is nothing to accumulate and no lost update to fear.
      *
      * @implSpec Must write only this field, in one operation that is mutually exclusive against a concurrent
-     *           {@link #mergeFromSnapshot(SessionSnapshot)} or
-     *           {@link #incrementCompactionFailureCount(SessionId)} for the same {@link SessionId}. No {@code default},
-     *           for the reason given on {@link #mergeFromSnapshot(SessionSnapshot)}.
+     *           {@link #mergeFromSnapshot(SessionSnapshot)} or {@link #incrementCompactionFailureCount(SessionId)} for
+     *           the same {@link SessionId}. No {@code default}, for the reason given on
+     *           {@link #mergeFromSnapshot(SessionSnapshot)}.
      *
      * @param sessionId
      *            the session id (must not be null)
@@ -297,8 +296,7 @@ public interface SessionRecordStore {
      * this package (design §3.6, enforced by {@code SessionRecordSoleWriterArchitectureTest}). What the narrowing
      * prevents is not corruption — the returned object is an independent copy, so a mutation would change nothing
      * persisted — but the silent no-op of a caller believing it wrote. There is no downcast to reach for: writes are
-     * the
-     * named primitives on this interface, and in-package writers copy through
+     * the named primitives on this interface, and in-package writers copy through
      * {@link SessionRecord#copyOf(SessionRecordView)}.
      *
      * @param sessionId

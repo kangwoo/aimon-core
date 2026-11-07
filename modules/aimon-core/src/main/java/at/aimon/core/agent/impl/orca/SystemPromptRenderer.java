@@ -114,14 +114,13 @@ final class SystemPromptRenderer {
 
     /**
      * Overload of {@link #buildSystemPromptParts(AgentContent, Map, EnvironmentDescriptor)} that additionally appends
-     * the
-     * {@link ContextBlockKind#SYSTEM SYSTEM}-kind blocks assembled by the wired context assembler.
+     * the {@link ContextBlockKind#SYSTEM SYSTEM}-kind blocks assembled by the wired context assembler.
      *
      * <p>
      * The assembled blocks are appended after the memory segment as their own parts, tagged {@code context:<key>}.
-     * Non-SYSTEM blocks are ignored here (they are injected as synthetic user messages). When
-     * {@code assembledContext} is empty — always the case under the NOOP assembler — the output is bit-identical to the
-     * 3-arg form, preserving the {@code concatenated()} invariant enforced by the system-prompt regression tests.
+     * Non-SYSTEM blocks are ignored here (they are injected as synthetic user messages). When {@code assembledContext}
+     * is empty — always the case under the NOOP assembler — the output is bit-identical to the 3-arg form, preserving
+     * the {@code concatenated()} invariant enforced by the system-prompt regression tests.
      *
      * @param agentContent
      *            the agent content containing the base system prompt (must not be null)

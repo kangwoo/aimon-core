@@ -54,12 +54,11 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <p>
  * Cancellation cuts the transport, never the stream. The SDK is assembled over this module's own OkHttp transport
  * ({@link OpenAIAbortableHttpClient}) so that each cancellable streaming call has an abort object
- * ({@link OpenAICallAbort}) whose
- * lever is {@code okhttp3.Call.cancel()} on the attempt in flight — registered with the token <em>before</em> the
- * request goes out, so the header wait and every SDK retry are covered, and refused by the transport hook on any
- * attempt the SDK would make after it. {@code StreamResponse.close()} is run on the consumer thread only, once, after
- * its own read has unwound; it is not thread-safe against that read and is not the lever. A call whose token can
- * never fire ({@code LlmCancellation.none()}) opens no abort object and carries no abort key.
+ * ({@link OpenAICallAbort}) whose lever is {@code okhttp3.Call.cancel()} on the attempt in flight — registered with the
+ * token <em>before</em> the request goes out, so the header wait and every SDK retry are covered, and refused by the
+ * transport hook on any attempt the SDK would make after it. {@code StreamResponse.close()} is run on the consumer
+ * thread only, once, after its own read has unwound; it is not thread-safe against that read and is not the lever. A
+ * call whose token can never fire ({@code LlmCancellation.none()}) opens no abort object and carries no abort key.
  *
  * <p>
  * Key features:
@@ -717,8 +716,7 @@ public class OpenAILlmClient implements LlmClient, AutoCloseable {
      * The registry is caller-supplied, and {@link #exchangeFor} — this method's only caller — runs <em>outside</em>
      * the streaming path's try: an exception escaping here would bypass both the exception mapper and
      * the cancellation classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a
-     * third-party bug
-     * costs a warning rather than the request.
+     * third-party bug costs a warning rather than the request.
      */
     private ModelCapabilities capabilitiesFor(String modelName) {
         try {

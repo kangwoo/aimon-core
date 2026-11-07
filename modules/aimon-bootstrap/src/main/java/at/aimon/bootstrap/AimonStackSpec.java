@@ -620,8 +620,7 @@ public final class AimonStackSpec {
          * A skill directory, or anything inside one, may be a link. It is followed when it resolves inside the
          * bundle's own {@code skills/} directory or inside one of these roots; a skill with a link that resolves
          * anywhere else does not load, and only that skill (execution-environment-staging design §10). The default is
-         * no
-         * roots: links must stay inside {@code skills/}.
+         * no roots: links must stay inside {@code skills/}.
          *
          * <p>
          * <b>What it reaches.</b> Agents the stack loads by name ({@link AgentSpec#named}), and of those only a

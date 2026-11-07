@@ -26,8 +26,7 @@ import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
  * {@link RewakeSpecConfig.TriggerConfig}.
  * <li>{@code delay} and {@code timeout} accept either shorthand ({@code "5m"}, {@code "1h30m"}, {@code "30s"}) or
  * ISO-8601 ({@code "PT1H"}). Strings starting with {@code P} or {@code p} are delegated to {@link Duration#parse};
- * other
- * strings go through the shorthand parser.
+ * other strings go through the shorthand parser.
  * <li>{@code cron} requires a valid five-field expression ({@link at.aimon.core.scheduling.cron.UnixCronExpression});
  * {@code zone} defaults to {@code UTC} when omitted.
  * <li>{@code event} requires non-blank {@code type} and {@code key}.

@@ -36,8 +36,8 @@ import at.aimon.core.llm.ToolUse;
 
 /**
  * Default {@link RewakeFireListener} that re-hydrates the originating
- * {@link at.aimon.core.agent.AgentRuntime AgentRuntime} and re-dispatches the originating hook when
- * a scheduled envelope fires.
+ * {@link at.aimon.core.agent.AgentRuntime AgentRuntime} and re-dispatches the originating hook when a scheduled
+ * envelope fires.
  *
  * <p>
  * <b>Supported event types.</b> Per design §4 the listener honors:
@@ -53,13 +53,12 @@ import at.aimon.core.llm.ToolUse;
  *
  * <p>
  * <b>Unsupported event types are dropped.</b> {@link HookEventType#PERMISSION_REQUEST} and
- * {@link HookEventType#PERMISSION_DENIED} are rejected upstream at envelope creation time
- * (see {@link RewakeEnvelopes#from(HookEventType, HookContext, ExecutionHook, RewakeSpec)
- * RewakeEnvelopes.from}). {@link HookEventType#POST_TOOL}, {@link HookEventType#POST_COMPACT},
- * {@link HookEventType#ON_START}, {@link HookEventType#ON_STOP}, {@link HookEventType#SUBAGENT_START},
- * {@link HookEventType#SUBAGENT_STOP} reach the listener but are dropped with a WARN — their contexts require
- * heavyweight runtime state (post-tool result, transcript buffer, compaction metadata, …) that the envelope does not
- * capture.
+ * {@link HookEventType#PERMISSION_DENIED} are rejected upstream at envelope creation time (see
+ * {@link RewakeEnvelopes#from(HookEventType, HookContext, ExecutionHook, RewakeSpec) RewakeEnvelopes.from}).
+ * {@link HookEventType#POST_TOOL}, {@link HookEventType#POST_COMPACT}, {@link HookEventType#ON_START},
+ * {@link HookEventType#ON_STOP}, {@link HookEventType#SUBAGENT_START}, {@link HookEventType#SUBAGENT_STOP} reach the
+ * listener but are dropped with a WARN — their contexts require heavyweight runtime state (post-tool result, transcript
+ * buffer, compaction metadata, …) that the envelope does not capture.
  *
  * <p>
  * <b>Best-effort delivery.</b> The listener silently drops fires when:

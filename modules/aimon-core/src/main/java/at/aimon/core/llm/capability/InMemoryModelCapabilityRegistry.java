@@ -51,19 +51,19 @@ import at.aimon.core.llm.ReasoningEffort;
  * <p>
  * That is the programmatic path. The same extension is reachable from configuration —
  * {@code llm.modelCapabilities.<model>} in the CLI's yaml, {@code aimon.llm.model-capabilities.<model>} in the Spring
- * Boot starter — and both surfaces arrive here through
- * {@link #withDefaultsExtendedBy(Map)}, which is where the rules governing a declared entry live.
+ * Boot starter — and both surfaces arrive here through {@link #withDefaultsExtendedBy(Map)}, which is where the rules
+ * governing a declared entry live.
  *
  * <p>
  * <strong>The table describes two vendors</strong>, and one instance of it is read by both clients. The
  * {@code claude-*} rows come in two shapes — six prefixes that state two flags (the names they match refuse the
  * sampling parameters <em>and</em> speak the {@link ThinkingDialect#ADAPTIVE} thinking dialect) and five that state
  * the dialect alone — and the {@code gpt-*} / {@code o*} rows cannot match a {@code claude-*} name or the other way
- * round, so the two blocks do not interfere. What they do share is the
- * look-up: a {@code claude-*} name reaching {@code OpenAILlmClient} through an OpenAI-compatible gateway resolves to
- * the Anthropic rows and has its sampling suppressed too. That is the right answer arriving from an unexpected
- * direction, and it is stated here because it is invisible from either client's source. The dialect travels the same
- * way and costs nothing there: no OpenAI path reads it.
+ * round, so the two blocks do not interfere. What they do share is the look-up: a {@code claude-*} name reaching
+ * {@code OpenAILlmClient} through an OpenAI-compatible gateway resolves to the Anthropic rows and has its sampling
+ * suppressed too. That is the right answer arriving from an unexpected direction, and it is stated here because it is
+ * invisible from either client's source. The dialect travels the same way and costs nothing there: no OpenAI path reads
+ * it.
  *
  * <p>
  * <strong>The dialect half of the Anthropic block is measured, 2026-09-10</strong>: five prefix rows carrying nothing
@@ -504,12 +504,11 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * direction for one flag and not for the row.</strong> Dropping {@code supportsReasoningTraceRoundTrip} keeps the
      * name on Chat Completions, which costs reasoning replay rather than the request (one measured exception:
      * {@code gpt-5.6-terra}, whose tools requests that endpoint refuses unless the effort is {@code none}). For the
-     * other flags fail-open
-     * means "send what the caller configured", and the rows that say otherwise say it because the model answers HTTP
-     * 400: dropping {@code supportsSamplingParameters(false)} — which the o-series rows, the {@code gpt-5} rows and
-     * six of the {@code claude-*} rows all state — puts a configured {@code temperature} back on the wire, and an
-     * o-series declaration that keeps {@code supportsReasoningEffort} but drops the {@code LOW} floor lets
-     * {@code minimal} through. Restate every flag the built-in row sets if the deployment behind the name is the
+     * other flags fail-open means "send what the caller configured", and the rows that say otherwise say it because the
+     * model answers HTTP 400: dropping {@code supportsSamplingParameters(false)} — which the o-series rows, the
+     * {@code gpt-5} rows and six of the {@code claude-*} rows all state — puts a configured {@code temperature} back on
+     * the wire, and an o-series declaration that keeps {@code supportsReasoningEffort} but drops the {@code LOW} floor
+     * lets {@code minimal} through. Restate every flag the built-in row sets if the deployment behind the name is the
      * model that row describes.
      * </ul>
      *

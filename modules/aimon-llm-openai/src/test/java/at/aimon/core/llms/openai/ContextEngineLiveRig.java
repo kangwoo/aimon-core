@@ -89,15 +89,13 @@ import at.aimon.core.tools.session.SessionHistoryTool;
  * rolling cycle there costs hundreds of thousands of billed tokens. The engine's own builder takes a
  * {@link ModelContextWindowRegistry}, so this rig hands it a small window instead — every other collaborator is the one
  * the factory would build ({@link DefaultCompactionEngine}, {@link SessionHistoryTool},
- * {@link HeuristicTokenEstimator}).
- * No production seam was added for the tests.
+ * {@link HeuristicTokenEstimator}). No production seam was added for the tests.
  *
  * <p>
  * <strong>What the numbers do.</strong> Effective window 7,000 tokens; the rolling engine triggers at 30% of it
  * (2,100), keeps a 10% tail and aims for an 8% summary, and elides tool results over 300 tokens. A filler turn adds
- * about 400 tokens, so a rolling cycle comes every three turns or so once
- * the first one is in. The summary calls go through a
- * {@link SummaryCallRecorder}, so a test can see every one of them, and whether the provider accepted it.
+ * about 400 tokens, so a rolling cycle comes every three turns or so once the first one is in. The summary calls go
+ * through a {@link SummaryCallRecorder}, so a test can see every one of them, and whether the provider accepted it.
  *
  * <p>
  * <strong>The comparison profile.</strong> Those numbers are chosen to reach a rolling cycle in a few turns, and they
@@ -111,8 +109,7 @@ import at.aimon.core.tools.session.SessionHistoryTool;
  *
  * <p>
  * Kept in step with the copy in {@code aimon-llm-anthropic}: the two provider modules share no test source set, and
- * this
- * wiring is the part of the scenario that does not depend on the provider.
+ * this wiring is the part of the scenario that does not depend on the provider.
  */
 final class ContextEngineLiveRig {
 

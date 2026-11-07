@@ -69,13 +69,10 @@ import at.aimon.core.llm.token.TokenEstimator;
  * {@link CompactionEngine#summarize}, and records the summary as the view state's span
  * ({@link TranscriptBuffer#summarizeView}), so the view is the {@code [boundary, summary]} pair followed by the
  * unanswered messages, verbatim, and the log still holds every message. Only at the blocking limit, and only when
- * leaving
- * the unanswered messages out could not bring the view under it, are they summarized too, in the same {@code prepare}.
- * A
- * recovery drops what the strategy left out, as
- * seq ranges
- * ({@link TranscriptBuffer#dropFromView}) mapped back by position (see {@link RecoveryDiff}). The view is
- * {@link ViewProjection projected} from the log and the view state (context-engine §4).
+ * leaving the unanswered messages out could not bring the view under it, are they summarized too, in the same
+ * {@code prepare}. A recovery drops what the strategy left out, as seq ranges ({@link TranscriptBuffer#dropFromView})
+ * mapped back by position (see {@link RecoveryDiff}). The view is {@link ViewProjection projected} from the log and the
+ * view state (context-engine §4).
  * <li><b>In place</b> &mdash; a version-1 log, which cannot persist a view state. A compaction or a recovery replaces
  * the buffer's messages through {@link TranscriptBuffer#replaceWith(List)}, and the view is the buffer as the decision
  * left it. It is also where a version-2 transcript falls back to, with a one-time WARN, when this engine lacks what

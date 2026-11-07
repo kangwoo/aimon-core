@@ -10,11 +10,10 @@ import java.util.Objects;
  * {@link at.aimon.core.workflow.exception.WorkflowBudgetExceededException}. The agent-count ceiling is a
  * runaway-script backstop (always active, default {@value #DEFAULT_MAX_AGENTS}); the token ceiling is opt-in
  * ({@code maxTokens <= 0} means unlimited, normalized to {@code 0}) and enforced <em>post-hoc</em> — a subagent's
- * tokens
- * are counted after it finishes, so the agent that crosses the line still completes and further {@code agent()} calls
- * are refused. Under concurrent fan-out, up to the fan-out width (see the concurrency config's {@code perBatchMax} /
- * {@code maxConcurrency}) may cross the line before it is observed; the accumulator is exact, so the next
- * {@code agent()} past the ceiling is always refused. Size the ceiling with that overshoot (roughly
+ * tokens are counted after it finishes, so the agent that crosses the line still completes and further {@code agent()}
+ * calls are refused. Under concurrent fan-out, up to the fan-out width (see the concurrency config's
+ * {@code perBatchMax} / {@code maxConcurrency}) may cross the line before it is observed; the accumulator is exact, so
+ * the next {@code agent()} past the ceiling is always refused. Size the ceiling with that overshoot (roughly
  * {@code perBatchMax × per-agent tokens}) in mind.
  *
  * <p>

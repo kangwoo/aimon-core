@@ -10,8 +10,7 @@ import at.aimon.core.base.exception.AimonException;
  * <p>
  * Indicates a transient backend failure rather than a held-lease condition; "held by another holder" is signaled by an
  * empty {@code Optional} from {@code tryAcquire} — or by {@code ClaimResult.HeldElsewhere} from {@code claim} — never
- * by
- * this exception. Callers (typically the session manager) translate this into a {@code 503 Service Unavailable}.
+ * by this exception. Callers (typically the session manager) translate this into a {@code 503 Service Unavailable}.
  *
  * <p>
  * Formerly {@code at.aimon.session.base.exception.ConversationLockException}; it moved with the SPI it belongs to.

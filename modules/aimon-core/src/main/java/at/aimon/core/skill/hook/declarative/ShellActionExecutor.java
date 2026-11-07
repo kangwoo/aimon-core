@@ -121,8 +121,8 @@ public interface ShellActionExecutor {
     /**
      * Runs a skill-declared hook's action with the declaring skill's directory in
      * {@link SkillHookEnv#AIMON_SKILL_DIR}. The hook decides <em>whether</em> there is a directory; the executor
-     * decides how its value reaches the shell. Same contract as
-     * {@link #run(ShellAction, HookContext, Map, String)} otherwise: never throws.
+     * decides how its value reaches the shell. Same contract as {@link #run(ShellAction, HookContext, Map, String)}
+     * otherwise: never throws.
      *
      * <p>
      * The default stages the skill into the context's execution environment and exports the path it returned, then

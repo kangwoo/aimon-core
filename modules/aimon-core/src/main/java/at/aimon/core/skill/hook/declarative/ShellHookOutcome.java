@@ -125,9 +125,8 @@ public final class ShellHookOutcome {
 
         /**
          * The shell found the command but could not execute it (exit
-         * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE}:
-         * no execute permission, or not an executable). Only a guard event reads the exit code this way — see
-         * {@link ShellHookOutcome#asGuardAnswer()}.
+         * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE}: no execute permission, or not an executable). Only a
+         * guard event reads the exit code this way — see {@link ShellHookOutcome#asGuardAnswer()}.
          */
         COMMAND_NOT_EXECUTABLE("command not executable"),
 

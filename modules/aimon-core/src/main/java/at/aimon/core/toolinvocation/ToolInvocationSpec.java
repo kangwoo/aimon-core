@@ -26,8 +26,7 @@ import at.aimon.core.llm.ToolUse;
  *
  * <ul>
  * <li>{@link #getInvokerType()} / {@link #getInvokerName()} — {@code MAIN_AGENT} vs {@code SUBAGENT} identity woven
- * into
- * every hook context.
+ * into every hook context.
  * <li>{@link #getAllowedTools()} — the main agent runs unrestricted (empty list); a subagent constrains dispatch to its
  * declared allow-list.
  * <li>{@link #getOrigin()} — the path the call arrived by, woven into the PermissionRequest / PreTool / PostTool

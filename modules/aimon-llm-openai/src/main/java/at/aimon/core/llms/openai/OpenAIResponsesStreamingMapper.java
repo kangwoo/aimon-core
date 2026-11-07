@@ -48,10 +48,9 @@ import at.aimon.core.llm.streaming.LlmStreamSink;
  *
  * <p>
  * <strong>Reasoning <em>text</em> is a different payload from the reasoning <em>item</em>, and the two never
- * mix.</strong>
- * The item above carries {@code encrypted_content} and is what the next request replays; the deltas below carry a
- * server-written summary (or, on a model that emits it, raw reasoning text) and are what a person watches. They are
- * forwarded only when this deployment asked for a summary, and {@code addReasoningTrace} is never called with one —
+ * mix.</strong> The item above carries {@code encrypted_content} and is what the next request replays; the deltas below
+ * carry a server-written summary (or, on a model that emits it, raw reasoning text) and are what a person watches. They
+ * are forwarded only when this deployment asked for a summary, and {@code addReasoningTrace} is never called with one —
  * putting summary text into a trace would change what is replayed to the model on the next iteration.
  *
  * <p>

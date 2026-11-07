@@ -24,13 +24,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * On its own daemon thread, every {@link TaskLeaseConfig#getHeartbeatInterval() heartbeat interval}, this publisher
- * asks
- * a supplier for the ids of the tasks still running (or queued) on this node and calls
+ * asks a supplier for the ids of the tasks still running (or queued) on this node and calls
  * {@link BackgroundTaskStore#heartbeat(String, java.time.Instant)} for each, stamping the current instant. The store's
  * terminal-guard makes a heartbeat for a task that just completed a harmless no-op. Because the id supplier is the
  * node's {@link RunningTaskRegistry#taskIds() live handle set}, a healthy node keeps its own tasks perpetually fresh,
- * so
- * the {@link ZombieTaskReaper} only ever reaps tasks whose owner has actually stopped heartbeating.
+ * so the {@link ZombieTaskReaper} only ever reaps tasks whose owner has actually stopped heartbeating.
  *
  * <p>
  * A failed heartbeat (e.g. a transient store error) is logged and swallowed per task, so one unreachable task never
@@ -39,12 +37,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * <b>Bounded sweep latency.</b> A node may own many tasks, and each heartbeat is a round-trip to a shared store;
- * renewed
- * strictly one-by-one, a slow store could make a single sweep outlast the {@link TaskLeaseConfig#getLeaseTtl() lease
- * TTL} and let the {@link ZombieTaskReaper} reap a still-live task. To keep the sweep's wall-clock bounded, heartbeats
- * are dispatched concurrently across a small pool (all backends renew independent task keys thread-safely), and a sweep
- * that still runs past half the lease TTL logs a warning so the operator can raise {@code leaseTtl} or reduce per-node
- * task count before false reaps occur.
+ * renewed strictly one-by-one, a slow store could make a single sweep outlast the
+ * {@link TaskLeaseConfig#getLeaseTtl() lease TTL} and let the {@link ZombieTaskReaper} reap a still-live task. To keep
+ * the sweep's wall-clock bounded, heartbeats are dispatched concurrently across a small pool (all backends renew
+ * independent task keys thread-safely), and a sweep that still runs past half the lease TTL logs a warning so the
+ * operator can raise {@code leaseTtl} or reduce per-node task count before false reaps occur.
  */
 public final class TaskHeartbeatPublisher implements AutoCloseable {
 
@@ -133,9 +130,8 @@ public final class TaskHeartbeatPublisher implements AutoCloseable {
     /**
      * Renews the heartbeat of every currently-owned task exactly once. Exposed for deterministic testing; the scheduled
      * loop calls this on each tick. Heartbeats are dispatched concurrently (bounded by
-     * {@link #MAX_RENEWAL_PARALLELISM})
-     * and the call blocks until every one completes, so the returned count is deterministic. A per-task failure is
-     * logged and skipped; a sweep that outruns half the lease TTL logs a warning.
+     * {@link #MAX_RENEWAL_PARALLELISM}) and the call blocks until every one completes, so the returned count is
+     * deterministic. A per-task failure is logged and skipped; a sweep that outruns half the lease TTL logs a warning.
      *
      * @return the number of tasks whose heartbeat was successfully renewed
      */

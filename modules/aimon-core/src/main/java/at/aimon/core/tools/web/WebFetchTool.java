@@ -189,8 +189,7 @@ public class WebFetchTool extends AbstractTool {
 
     /**
      * Declares {@link ConcurrencyBehavior#CONCURRENT_SAFE}. {@code WebFetch} performs an idempotent external GET; all
-     * of
-     * its dependencies are stateless or synchronized (the cache repository is synchronized), and it allocates its
+     * of its dependencies are stateless or synchronized (the cache repository is synchronized), and it allocates its
      * mutable state locally per invocation, so it is safe to run concurrently with other concurrent-safe tools.
      *
      * <p>

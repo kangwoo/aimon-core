@@ -35,10 +35,10 @@ import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
  * <p>
  * This is the <em>canonical</em> dialect of the framework. Every {@code ScheduledTask.cronExpression} is in it, it is
  * what {@code ScheduleTaskTool} advertises to the model, and every
- * {@link at.aimon.core.scheduling.scheduler.TaskScheduler}
- * backend receives it. A backend whose engine speaks something else translates on the way in — never the other way
- * round, because this direction is the lossless one: Quartz's seconds field, {@code L}, {@code W} and {@code #} have no
- * five-field equivalent, while every expression below maps onto a Quartz one.
+ * {@link at.aimon.core.scheduling.scheduler.TaskScheduler} backend receives it. A backend whose engine speaks something
+ * else translates on the way in — never the other way round, because this direction is the lossless one: Quartz's
+ * seconds field, {@code L}, {@code W} and {@code #} have no five-field equivalent, while every expression below maps
+ * onto a Quartz one.
  *
  * <p>
  * <b>The grammar, stated because a translator has to cover all of it.</b> Fields are minute, hour, day-of-month, month,
@@ -161,8 +161,7 @@ public final class UnixCronExpression {
      *
      * <p>
      * Use {@link #daysOfWeek()} to act on it — the text is in this dialect's numbering and means a different set of
-     * days
-     * read as Quartz.
+     * days read as Quartz.
      */
     public String dayOfWeek() {
         return dayOfWeek;
@@ -185,8 +184,7 @@ public final class UnixCronExpression {
      *
      * <p>
      * {@code *} is unrestricted; everything else is a restriction. {@code &#42;/1} is the one expression that reads
-     * like
-     * a restriction and is not: cron-utils folds it back into {@code *}, so it is reported unrestricted.
+     * like a restriction and is not: cron-utils folds it back into {@code *}, so it is reported unrestricted.
      */
     public boolean isDayOfMonthRestricted() {
         return dayOfMonthRestricted;
@@ -203,8 +201,7 @@ public final class UnixCronExpression {
      * <p>
      * This dialect <b>unions</b> them: {@code 0 0 15 * MON} fires on Mondays <em>and</em> on the 15th. The combination
      * is worth asking about because it is the one an engine with Quartz's day-field rules cannot express at all —
-     * there,
-     * one of the two fields must be {@code ?} — so such an expression can only be rejected, never translated.
+     * there, one of the two fields must be {@code ?} — so such an expression can only be rejected, never translated.
      */
     public boolean restrictsBothDayFields() {
         return dayOfMonthRestricted && isDayOfWeekRestricted();
@@ -229,9 +226,8 @@ public final class UnixCronExpression {
      * <p>
      * A fire on time sits on the grid and maps to itself. A fire that came late — a misfire recovered after downtime, a
      * scheduler that ran behind — sits after its grid point and maps back to it, which is what lets two nodes agree
-     * that
-     * a late fire and an on-time fire of the same slot are one fire. It never maps forward: the next grid point belongs
-     * to the next fire.
+     * that a late fire and an on-time fire of the same slot are one fire. It never maps forward: the next grid point
+     * belongs to the next fire.
      *
      * <p>
      * <b>Daylight saving.</b> The grid is wall-clock time, and when the clocks go back a wall-clock time happens twice.

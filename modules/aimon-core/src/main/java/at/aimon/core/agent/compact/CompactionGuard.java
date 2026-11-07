@@ -19,8 +19,7 @@ import at.aimon.core.llm.LlmModel;
  * <li><b>Precondition checks</b> ensuring the last message is in a stable state (no pending tool_use) before invoking
  * the engine.
  * <li><b>Circuit breaker</b> per {@link at.aimon.core.agent.session.SessionId} — opens after a fixed number
- * of
- * consecutive AUTO compaction failures and is reset by a successful compaction or a successful MANUAL invocation.
+ * of consecutive AUTO compaction failures and is reset by a successful compaction or a successful MANUAL invocation.
  * <li><b>Per-session serialization</b> so two threads cannot enter compaction for the same session concurrently.
  * </ul>
  *
@@ -159,8 +158,8 @@ public interface CompactionGuard {
 
     /**
      * Same as {@link #forceCompact(TranscriptBuffer, LlmModel, HookRegistry)}, for a run that has no session of its
-     * own. See {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, ExecutionId)}
-     * for why the id has to be passed explicitly.
+     * own. See {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, ExecutionId)} for why the id has to be
+     * passed explicitly.
      *
      * <p>
      * The default delegates to the three-argument {@code forceCompact} rather than to the four-argument

@@ -4,20 +4,17 @@
 
 /**
  * File-backed implementations of the memory store SPIs
- * ({@link at.aimon.core.memory.WorkspaceStore},
- * {@link at.aimon.core.memory.ObservationStore},
+ * ({@link at.aimon.core.memory.WorkspaceStore}, {@link at.aimon.core.memory.ObservationStore},
  * {@link at.aimon.core.memory.RepresentationStore}).
  *
  * <p>
  * Persistence model: append-only JSON Lines log per store, replayed at open
  * time to rebuild an in-memory mirror, with configurable fsync. Logs are
- * {@linkplain at.aimon.core.memory.file.Compactable compacted} (rewritten to the
- * minimal live-state line set via an atomic temp-file swap) on demand,
- * automatically once they grow past a threshold, and at open time — so disk
+ * {@linkplain at.aimon.core.memory.file.Compactable compacted} (rewritten to the minimal live-state line set via an
+ * atomic temp-file swap) on demand, automatically once they grow past a threshold, and at open time — so disk
  * usage and restart-replay cost track live state, not total mutation history.
- * {@link at.aimon.core.memory.file.FileMemoryMaintenanceScheduler} drives retention
- * (soft-delete purge + representation pruning) and compaction on a schedule,
- * independent of the Dreamer.
+ * {@link at.aimon.core.memory.file.FileMemoryMaintenanceScheduler} drives retention (soft-delete purge + representation
+ * pruning) and compaction on a schedule, independent of the Dreamer.
  *
  * <p>
  * Single-JVM only — these stores hold an exclusive OS file lock on a sidecar

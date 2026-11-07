@@ -38,9 +38,8 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * Every path — blocking or streaming, with or without a cancellation token — records the same thing, built from the
  * {@link LlmResponse}: its {@link TokenUsage} (prompt = the whole input context, cache counters when measured), the
  * {@link LlmResponse#getServiceTier() service tier} and {@link LlmResponse#getServedModel() model} the provider
- * reports,
- * the model the call asked for, and the call's start and completion time from this decorator's {@link Clock}. A
- * streaming call is recorded once, from its final response, never per chunk.
+ * reports, the model the call asked for, and the call's start and completion time from this decorator's {@link Clock}.
+ * A streaming call is recorded once, from its final response, never per chunk.
  *
  * <p>
  * A call that throws records nothing — with one exception, which is the one that can still cost money: when a

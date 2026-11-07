@@ -1561,8 +1561,7 @@ public class AimonProperties implements InitializingBean {
              * neither is written the parameter is left out and the server's default applies — the client does not
              * invent a value. It applies to every request this client sends whose model carries no temperature, not
              * only to agent turns. Subagent requests follow the same rule: they inherit the parent agent's value, and
-             * when
-             * its definition has none nothing is put on the request, so this key reaches them.
+             * when its definition has none nothing is put on the request, so this key reaches them.
              *
              * <p>
              * A value outside the range fails startup naming this property. A model whose capability row says it
@@ -1815,8 +1814,7 @@ public class AimonProperties implements InitializingBean {
              * <p>
              * A value outside the range fails startup naming this property. A value inside it is not sent either:
              * Anthropic API version 2026-10-21 refuses {@code temperature} on every model, so the client omits it,
-             * warns
-             * once, and the server's default sampling applies.
+             * warns once, and the server's default sampling applies.
              *
              * <p>
              * This is the only sampling key in the block. The Anthropic API has no penalties, and the client reads
@@ -2563,8 +2561,8 @@ public class AimonProperties implements InitializingBean {
 
     /**
      * Programmatic tool calling ({@code aimon.programmatic.*}; {@code docs/design/tool/programmatic-tool-calling.md}
-     * §16): whether the stack assembles the code execution engines on the class path and registers
-     * {@code ExecuteCode}, and the limits every program is held to. What an agent opens to code is its own definition
+     * §16): whether the stack assembles the code execution engines on the class path and registers {@code ExecuteCode},
+     * and the limits every program is held to. What an agent opens to code is its own definition
      * ({@code programmatic-tools}).
      */
     public static class Programmatic {

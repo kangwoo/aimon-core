@@ -19,9 +19,8 @@ import at.aimon.core.agent.session.SessionId;
  * <li>{@link Source#LOCAL_HOLDER} — the querying node currently holds the session; the snapshot is the live,
  * authoritative {@link at.aimon.core.agent.session.LiveSession#status() status()} read with zero staleness.
  * <li>{@link Source#REMOTE_PROJECTION} — another node holds the session; the snapshot is the last value that node
- * pushed
- * onto the {@code STATUS} rail, tagged with the origin node and the {@code observedAt} instant so callers can judge how
- * stale it may be.
+ * pushed onto the {@code STATUS} rail, tagged with the origin node and the {@code observedAt} instant so callers can
+ * judge how stale it may be.
  * <li>{@link Source#UNKNOWN} — no node has been observed running this session (never started here, evicted, or not
  * yet projected); no snapshot is available.
  * </ul>

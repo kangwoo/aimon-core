@@ -25,11 +25,9 @@ import at.aimon.core.llm.Role;
  *
  * <p>
  * Every rolling test in {@code aimon-core} answers its summary calls with a canned string, so none of them can show
- * that
- * the requests the engine builds — the summary call, and the next turn's view with a summary span in it — are ones the
- * provider accepts, or that a real model that has lost a fact from its view gets it back, from the summary or by
- * calling
- * {@code SessionHistory} over a range sealed out of the record. This class runs the scenario of
+ * that the requests the engine builds — the summary call, and the next turn's view with a summary span in it — are ones
+ * the provider accepts, or that a real model that has lost a fact from its view gets it back, from the summary or by
+ * calling {@code SessionHistory} over a range sealed out of the record. This class runs the scenario of
  * {@code AnthropicContextEngineLiveTest} on Chat Completions; the Anthropic class also covers extended thinking and the
  * default engine's view mode, which are not repeated here.
  *
@@ -42,9 +40,8 @@ import at.aimon.core.llm.Role;
  *
  * <p>
  * <strong>Cost.</strong> About 15 billed calls on {@code gpt-4o-mini}, well under 30,000 tokens. Whether the model
- * calls
- * the report tool on the first turn is the model's decision, so its absence aborts through {@code assumeTrue} rather
- * than failing; everything after that point is red when it goes wrong.
+ * calls the report tool on the first turn is the model's decision, so its absence aborts through {@code assumeTrue}
+ * rather than failing; everything after that point is red when it goes wrong.
  *
  * <p>
  * Gated on {@code OPENAI_KEY} like {@link OpenAILlmClientIntegrationTest}, so a keyless build — CI included — skips it.

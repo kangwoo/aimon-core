@@ -13,10 +13,9 @@ import at.aimon.core.subagent.SubagentRegistry;
  * <p>
  * {@code AgentTask} carries an <b>inline</b> subagent, and {@code Subagent.builder} requires {@code name} +
  * {@code systemPrompt}. Implementations therefore synthesize a <b>deterministic, cross-JVM-stable</b> name so
- * shared/persistent resume caches replay without spurious misses. A registered subagent of the same
- * {@code agentType} is not used in place of the inline one: the default resolver consults the registry for its
- * {@code attributes} only (EE-42), so that an execution environment provider can place the step as it would place that
- * subagent.
+ * shared/persistent resume caches replay without spurious misses. A registered subagent of the same {@code agentType}
+ * is not used in place of the inline one: the default resolver consults the registry for its {@code attributes} only
+ * (EE-42), so that an execution environment provider can place the step as it would place that subagent.
  */
 public interface SubagentResolver {
 

@@ -42,13 +42,11 @@ import at.aimon.core.tools.code.ExecuteCodeToolProvider;
 /**
  * The starter's half of {@code ExecuteCode} assembly: {@code aimon.programmatic.enabled} hands engine discovery to the
  * stack, which registers {@code ExecuteCode} exactly once; an agent that opens nothing to code is not offered it; and
- * an
- * {@link AimonAgentCustomizer} bean cannot add a second provider.
+ * an {@link AimonAgentCustomizer} bean cannot add a second provider.
  *
  * <p>
  * The engine is discovered through {@code META-INF/services} in this module's test resources
- * ({@link TestEngineFactory}),
- * so the path is the one a real engine module takes.
+ * ({@link TestEngineFactory}), so the path is the one a real engine module takes.
  */
 @DisplayName("Starter — ExecuteCode assembly")
 class AimonProgrammaticTest {

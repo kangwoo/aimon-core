@@ -14,10 +14,9 @@
  * <p>
  * <b>Not every cron in this module comes through here.</b> The rewake trigger and the Dreamer schedule are configured
  * with Quartz expressions directly, by an operator writing a config file rather than by an agent registering a task,
- * and
- * they are documented as Quartz-native. They never reach {@code ScheduledTaskManager} and so never touch this package.
- * The dual dialect is deliberate; what was not deliberate was the third case, where a task stored in one dialect was
- * validated in the other.
+ * and they are documented as Quartz-native. They never reach {@code ScheduledTaskManager} and so never touch this
+ * package. The dual dialect is deliberate; what was not deliberate was the third case, where a task stored in one
+ * dialect was validated in the other.
  *
  * @see at.aimon.core.scheduling.cron.UnixCronExpression
  */

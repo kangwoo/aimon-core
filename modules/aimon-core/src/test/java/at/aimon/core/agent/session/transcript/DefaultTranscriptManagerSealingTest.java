@@ -87,8 +87,8 @@ class DefaultTranscriptManagerSealingTest {
     /**
      * A seal that lands marks the buffer dirty and so raises a checkpoint. On a background mailbox that checkpoint has
      * to be drained <em>before</em> the authoritative save: raised after the flush barrier it would be written after
-     * the
-     * save by the writer thread, and undo whatever an out-of-turn write (a delete, a persisted rewind) did in between.
+     * the save by the writer thread, and undo whatever an out-of-turn write (a delete, a persisted rewind) did in
+     * between.
      */
     @Test
     void theSealsCheckpointIsDrainedBeforeTheAuthoritativeSave() {

@@ -41,8 +41,7 @@ import at.aimon.core.tools.HookRegistryAccess;
  * <p>
  * The bound agent runtime id captured on each {@link ScheduledTask} comes from the
  * {@link at.aimon.core.tools.ToolContextKeys#AGENT_RUNTIME_ID AGENT_RUNTIME_ID} tool context entry &mdash;
- * the
- * <i>current agent's</i> agent-scoped {@link AgentRuntimeId}. Because that id is derived deterministically
+ * the <i>current agent's</i> agent-scoped {@link AgentRuntimeId}. Because that id is derived deterministically
  * from the agent (e.g., {@code agent:<name>}), it resolves to the same {@code AgentRuntime} on every cron
  * re-fire, even after the originating session has ended.
  *

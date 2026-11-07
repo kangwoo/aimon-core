@@ -288,8 +288,7 @@ The builder does not require `executionEnvironmentProvider`, so leaving it out s
 execution gets an unavailable environment: `KnowledgeSearch` still runs, but the file tools and `Bash` fail on every
 call with "Execution environment unavailable: no ExecutionEnvironmentProvider is configured". The runtime does not close
 the provider (unless given `ownsExecutionEnvironmentProvider(true)`), so call `environmentProvider.close()` at
-application shutdown. For the rest
-of the assembly (the LLM client, the executor, registering the runtime), follow
+application shutdown. For the rest of the assembly (the LLM client, the executor, registering the runtime), follow
 [`embedding-agent-in-application.en.md`](../../getting-started/embedding-agent-in-application.en.md).
 
 ### The agent's RAG flow

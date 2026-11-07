@@ -12,12 +12,10 @@ import at.aimon.core.agent.session.SessionId;
  *
  * <p>
  * It also keeps the sweeper honest about scope. The sweeper used to broadcast an {@code EVICT}, which told every node
- * to
- * tear the session down: drop the cached live session, purge approvals, complete the event streams. But the
- * session
- * survives its holder — a successor may already have claimed it and be running the next turn — so that broadcast could
- * evict a live session over a turn that died on a different node. What is dead is one attempt, and this interface is
- * shaped to say only that.
+ * to tear the session down: drop the cached live session, purge approvals, complete the event streams. But the
+ * session survives its holder — a successor may already have claimed it and be running the next turn — so that
+ * broadcast could evict a live session over a turn that died on a different node. What is dead is one attempt, and this
+ * interface is shaped to say only that.
  */
 @FunctionalInterface
 interface LostTurnAnnouncer {
@@ -28,11 +26,9 @@ interface LostTurnAnnouncer {
      *
      * <p>
      * The lost turn is addressed by its idempotency key rather than by a {@code TurnId}: no surviving node knows the
-     * id.
-     * That is not a gap to close by guessing one — the reservation records its holder, not its turn, and the id lived
-     * in
-     * the inbox envelope the dead holder consumed. Every reservation the sweeper can see has a key, since a submission
-     * without one never reserves anything.
+     * id. That is not a gap to close by guessing one — the reservation records its holder, not its turn, and the id
+     * lived in the inbox envelope the dead holder consumed. Every reservation the sweeper can see has a key, since a
+     * submission without one never reserves anything.
      *
      * <p>
      * Implementations must not throw; the sweeper guards the call anyway so one bad announcement cannot kill the

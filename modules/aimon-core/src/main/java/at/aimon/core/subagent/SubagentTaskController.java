@@ -11,8 +11,7 @@ import at.aimon.core.subagent.task.TaskQuery;
  *
  * <p>
  * This is the SPI the {@code TaskList} and {@code TaskStop} tools depend on. {@link SubagentExecutionManager} extends
- * it
- * so the same component that spawns background tasks also governs them, but the narrow interface keeps the tools
+ * it so the same component that spawns background tasks also governs them, but the narrow interface keeps the tools
  * decoupled from the full execution surface (Interface Segregation).
  *
  * <p>

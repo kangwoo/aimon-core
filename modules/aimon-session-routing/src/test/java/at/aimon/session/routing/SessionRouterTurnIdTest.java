@@ -17,8 +17,7 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
  * Turn addressing across the manager boundary: the id a submitter is handed must be the id the turn actually runs
- * under,
- * and it must be usable to stop that turn and only that turn.
+ * under, and it must be usable to stop that turn and only that turn.
  *
  * <p>
  * The queued case is the one worth the wiring. A submitter whose node does not hold the lock gets back a

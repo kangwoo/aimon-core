@@ -110,8 +110,7 @@ public final class ClasspathAgentBundleLoader implements AgentBundleLoader {
      * Creates a new ClasspathAgentBundleLoader with custom dependencies and a default {@link MarkdownSkillParser}.
      * Frontmatter {@code shell} hook actions on bundled skills will fail at parse time; use
      * {@link #ClasspathAgentBundleLoader(String, AgentDefinitionParser, ClassLoader, SkillParser)} to inject a parser
-     * wired with a {@link at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor
-     * DefaultShellActionExecutor}.
+     * wired with a {@link at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor DefaultShellActionExecutor}.
      *
      * @param basePath
      *            the classpath base path for agent directories (must not be null)

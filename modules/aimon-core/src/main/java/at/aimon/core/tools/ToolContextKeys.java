@@ -235,8 +235,8 @@ public final class ToolContextKeys {
      *
      * <p>
      * Injected into {@link ToolContext} when the tool registry is a
-     * {@link at.aimon.core.agent.tool.search.ToolSearchCatalog},
-     * enabling the {@code ToolSearchTool} to search and activate deferred tools within the current session.
+     * {@link at.aimon.core.agent.tool.search.ToolSearchCatalog}, enabling the {@code ToolSearchTool} to search and
+     * activate deferred tools within the current session.
      */
     public static final ToolContextKey<ToolSearchRegistry> TOOL_SEARCH_REGISTRY = ToolContextKey
             .of("toolSearchRegistry", ToolSearchRegistry.class);
@@ -348,8 +348,7 @@ public final class ToolContextKeys {
      * Bound by the main loop when it builds the turn's context, by a fork when it builds its own context, and by the
      * agent executor into the hand-built context of a slash command, whose skill loop narrows it to the skill's
      * registry and {@code allowed-tools}. A consumer that finds it absent refuses to run the call; nothing falls back
-     * to
-     * calling the execution manager directly.
+     * to calling the execution manager directly.
      *
      * <p>
      * Write-once: no site needs to rebind it within one context, because each of the above builds a new context. A
@@ -392,8 +391,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Bound once per execution by the loop that runs it — the main loop per turn, starting at the agent's allow-list
-     * and
-     * programmatic settings; a fork, starting at its effective scope; a slash skill's loop, starting at the skill's
+     * and programmatic settings; a fork, starting at its effective scope; a slash skill's loop, starting at the skill's
      * effective values. {@code SkillTool} narrows it when it activates an inline skill, and the loop applies the
      * narrowing from its next iteration ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). Absent — an
      * embedder calling {@code SkillTool} outside those loops — an inline skill narrows nothing, the behaviour before
@@ -531,8 +529,7 @@ public final class ToolContextKeys {
      * Published by a fork running under a deadline (an execution policy with a wall clock). A spawn site reads it into
      * the launch context ({@code SubagentLaunchContext#getParentDeadline()}) so the fork it starts is held to the
      * earlier of its own policy's deadline and this one: a child under a policy is never given more time than its
-     * parent
-     * has left (a child without a policy takes no deadline from it and stops with its parent by cancellation).
+     * parent has left (a child without a policy takes no deadline from it and stops with its parent by cancellation).
      * Absent when the run has no deadline — a session's turn among them, whose wall-clock budget is checked between
      * iterations rather than anchored as a deadline.
      *
@@ -549,8 +546,7 @@ public final class ToolContextKeys {
      * The turn's executor publishes its runtime's engine; a fork publishes the engine it runs under. A spawn site reads
      * it into the launch context ({@code SubagentLaunchContext#getParentContextEngine()}), and a fork whose policy
      * asks for it ({@code SubagentExecutionPolicy#isInheritContextEngine()}) runs under it instead of its executor's
-     * own.
-     * Shared, not copied: what the engine keeps per conversation is keyed on each run's own transcript.
+     * own. Shared, not copied: what the engine keeps per conversation is keyed on each run's own transcript.
      *
      * <p>
      * Write-once, for the same reason as {@link #HOOK_REGISTRY}.

@@ -420,8 +420,7 @@ UI 가 스트림 시작을 보지 못했다면 닫을 것도 없다. 여기서 d
 전에 호출별 transport abort 를 `cancellation.onCancel(abort::abort)` 로 등록하므로, 숙고만 흐르는 창에서 취소가
 걸리면 인터럽트를 건 스레드가 그 호출의 전송을 끊고, 막혀 있던 소비 스레드의 read 가 실패해 호출은
 `LlmCallCancelledException` 으로 풀린다([`cancellation.md`](cancellation.md) §4.1). 스트림을 닫는 것은 레버가 아니라
-소비 스레드다. 그것은 여기에 checkpoint 를 두었다면
-닿았을 프리픽스 보존 경로와 같은 곳이며, 예외 하나 늦을 뿐이다.
+소비 스레드다. 그것은 여기에 checkpoint 를 두었다면 닿았을 프리픽스 보존 경로와 같은 곳이며, 예외 하나 늦을 뿐이다.
 
 ### 7.4 새 이벤트는 최소로 — `AssistantReasoningDelta` 하나
 

@@ -47,8 +47,7 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  * <p>
  * <strong>CRITICAL</strong>: This tools will OVERWRITE existing files. Overwriting an existing file requires that the
  * file was {@code Read} in this execution and has not changed since (execution-environment-files design §5); a new file
- * needs
- * no read. For existing files, prefer using Edit tools for targeted modifications.
+ * needs no read. For existing files, prefer using Edit tools for targeted modifications.
  *
  * <p>
  * Example usage:
@@ -233,8 +232,7 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
      *
      * <p>
      * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no execution environment in
-     * the
-     * context to resolve it against. A configured pattern then denies the call rather than guessing.
+     * the context to resolve it against. A configured pattern then denies the call rather than guessing.
      */
     @Override
     public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {

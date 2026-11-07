@@ -215,10 +215,9 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
 
     /**
      * A {@code SCAN} over the sessions' {@code :created} keys; the cursor is Redis's own over a standalone connection,
-     * and {@code <nodeId>:<nodeCursor>} over a cluster connection. Looser than the other
-     * backends in the ways the SPI allows: every session with any segment is reported regardless of
-     * {@code createdBefore}, a session may appear twice in a pass, and {@code limit} is passed as {@code COUNT}, which
-     * Redis treats as a hint.
+     * and {@code <nodeId>:<nodeCursor>} over a cluster connection. Looser than the other backends in the ways the SPI
+     * allows: every session with any segment is reported regardless of {@code createdBefore}, a session may appear
+     * twice in a pass, and {@code limit} is passed as {@code COUNT}, which Redis treats as a hint.
      */
     @Override
     public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {

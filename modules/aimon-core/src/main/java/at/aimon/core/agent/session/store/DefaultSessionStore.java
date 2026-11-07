@@ -34,10 +34,9 @@ import at.aimon.core.base.Principal;
  *
  * <p>
  * {@link #claim} wins the lease first, then touches the record. Election is atomic and fenced at the shared authority,
- * so
- * a node that loses never reaches the record at all — the record work that follows is single-threaded by construction.
- * Any failure after the lease is won returns it before propagating, so a half-finished claim does not pin the
- * session for the rest of the lease period.
+ * so a node that loses never reaches the record at all — the record work that follows is single-threaded by
+ * construction. Any failure after the lease is won returns it before propagating, so a half-finished claim does not pin
+ * the session for the rest of the lease period.
  */
 public final class DefaultSessionStore implements SessionStore {
 
@@ -136,8 +135,7 @@ public final class DefaultSessionStore implements SessionStore {
      *
      * <p>
      * Registration happens before either caller touches the record, because provisioning goes to the raw repository and
-     * a
-     * caller's very next act may be a fenced write. Both callers release on any failure that follows, which
+     * a caller's very next act may be a fenced write. Both callers release on any failure that follows, which
      * un-registers.
      */
     private Optional<SessionLease> elect(SessionId sessionId, String holderId, Duration lease) {

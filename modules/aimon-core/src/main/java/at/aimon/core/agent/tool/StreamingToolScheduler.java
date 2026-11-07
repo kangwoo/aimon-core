@@ -32,8 +32,7 @@ import at.aimon.core.llm.ToolUseResult;
  * {@code < N} was itself eligible. tool_use blocks arrive in model order, so the scheduler simply stops dispatching
  * ("poisons") at the first ineligible tool: that tool and all after it are left for the executor to run on the harvest
  * path. This preserves today's ordering guarantees — a {@link ConcurrencyBehavior#CONCURRENT_SAFE} tool never observes
- * a
- * later {@code SEQUENTIAL} tool's side effects, because the {@code SEQUENTIAL} tool (and anything after it) only runs
+ * a later {@code SEQUENTIAL} tool's side effects, because the {@code SEQUENTIAL} tool (and anything after it) only runs
  * after the eager prefix has already completed; and any read-before-write hazard is avoided because a write is never
  * eager (it poisons at its own position, so reads before it still ran, and reads after it are deferred to run after the
  * write).
@@ -210,9 +209,8 @@ public final class StreamingToolScheduler {
 
     /**
      * Re-arms the scheduler for a fresh streaming attempt on the same iteration (a prompt-too-long re-issue rebuilds
-     * the
-     * message set and streams again). Cancels any leftover futures, clears the poison/disabled flags, and refreshes the
-     * permit semaphore so the new attempt can eager-dispatch from a clean slate.
+     * the message set and streams again). Cancels any leftover futures, clears the poison/disabled flags, and refreshes
+     * the permit semaphore so the new attempt can eager-dispatch from a clean slate.
      */
     public void resetForNewAttempt() {
         synchronized (lock) {

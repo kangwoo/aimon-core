@@ -42,17 +42,14 @@ import at.aimon.core.llm.TokenUsage;
  * <p>
  * Three properties carry the design and each has its own section below: {@code claim} answers with exactly one of three
  * outcomes and never leaves a lease behind on the two that are not {@code Acquired}; {@code acquire} is the same
- * election
- * without the binding question, for the callers that have no agent to assert; and {@code records()} refuses a write
- * from a
- * node that does not hold the session, which is what keeps a superseded holder from appending to history behind
- * the new
- * holder's back.
+ * election without the binding question, for the callers that have no agent to assert; and {@code records()} refuses a
+ * write from a node that does not hold the session, which is what keeps a superseded holder from appending to history
+ * behind the new holder's back.
  *
  * <p>
  * Two stores over one pair of backends stand in for two nodes. That is the arrangement the class javadoc insists on and
- * the
- * only way to observe the fencing behaviour at all — a single shared store would consider both nodes' leases its own.
+ * the only way to observe the fencing behaviour at all — a single shared store would consider both nodes' leases its
+ * own.
  */
 @DisplayName("DefaultSessionStore")
 class DefaultSessionStoreTest {

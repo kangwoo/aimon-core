@@ -55,8 +55,7 @@ public final class JsMarshalling {
      * Recursively copies a guest {@code Value} into plain Java (zero polyglot references), within the default budget.
      * Executable values and host objects are not expected here (schemas/results are data) and fall back to their string
      * form. Structures nested deeper than {@link #MAX_DEPTH} (including cyclic ones), or larger than the budget, raise
-     * a
-     * {@link JsScriptException}.
+     * a {@link JsScriptException}.
      *
      * @param value
      *            the guest value (may be null)

@@ -135,8 +135,8 @@ class TranscriptBufferRewindTest {
      * <p>
      * {@code replaceWith} can leave far fewer messages than there were when the turn began, so the recorded count
      * stops being a position in the transcript. Keeping it would not merely rewind to the wrong place: the count is
-     * validated where the transcript is rebuilt, so the end-of-turn persist would throw — into
-     * {@code saveSilently}, which swallows it — and the whole turn's history would be dropped without a word.
+     * validated where the transcript is rebuilt, so the end-of-turn persist would throw — into {@code saveSilently},
+     * which swallows it — and the whole turn's history would be dropped without a word.
      */
     @Test
     void compactingTheHistoryDropsTheMarkRatherThanStrandingIt() {

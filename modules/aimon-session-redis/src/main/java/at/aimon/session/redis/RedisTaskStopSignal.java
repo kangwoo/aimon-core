@@ -30,14 +30,12 @@ import io.lettuce.core.pubsub.api.sync.RedisPubSubCommands;
  * <p>
  * Modeled on {@code RedisPubSubSignalBus}: two caller-owned Lettuce connections — one {@link StatefulRedisConnection}
  * for {@code PUBLISH}, one {@link StatefulRedisPubSubConnection} for the listener. The single channel is subscribed
- * once
- * at construction and unsubscribed on {@link #close()}; individual {@link #subscribe(Consumer) subscriptions} only
+ * once at construction and unsubscribed on {@link #close()}; individual {@link #subscribe(Consumer) subscriptions} only
  * add/remove an in-process handler and never round-trip to Redis. This class never closes the connections themselves.
  *
  * <p>
  * Thread-safety: handlers live in a {@link CopyOnWriteArrayList} so the pub/sub dispatch thread iterates without locks;
- * a
- * throwing handler is isolated (logged, not propagated).
+ * a throwing handler is isolated (logged, not propagated).
  */
 public final class RedisTaskStopSignal implements TaskStopSignal, AutoCloseable {
 

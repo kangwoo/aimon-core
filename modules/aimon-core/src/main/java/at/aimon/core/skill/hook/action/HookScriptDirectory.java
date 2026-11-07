@@ -14,9 +14,8 @@ import at.aimon.core.filesystem.VirtualFileSystems;
  * A configured command runs either on the host or in the firing execution's environment, and which one is decided
  * per firing. The executor that ends up running the command is therefore the one that gives the variable its value:
  * the host path itself on the host, a run directory of the bytes read at the firing in an environment (EE-109). This
- * value is
- * what both need &mdash; the host path, and a read-only source over it to scan from &mdash; so it travels on the
- * action rather than through the hook.
+ * value is what both need &mdash; the host path, and a read-only source over it to scan from &mdash; so it travels on
+ * the action rather than through the hook.
  *
  * <p>
  * The source is a read-only view of the layer's {@code .aimon} directory, and {@link #getSourceDirectory()} names

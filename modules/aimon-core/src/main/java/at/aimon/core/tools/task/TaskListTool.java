@@ -36,8 +36,7 @@ import at.aimon.core.tools.ToolContextKeys;
  *
  * <p>
  * Read-only and declared {@link ConcurrencyBehavior#CONCURRENT_SAFE}: it never mutates task state and the underlying
- * store
- * is thread-safe, so it may run alongside other concurrent-safe tools in a batch.
+ * store is thread-safe, so it may run alongside other concurrent-safe tools in a batch.
  *
  * <p>
  * Example usage:
@@ -173,8 +172,7 @@ public class TaskListTool extends AbstractTool {
 
     /**
      * Renders a coarse wall-clock age for the task: elapsed to end for terminal tasks, elapsed to now otherwise. Uses
-     * no
-     * external clock beyond {@link Instant#now()} and never throws.
+     * no external clock beyond {@link Instant#now()} and never throws.
      */
     private static String formatAge(BackgroundTask task) {
         final Instant end = task.getEndTime().orElseGet(Instant::now);

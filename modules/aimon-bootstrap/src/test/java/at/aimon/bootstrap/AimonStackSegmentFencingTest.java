@@ -138,8 +138,7 @@ class AimonStackSegmentFencingTest {
 
     /**
      * A save on this node's transcript manager, outside any turn — the path a stale node's late save takes, and the
-     * path
-     * a live session opened outside the router (the CLI's) takes every turn. Uses the turn-end path, which never
+     * path a live session opened outside the router (the CLI's) takes every turn. Uses the turn-end path, which never
      * throws.
      */
     private static void saveOutsideTheRouter(AimonStack stack, SessionId session) {

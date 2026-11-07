@@ -33,9 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * protected: the copy is the first write into the new builder, and any later write of that name throws. The
  * framework's own write-once names ({@code executionEnvironment}, {@code executionEnvironmentProvider},
  * {@code hookRegistry}, {@code quotaGuard}) are in the registry from the start, so they are checked even before the
- * class declaring their
- * constants ({@code at.aimon.core.tools.ToolContextKeys}) is initialised. A write-once key declared anywhere else is
- * registered when the class declaring it is initialised (EE-32).
+ * class declaring their constants ({@code at.aimon.core.tools.ToolContextKeys}) is initialised. A write-once key
+ * declared anywhere else is registered when the class declaring it is initialised (EE-32).
  *
  * @param <T>
  *            the value type associated with this key

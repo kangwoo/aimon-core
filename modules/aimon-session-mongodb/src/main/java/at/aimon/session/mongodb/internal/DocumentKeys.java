@@ -113,8 +113,8 @@ public final class DocumentKeys {
      * <p>
      * <b>FROZEN WIRE KEY from its first release.</b> The guard reads it through {@code $ifNull}, because a document may
      * legitimately have none, so a rename does not fail: upgraded nodes see no slot at all in every stored document,
-     * and
-     * during a rolling deploy an occurrence that already ran is granted again. Pinned by {@code MongoSchemaFreezeTest}.
+     * and during a rolling deploy an occurrence that already ran is granted again. Pinned by
+     * {@code MongoSchemaFreezeTest}.
      */
     public static final String F_LAST_SLOT = "lastSlot";
 
@@ -135,10 +135,8 @@ public final class DocumentKeys {
      *
      * <p>
      * <b>FROZEN WIRE KEY.</b> The guard reads it through {@code $ifNull} too, for the bare document a refused first
-     * fire
-     * leaves, so a rename makes every live lease look free: during a rolling deploy upgraded nodes begin runs that
-     * overlap
-     * the ones still going. Pinned by {@code MongoSchemaFreezeTest}.
+     * fire leaves, so a rename makes every live lease look free: during a rolling deploy upgraded nodes begin runs that
+     * overlap the ones still going. Pinned by {@code MongoSchemaFreezeTest}.
      */
     public static final String F_LEASE_EXPIRES_AT = "leaseExpiresAt";
 

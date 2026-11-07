@@ -85,9 +85,8 @@ import at.aimon.core.llm.ReasoningTrace;
  *
  * <p>
  * <strong>{@link Kind} is a projection of an output turn, not an inventory of it, and it has a known blind
- * spot.</strong>
- * Anthropic can also return {@code server_tool_use}, {@code web_search_tool_result} and {@code mcp_tool_use} blocks;
- * neither caller records those, so they are not barriers for the rule and a turn shaped
+ * spot.</strong> Anthropic can also return {@code server_tool_use}, {@code web_search_tool_result} and
+ * {@code mcp_tool_use} blocks; neither caller records those, so they are not barriers for the rule and a turn shaped
  * {@code [thinking, server_tool_use, tool_use]} would anchor the thinking block to the trailing {@code tool_use}
  * rather than leaving it unanchored. That is unreachable in AIMON today — no server-side tool is ever requested — and
  * it is recorded here rather than guarded against, because the fix belongs at the two call sites that decide what to

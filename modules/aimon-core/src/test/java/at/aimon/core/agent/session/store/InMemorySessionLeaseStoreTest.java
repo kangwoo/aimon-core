@@ -26,15 +26,13 @@ import at.aimon.core.agent.session.SessionId;
 
 /**
  * Contract tests for {@link InMemorySessionLeaseStore} — the default election backend and the one every unit test
- * in
- * the codebase runs on.
+ * in the codebase runs on.
  *
  * <p>
  * It had no tests of its own before this, which is how a defect in {@code extend} survived: it was the backend behind
  * hundreds of passing tests precisely because those tests exercised the layers above it and never asserted its contract
  * directly. Fencing monotonicity, the expiry-only acquire predicate, and the "extend is not a liveness check" carve-out
- * are
- * all stated in {@link SessionLeaseStore}'s javadoc and are all invisible unless somebody asserts them here.
+ * are all stated in {@link SessionLeaseStore}'s javadoc and are all invisible unless somebody asserts them here.
  *
  * <p>
  * Expiry is driven by a mutable clock rather than by sleeping, so the timing cases are deterministic.

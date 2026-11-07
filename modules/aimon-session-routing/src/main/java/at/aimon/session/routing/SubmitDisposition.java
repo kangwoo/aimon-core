@@ -29,8 +29,7 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
  * <b>Forwarded results carry no artifacts.</b> The result crossed a node boundary, and
  * {@link AgentExecutionResult#getArtifacts()} has no wire encoding; see
  * {@link at.aimon.core.agent.session.store.StoredAgentExecutionResult}. Only {@link Kind#EXECUTED_LOCALLY} yields the
- * live
- * result object.
+ * live result object.
  *
  * <p>
  * Per routing.md §11.1 this is intentionally distinct from {@link at.aimon.core.agent.session.SubmitOutcome} (which has
@@ -90,9 +89,9 @@ public final class SubmitDisposition {
      *
      * <p>
      * Mandatory, not optional: every submission is assigned an id whichever way it is dispositioned, so a caller never
-     * has to branch on {@link #getKind()} to find out whether it can name what it submitted. For
-     * {@link Kind#FORWARDED} the id travels with the inbox envelope, so the holder node runs the turn under the same id
-     * the submitting node reported here.
+     * has to branch on {@link #getKind()} to find out whether it can name what it submitted. For {@link Kind#FORWARDED}
+     * the id travels with the inbox envelope, so the holder node runs the turn under the same id the submitting node
+     * reported here.
      *
      * <p>
      * One case carries an id for a turn that never runs: an idempotent replay, where the disposition is
@@ -111,8 +110,8 @@ public final class SubmitDisposition {
      * <p>
      * Mandatory for the same reason as {@link #getTurnId()}: a caller that has to branch on {@link #getKind()} to find
      * out whether it will be told the answer has been handed a defect, not an API. Before the {@code TURN_RESULT} rail
-     * existed a forwarded submission genuinely had nothing to hand back, and this returned an empty
-     * {@link Optional} — that hole is what stranded every forwarded caller.
+     * existed a forwarded submission genuinely had nothing to hand back, and this returned an empty {@link Optional} —
+     * that hole is what stranded every forwarded caller.
      *
      * @return the future (never null)
      */

@@ -26,9 +26,8 @@ import at.aimon.core.agent.tool.search.ToolSearchCatalog;
  *
  * <ul>
  * <li>{@link ToolSearchCatalog} declares itself thread-safe (backed by a
- * {@link java.util.concurrent.ConcurrentHashMap}):
- * concurrent registration from many threads, interleaved with concurrent reads, must neither throw nor lose a
- * registration.</li>
+ * {@link java.util.concurrent.ConcurrentHashMap}): concurrent registration from many threads, interleaved with
+ * concurrent reads, must neither throw nor lose a registration.</li>
  * <li>{@link DefaultToolRegistry} documents that it is <b>not</b> thread-safe for concurrent mutation; its supported
  * concurrent access pattern is populate-once-then-read. This test pins that pattern: after a single-threaded population
  * the registry is hammered by many reader threads and every read observes the full, consistent tool set without

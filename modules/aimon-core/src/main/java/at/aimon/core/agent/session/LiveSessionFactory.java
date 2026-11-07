@@ -22,8 +22,8 @@ import at.aimon.core.agent.session.store.SessionRecordStore;
  * {@link AgentRegistry}, obtains the <b>agent-scoped</b> {@link OrcaAgentRuntime} for it via a caller-supplied
  * {@link ContextBuilder} (typically delegating to {@code OrcaAgentRuntimeManager.getOrCreateRuntime(...)}),
  * and hands both to a long-lived {@link OrcaAgentExecutor}. The resulting {@link LiveSession} reuses the same
- * {@link SessionId} for every turn, preserving the transcript across submits, while the underlying
- * agent runtime is shared across every concurrent session that targets the same agent.
+ * {@link SessionId} for every turn, preserving the transcript across submits, while the underlying agent runtime is
+ * shared across every concurrent session that targets the same agent.
  *
  * <p>
  * The factory itself is stateless in terms of session identity — each call to
@@ -102,9 +102,8 @@ public final class LiveSessionFactory {
      * Creates a new factory whose sessions run without durable session state.
      *
      * <p>
-     * Equivalent to
-     * {@link #LiveSessionFactory(AgentRegistry, ContextBuilder, AgentExecutor, SessionRecordStore)} with a
-     * {@code null} repository: opened sessions keep their {@code sessionTotals} and runtime budget override purely
+     * Equivalent to {@link #LiveSessionFactory(AgentRegistry, ContextBuilder, AgentExecutor, SessionRecordStore)} with
+     * a {@code null} repository: opened sessions keep their {@code sessionTotals} and runtime budget override purely
      * in-memory.
      *
      * @param agentRegistry

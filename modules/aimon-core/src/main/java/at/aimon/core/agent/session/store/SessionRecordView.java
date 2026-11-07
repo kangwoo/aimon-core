@@ -15,8 +15,8 @@ import at.aimon.core.llm.Message;
  *
  * <p>
  * The type every read of a persisted record hands back — {@link SessionRecordStore#load(SessionId)},
- * {@link SessionRecordStore#provision(SessionId, String)}, {@code SessionStore.load} — so that the
- * mutable {@link SessionRecord} class never leaves its own package. An ArchUnit rule states exactly that and now has no
+ * {@link SessionRecordStore#provision(SessionId, String)}, {@code SessionStore.load} — so that the mutable
+ * {@link SessionRecord} class never leaves its own package. An ArchUnit rule states exactly that and now has no
  * exceptions (see {@code SessionRecordSoleWriterArchitectureTest}).
  *
  * <p>

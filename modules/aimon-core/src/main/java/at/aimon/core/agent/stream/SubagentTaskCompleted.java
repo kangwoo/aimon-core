@@ -22,10 +22,9 @@ import at.aimon.core.agent.AgentRuntimeId;
  * This is the observability half of the completion-notification design; the guaranteed, model-facing half is the
  * {@code <task-notification>} message pushed into the parent's message queue (see
  * {@code DefaultSubagentExecutionManager}). Because the parent's per-turn event listeners are only attached while a
- * turn
- * is active, this event is <b>best-effort for live display</b>: when the parent is idle at completion time no listener
- * is attached and the event is dropped — the queued notification still guarantees the model learns of the completion on
- * its next turn.
+ * turn is active, this event is <b>best-effort for live display</b>: when the parent is idle at completion time no
+ * listener is attached and the event is dropped — the queued notification still guarantees the model learns of the
+ * completion on its next turn.
  *
  * <p>
  * Extra fields:

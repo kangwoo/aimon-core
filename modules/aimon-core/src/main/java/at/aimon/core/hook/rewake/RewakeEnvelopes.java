@@ -35,12 +35,11 @@ public final class RewakeEnvelopes {
      *
      * <p>
      * <b>Permission events are rejected.</b> Async-rewake on {@link HookEventType#PERMISSION_REQUEST
-     * PERMISSION_REQUEST}
-     * or {@link HookEventType#PERMISSION_DENIED PERMISSION_DENIED} would let a permission decision arrive after the
-     * tool dispatcher has already moved on — by the time the rewake fires, the request that needed the answer is gone
-     * and the only side effect is replay-as-noise. The factory throws {@link IllegalArgumentException} so the
-     * surrounding {@link at.aimon.core.hook.DefaultHookExecutionManager hook executor} logs a clear WARN and the spec
-     * is dropped.
+     * PERMISSION_REQUEST} or {@link HookEventType#PERMISSION_DENIED PERMISSION_DENIED} would let a permission decision
+     * arrive after the tool dispatcher has already moved on — by the time the rewake fires, the request that needed the
+     * answer is gone and the only side effect is replay-as-noise. The factory throws {@link IllegalArgumentException}
+     * so the surrounding {@link at.aimon.core.hook.DefaultHookExecutionManager hook executor} logs a clear WARN and the
+     * spec is dropped.
      *
      * @param eventType
      *            the typed event being dispatched (must not be null)

@@ -352,8 +352,7 @@ class DefaultLiveSessionStatusTest {
      * Streaming executor stub that emulates the Orca executor's publication contract: per invocation it creates a
      * fresh {@link DefaultInterruptCoordinator}, publishes it together with the {@link BudgetTracker} for that turn to
      * the request's observers, then parks on a caller-controlled future released via {@link #completeNext}. Supplying
-     * more
-     * than one tracker models successive turns (turn N publishes tracker N, then the last tracker repeats).
+     * more than one tracker models successive turns (turn N publishes tracker N, then the last tracker repeats).
      */
     private static final class CapturingExecutor
             implements

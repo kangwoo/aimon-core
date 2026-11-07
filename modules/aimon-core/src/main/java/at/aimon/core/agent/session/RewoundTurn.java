@@ -12,9 +12,9 @@ import at.aimon.core.agent.input.UserInput;
  * Two values rather than one because a turn is not only what was asked but how it was submitted. The
  * {@link #getUserInput() input} is the request — text, an image, a document, or a combination — and the
  * {@link #getSubmitOptions() options} are the per-turn metadata it was submitted under: which
- * {@link at.aimon.core.base.Principal}, which system-prompt variables, which execution attributes.
- * Submitting the first without the second runs the same words as a different caller, against differently assembled
- * context, which is a turn like the original rather than the original.
+ * {@link at.aimon.core.base.Principal}, which system-prompt variables, which execution attributes. Submitting the first
+ * without the second runs the same words as a different caller, against differently assembled context, which is a turn
+ * like the original rather than the original.
  *
  * <p>
  * Both come from the {@link at.aimon.core.agent.session.transcript.SessionRewindPoint} recorded when the turn began,

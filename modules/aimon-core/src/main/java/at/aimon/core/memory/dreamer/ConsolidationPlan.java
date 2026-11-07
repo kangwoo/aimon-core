@@ -13,9 +13,8 @@ import at.aimon.core.memory.Workspace;
  *
  * <p>
  * The plan is data only. It does not mutate the {@code ObservationStore} until
- * {@link ConsolidationStrategy#apply(ConsolidationPlan)} is invoked. Splitting
- * planning from application makes the dreamer easy to dry-run, audit, and
- * unit-test.
+ * {@link ConsolidationStrategy#apply(ConsolidationPlan)} is invoked. Splitting planning from application makes the
+ * dreamer easy to dry-run, audit, and unit-test.
  *
  * <p>
  * An empty {@link #getClusters() clusters} list is the normal result for

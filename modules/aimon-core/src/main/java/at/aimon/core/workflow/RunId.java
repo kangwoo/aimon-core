@@ -10,9 +10,9 @@ import java.util.Optional;
  * Like {@link at.aimon.core.agent.AgentRuntimeId}, a {@code RunId} is <b>deterministic</b> — derived from the
  * script name (and an optional {@code discriminator}) rather than a random UUID. This is load-bearing for resume: a run
  * that re-executes the same script under the same id must reproduce the same {@code StepResultCache} step-keys so
- * completed steps replay instead of re-running (design §5.3). Determinism also makes background
- * submission idempotent — re-submitting a {@code RunId} whose prior run is non-terminal returns the existing run
- * rather than dispatching a duplicate.
+ * completed steps replay instead of re-running (design §5.3). Determinism also makes background submission idempotent —
+ * re-submitting a {@code RunId} whose prior run is non-terminal returns the existing run rather than dispatching a
+ * duplicate.
  *
  * <ul>
  * <li>{@code run:<scriptName>} — basic form. Use {@link #from(String)}.</li>

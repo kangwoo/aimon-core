@@ -75,9 +75,8 @@ import at.aimon.core.memory.dialectic.DialecticResponse;
  * A backend subclasses this and returns a fresh, empty instance from {@link #newBackend()}; this class closes it when
  * it is {@link AutoCloseable}, or whatever {@link #resourceOwner()} names when the backend is a decorator over the
  * thing that holds the resources. Every case guards on the capability it needs, so a backend serving three tiers
- * reports
- * the other two as skipped rather than as passing — "this backend does not do CHAT" stays something a backend says
- * out loud.
+ * reports the other two as skipped rather than as passing — "this backend does not do CHAT" stays something a backend
+ * says out loud.
  *
  * <p>
  * Seeding differs per backend (a store-backed one is written through its own stores; a remote one is written through

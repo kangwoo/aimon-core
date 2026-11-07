@@ -26,14 +26,12 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  * <ul>
  * <li>The <b>lease</b> side wants a <em>node-derived, stable</em> id, because a lease that outlives a single turn (the
  * session-lifetime lease this stage builds toward) has no per-turn string to name its holder with, and because "am I
- * the
- * holder?" is only answerable by comparing against something the node knows about itself.
+ * the holder?" is only answerable by comparing against something the node knows about itself.
  * <li>The <b>reservation</b> side wants a <em>per-attempt</em> id, and shrinking it to the node id would open an ABA on
  * one key <em>within one node</em>: attempt 1 reserves key K and stalls, the sweeper resets K after the secondary TTL,
- * a
- * client retry re-reserves K as attempt 2 on the same node, and attempt 1's late
- * {@code compareAndReset(K, nodeId)} then erases attempt 2's live reservation — after which the next retry executes a
- * second time. The per-attempt suffix is exactly what makes that CAS fail.
+ * a client retry re-reserves K as attempt 2 on the same node, and attempt 1's late {@code compareAndReset(K, nodeId)}
+ * then erases attempt 2's live reservation — after which the next retry executes a second time. The per-attempt suffix
+ * is exactly what makes that CAS fail.
  * </ul>
  *
  * <p>

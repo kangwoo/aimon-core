@@ -49,8 +49,7 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * Each node has its own {@link MongoClient}, so the guards share nothing but the collection. A dead node is simulated
- * by
- * writing an expired lease into its document, with a lease long enough that its heartbeat stays out of the way.
+ * by writing an expired lease into its document, with a lease long enough that its heartbeat stays out of the way.
  */
 @DisplayName("MongoScheduledExecutionGuard integration")
 @Tag("docker")

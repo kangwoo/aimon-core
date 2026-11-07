@@ -45,21 +45,15 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  * <p>
  * Stage 3b-2 moved the lease from the turn to the session and had to make peers able to ask for a session, so it
  * reused the one channel it had: an unaddressed {@code INTERRUPT(SESSION_RELEASED)}, which the receiver reads as a
- * yield
- * request. That works, but it conflates two different asks — <em>stop the turn</em> and <em>hand the session
- * over</em>
- * — and the second one has nothing to do with a turn: the case it exists for is an <b>idle</b> holder, where there is
- * no
- * turn to interrupt at all and an interrupt-shaped request is a request for nothing.
+ * yield request. That works, but it conflates two different asks — <em>stop the turn</em> and <em>hand the session
+ * over</em> — and the second one has nothing to do with a turn: the case it exists for is an <b>idle</b> holder, where
+ * there is no turn to interrupt at all and an interrupt-shaped request is a request for nothing.
  *
  * <p>
  * The tests below therefore split the two: what a yield must do (stop the turn if there is one, drop the session,
- * return
- * the lease) from what it must <em>not</em> do (any of {@code EVICT}'s terminal work — the session is not going
- * away,
- * it is going somewhere else). The last two cover the rolling-upgrade shim in both directions, since a node that
- * predates
- * this kind drops the signal undecoded on all three rails.
+ * return the lease) from what it must <em>not</em> do (any of {@code EVICT}'s terminal work — the session is not going
+ * away, it is going somewhere else). The last two cover the rolling-upgrade shim in both directions, since a node that
+ * predates this kind drops the signal undecoded on all three rails.
  */
 @DisplayName("SessionRouter YIELD signal")
 class SessionRouterYieldSignalTest {

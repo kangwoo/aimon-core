@@ -46,8 +46,8 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * it guards is the entire point of an entry — it sits under its TTL waiting for a retry that may arrive after the
  * writer has been replaced — so a reader on a new build is always reading entries an older build wrote. Renaming
  * encode() and decode() together keeps the round-trips green while every such entry decodes with the wrong session or
- * not at all, which is exactly the double-execution the store exists to prevent.
- * {@code IdempotencyEntryCodecTest} pins the literal in both directions.
+ * not at all, which is exactly the double-execution the store exists to prevent. {@code IdempotencyEntryCodecTest} pins
+ * the literal in both directions.
  *
  * <p>
  * <b>An unknown completion reason is not fatal.</b> For the same reason — the reader may be older than the writer

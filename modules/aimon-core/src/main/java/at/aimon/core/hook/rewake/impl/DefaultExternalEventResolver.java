@@ -17,8 +17,7 @@ import at.aimon.core.hook.rewake.RewakeService;
  * Logged fields per resolve:
  * <ul>
  * <li>{@code eventType} / {@code eventKey} — match keys against pending
- * {@link at.aimon.core.hook.rewake.RewakeTriggerEvent
- * RewakeTriggerEvent} envelopes.
+ * {@link at.aimon.core.hook.rewake.RewakeTriggerEvent RewakeTriggerEvent} envelopes.
  * <li>{@code sourceTransport} — which adapter delivered the event (e.g. {@code "webhook"}, {@code "mcp"}).
  * <li>{@code idempotencyKey} — opaque transport key, surfaced for redelivery diagnosis.
  * <li>{@code receivedAt} — wall-clock arrival timestamp; lets operators compute dispatch latency.

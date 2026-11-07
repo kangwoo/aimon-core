@@ -172,8 +172,7 @@ public final class SubagentExecutionPolicy {
     /**
      * @return how long a fork under a deadline is waited for once it has been asked to stop — its deadline passed or
      *         its spawner cancelled it — before it is reported unexited. Applies only to a fork that has a deadline
-     *         (its
-     *         own {@link #getMaxWallClock()} or its spawner's); a fork without one runs on its spawner's thread as
+     *         (its own {@link #getMaxWallClock()} or its spawner's); a fork without one runs on its spawner's thread as
      *         before and is waited for until it returns
      */
     public Duration getExitGracePeriod() {

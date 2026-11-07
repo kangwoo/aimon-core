@@ -55,13 +55,13 @@ import at.aimon.core.workflow.exception.WorkflowException;
  * <p>
  * <b>Resume (design §5.3).</b> Every {@code agent()} step gets a deterministic {@link StepKey} = {@code runId}
  * + owning {@code agentRuntimeId} + a <b>structural step-path</b>. The path is assigned by the level's owning thread in
- * program order: each level keeps a shared counter, {@code agent}&rarr;{@code a<n>},
- * {@code parallel}&rarr;{@code p<n>},
- * {@code pipeline}&rarr;{@code q<n>}, and a fan-out child additionally carries its list index — so the key is stable
- * across re-executions regardless of scheduling, and sibling constructs / identical-input branches never collide. When
- * a {@link StepResultCache} is configured (not {@link StepResultCache#NO_OP}), a completed step is memoized and a
- * matching cached step is replayed instead of re-executed; the run's token budget is still re-hydrated on a replay so
- * the backstops cannot silently reset. Only {@code COMPLETED} steps are cached, so a replay is never a failure.
+ * program order: each level keeps a shared counter, {@code agent}&rarr;{@code a<n>}, {@code parallel}&rarr;{@code
+ * p<n>}, {@code pipeline}&rarr;{@code q<n>}, and a fan-out child additionally carries its list index — so the key is
+ * stable across re-executions regardless of scheduling, and sibling constructs / identical-input branches never
+ * collide. When a {@link StepResultCache} is configured (not {@link StepResultCache#NO_OP}), a completed step is
+ * memoized and a matching cached step is replayed instead of re-executed; the run's token budget is still re-hydrated
+ * on a replay so the backstops cannot silently reset. Only {@code COMPLETED} steps are cached, so a replay is never a
+ * failure.
  */
 public final class DefaultWorkflowContext implements WorkflowContext {
 
@@ -168,13 +168,12 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     /**
      * Resolves the launch context a step is launched with. Non-isolated steps use the borrowed base one. An isolated
      * step asks the execution environment for a branch ({@link ExecutionEnvironment#isolate},
-     * execution-environment-isolation
-     * design §3) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
-     * runtime-level runner has no calling execution). The branch environment becomes the step's parent environment,
-     * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base launch
-     * context's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30); when
-     * it refuses with a reason (unavailable, already a branch), the reason is quoted and chained as the cause.
-     * Independent of cache state so isolation holds under {@code NO_OP}.
+     * execution-environment-isolation design §3) — the parent's environment when the run has one, else one resolved
+     * from the runtime's provider (a runtime-level runner has no calling execution). The branch environment becomes the
+     * step's parent environment, which the fork's provider hands back unchanged; the tool registry and the cancellation
+     * signal are the base launch context's. An environment that cannot isolate fails the run rather than running the
+     * branch unscoped (C30); when it refuses with a reason (unavailable, already a branch), the reason is quoted and
+     * chained as the cause. Independent of cache state so isolation holds under {@code NO_OP}.
      */
     private SubagentLaunchContext resolveLaunchContext(AgentTask task, String path) {
         if (!task.isIsolate()) {
@@ -373,10 +372,9 @@ public final class DefaultWorkflowContext implements WorkflowContext {
      * they are part of the step's definition — flipping {@code isolate} re-scopes where the step's file writes land,
      * so both the step's own validation and (via {@code foldLeaf}) downstream siblings' left-context fingerprints
      * diverge on a flip. For cacheable steps both flags are false, and flagged steps bypass load/save anyway, so the
-     * fold only ever matters through the structure guard (§6.5).
-     * The subagent's {@code hashCode()} is a value hash of its definition (name, system prompt,
-     * metadata, tool restrictions), stable within a process — and cross-JVM stable to the extent it bottoms out in
-     * String/int/collection hashes.
+     * fold only ever matters through the structure guard (§6.5). The subagent's {@code hashCode()} is a value hash of
+     * its definition (name, system prompt, metadata, tool restrictions), stable within a process — and cross-JVM stable
+     * to the extent it bottoms out in String/int/collection hashes.
      */
     private static String inputHash(AgentTask task) {
         final Subagent sa = task.getSubagent();
@@ -414,10 +412,9 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     /**
      * A single structural-path level. {@code prefix} is the path up to this level ({@code ""} at root, else e.g.
      * {@code "p1/0"}); {@code ordinal} is the program-order counter the owning thread advances once per child
-     * construct;
-     * {@code nestingLevel} is the per-call-stack fan-out depth used for routing (§6.2); {@code runningDigest} is the
-     * left-context structure fingerprint chain (§6.5), seeded from the parent. Not thread-safe by design: a level's
-     * body runs on exactly one thread.
+     * construct; {@code nestingLevel} is the per-call-stack fan-out depth used for routing (§6.2);
+     * {@code runningDigest} is the left-context structure fingerprint chain (§6.5), seeded from the parent. Not
+     * thread-safe by design: a level's body runs on exactly one thread.
      */
     private static final class PathFrame {
         private final String prefix;

@@ -26,9 +26,8 @@ import at.aimon.core.llm.LlmCallMetadata;
  *
  * <p>
  * The session id is carried by the existing {@link LlmCallMetadata#getTraceId()} field; the turn trace id and the
- * active
- * span id ride on reserved tags so the low-cardinality {@code component}/{@code parentComponent} usage-attribution
- * fields are left untouched.
+ * active span id ride on reserved tags so the low-cardinality {@code component}/{@code parentComponent}
+ * usage-attribution fields are left untouched.
  */
 public final class SpanContext {
 
@@ -112,8 +111,7 @@ public final class SpanContext {
 
     /**
      * Reads the <b>parent</b> context encoded in {@link LlmCallMetadata} reserved tags. A span created with the
-     * returned
-     * context nests under the {@code aimon.parent_span_id} written by the enriching caller.
+     * returned context nests under the {@code aimon.parent_span_id} written by the enriching caller.
      *
      * @param metadata
      *            the metadata to read (must not be null)

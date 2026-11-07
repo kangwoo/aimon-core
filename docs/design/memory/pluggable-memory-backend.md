@@ -604,8 +604,8 @@ Step 1 이 빨간 빌드로 끝난다.
 
 이름을 `Representation…` 에서 `Snapshot…` 으로 바꾸는 것은 미용이 아니다 — 원격 백엔드에는
 `Representation` 이라는 타입이 **존재하지 않으므로**, 그 이름을 유지하면 클래스 이름이 거짓말을 한다.
-이 프로젝트가 두 번의 대규모 개명을 한 이유와 같은 이유다
-([`scope-model.md` §7](../../overview/scope-model.md)). 개명 항목은 §11 에 있다.
+이 프로젝트가 두 번의 대규모 개명을 한 이유와 같은 이유다 ([`scope-model.md` §7](../../overview/scope-model.md)). 개명
+항목은 §11 에 있다.
 
 `MemoryContextRequest`(실행의 **미해석 정체성** — sessionId + principal)와 `MemorySnapshotQuery`
 (**해석된 읽기** — workspace + subject + observer + 예산)는 다른 것이다. 전자를 후자로 바꾸는 것이

@@ -40,13 +40,11 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  * disagrees with it is refused rather than believed. The <em>discriminator</em> has no such source: nothing durable
  * records that a session bound to {@code alpha} was opened for {@code tenant-a}, so unless the envelope carries it the
  * holder can only open the bare {@code agent:alpha} runtime. That is not a plainer version of the right runtime; it is
- * a
- * different one, with whatever tools, hooks and MCP clients its own registration gave it.
+ * a different one, with whatever tools, hooks and MCP clients its own registration gave it.
  *
  * <p>
  * One node with a foreign doorbell stands in for the cluster: the message is written straight into the shared inbox as
- * a
- * forwarding peer's {@code deliverToInbox} would, and the ring arrives from a node id that is not this one, because
+ * a forwarding peer's {@code deliverToInbox} would, and the ring arrives from a node id that is not this one, because
  * {@code onSignal} drops self-origin signals.
  */
 @DisplayName("SessionRouter drain-only open: which runtime the queued message names")

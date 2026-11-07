@@ -18,12 +18,12 @@ import at.aimon.core.llm.LlmCancellation;
  * <h2>Why a single signal listener</h2>
  *
  * An execution issues many LLM calls (one per ReAct iteration, plus gateway retries), and each call wants to register
- * its own abort lever. Registering one listener <em>per call</em> and leaving it there would
- * accumulate an unbounded number of listeners on the signal over a long execution, and on trip every one of them —
- * including those for calls that already completed — would fire. Instead this adapter registers <b>exactly one</b>
- * listener on the signal (in its constructor) and each call swaps its abort lever into a single
- * {@link AtomicReference}. When the signal trips, the one listener fires whichever abort is currently active;
- * completed calls have cleared theirs, so nothing stale is invoked.
+ * its own abort lever. Registering one listener <em>per call</em> and leaving it there would accumulate an unbounded
+ * number of listeners on the signal over a long execution, and on trip every one of them — including those for calls
+ * that already completed — would fire. Instead this adapter registers <b>exactly one</b> listener on the signal (in its
+ * constructor) and each call swaps its abort lever into a single {@link AtomicReference}. When the signal trips, the
+ * one listener fires whichever abort is currently active; completed calls have cleared theirs, so nothing stale is
+ * invoked.
  *
  * <h2>Lifetime</h2>
  *

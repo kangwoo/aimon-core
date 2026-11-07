@@ -46,8 +46,8 @@ import at.aimon.core.memory.index.ObservationIndex;
  * <p>
  * Merge losers and {@link #softDelete(ObservationId)} targets are retained in an
  * in-memory audit map (design doc §5.2, 30-day soft-delete) and removed by
- * {@link #purgeSoftDeletedBefore(Workspace, java.time.Instant)}; the append log
- * records each soft-delete / purge so the audit state is rebuilt on replay.
+ * {@link #purgeSoftDeletedBefore(Workspace, java.time.Instant)}; the append log records each soft-delete / purge so the
+ * audit state is rebuilt on replay.
  *
  * <p>
  * The append log is {@link #compact() compacted} (rewritten to the minimal

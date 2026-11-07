@@ -10,9 +10,8 @@ import java.util.Optional;
  * A transition answers "why is the loop about to run iteration <em>N</em>?" with a {@link LoopTransitionReason}, the
  * one-based {@code iteration} it introduces, and an optional human-readable {@code note} carrying secondary context
  * (e.g. how many queued inputs were drained). It is a pure value object: it never drives control flow. The loop
- * attaches
- * it to the iteration's tracing span so runs are reconstructable for observability and unit tests, mirroring the way
- * {@link at.aimon.core.agent.budget.CompletionReason} models the terminal side.
+ * attaches it to the iteration's tracing span so runs are reconstructable for observability and unit tests, mirroring
+ * the way {@link at.aimon.core.agent.budget.CompletionReason} models the terminal side.
  *
  * <h2>Example</h2>
  *

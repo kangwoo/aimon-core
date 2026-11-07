@@ -16,10 +16,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>
  * The headline guarantee is the <b>single-listener invariant</b>: no matter how many LLM calls an execution issues
- * (each swapping
- * in its
- * own abort via {@link SignalBackedLlmCancellation#onCancel(Runnable)}), the adapter registers <em>exactly one</em>
- * listener on the underlying signal — it does not leak a listener per call.
+ * (each swapping in its own abort via {@link SignalBackedLlmCancellation#onCancel(Runnable)}), the adapter
+ * registers <em>exactly one</em> listener on the underlying signal — it does not leak a listener per call.
  */
 @DisplayName("SignalBackedLlmCancellation (LLM-cancellation bridge)")
 class SignalBackedLlmCancellationTest {

@@ -103,11 +103,11 @@ public final class CompactionRequest {
      *
      * <p>
      * The engine still owns its own framework defaults (component, feature, and a traceId that applies only when the
-     * caller supplies none — the framework's callers always do); when both are present they are
-     * merged via {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller-supplied attribution (the
-     * {@code principal}, the group key and the caller's tags — an automatic compaction's caller hands over its metadata
-     * without the call site, see {@link LlmCallMetadata#withoutCallSite()}) wins on overlap and engine defaults fill
-     * the rest. A tag key the caller sets wins over the same key in the engine's defaults.
+     * caller supplies none — the framework's callers always do); when both are present they are merged via
+     * {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller-supplied attribution (the {@code principal}, the
+     * group key and the caller's tags — an automatic compaction's caller hands over its metadata without the call site,
+     * see {@link LlmCallMetadata#withoutCallSite()}) wins on overlap and engine defaults fill the rest. A tag key the
+     * caller sets wins over the same key in the engine's defaults.
      */
     public Optional<LlmCallMetadata> getCallMetadata() {
         return Optional.ofNullable(callMetadata);
@@ -132,11 +132,11 @@ public final class CompactionRequest {
      *
      * <p>
      * This is the identity channel the engine needs because it cannot get one from
-     * {@link TranscriptBuffer#getSessionId()}: that field is typed on
-     * {@link at.aimon.core.agent.session.SessionId} and a session-less run still has to label its buffer with
-     * something, so what it holds may be a wrapped {@link ExecutionId} rather than a real session. Exporting that
-     * label as a session id is the defect this field removes; the identity has to arrive here explicitly rather than
-     * be inferred from the label's shape, which would couple the engine to whatever prefix the fork happens to use.
+     * {@link TranscriptBuffer#getSessionId()}: that field is typed on {@link at.aimon.core.agent.session.SessionId} and
+     * a session-less run still has to label its buffer with something, so what it holds may be a wrapped
+     * {@link ExecutionId} rather than a real session. Exporting that label as a session id is the defect this field
+     * removes; the identity has to arrive here explicitly rather than be inferred from the label's shape, which would
+     * couple the engine to whatever prefix the fork happens to use.
      *
      * @return the run's execution id, or empty for a compaction that happens inside a genuine session &mdash; in
      *         which case {@link #getTranscriptBuffer()}'s session id is the honest identity

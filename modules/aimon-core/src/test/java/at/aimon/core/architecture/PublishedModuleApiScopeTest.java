@@ -77,10 +77,10 @@ import org.junit.jupiter.api.Test;
  * Three of the five testkits — {@code aimon-filesystem-testkit}, {@code aimon-session-testkit} and
  * {@code aimon-llm-capability-testkit} — use {@code api} and are absent from the facade list for a different reason
  * again: none is published, so this scan never reaches them. Their build scripts say so themselves. The fourth
- * unpublished one, {@code aimon-llm-testkit}, declares no dependency at all.
- * {@code aimon-memory-testkit} is published and therefore <em>is</em> scanned, and it is on the facade list: its
- * deliverable is a base class whose extension point is {@code PeerMemory newBackend()}, so a subclass in another
- * repository cannot write the override without aimon-core on its compile classpath.
+ * unpublished one, {@code aimon-llm-testkit}, declares no dependency at all. {@code aimon-memory-testkit} is published
+ * and therefore <em>is</em> scanned, and it is on the facade list: its deliverable is a base class whose extension
+ * point is {@code PeerMemory newBackend()}, so a subclass in another repository cannot write the override without
+ * aimon-core on its compile classpath.
  *
  * <p>
  * Build scripts rather than bytecode is why this is plain JUnit and not ArchUnit — a dependency declaration never

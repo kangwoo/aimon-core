@@ -104,8 +104,7 @@ public final class ExecutionBudget {
     /**
      * Optional cumulative monetary budget (in USD) across all iterations. When set, the tracker emits a hard
      * {@link BudgetDecision#STOP} with {@link CompletionReason#COST_BUDGET_EXCEEDED} once the accumulated estimated
-     * cost
-     * reaches this ceiling.
+     * cost reaches this ceiling.
      *
      * <p>
      * This axis is opt-in and only meaningful when a cost estimator is wired into the executor; without pricing the

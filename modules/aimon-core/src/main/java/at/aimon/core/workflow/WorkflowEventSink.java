@@ -5,8 +5,7 @@ package at.aimon.core.workflow;
  *
  * <p>
  * Implementations may be invoked concurrently from worker threads (an agent inside a {@code parallel} thunk completes
- * on
- * a pool worker), so a stateful sink must be thread-safe. The default {@link #NO_OP} discards everything.
+ * on a pool worker), so a stateful sink must be thread-safe. The default {@link #NO_OP} discards everything.
  */
 public interface WorkflowEventSink {
 

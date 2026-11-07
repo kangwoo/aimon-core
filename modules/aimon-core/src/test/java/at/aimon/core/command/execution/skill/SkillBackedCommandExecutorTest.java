@@ -87,10 +87,9 @@ class SkillBackedCommandExecutorTest {
 
     /**
      * The skill executor no longer invents an identity for its run, so this executor has to supply one — and a fresh
-     * one
-     * per invocation. Running {@code /commit} twice must not hand both runs the same id: an execution id partitions
-     * per-run state, so a shared one would quietly merge two runs' buckets. Same reason
-     * {@code RoutineExecutor} generates per fire rather than reusing the task id.
+     * one per invocation. Running {@code /commit} twice must not hand both runs the same id: an execution id partitions
+     * per-run state, so a shared one would quietly merge two runs' buckets. Same reason {@code RoutineExecutor}
+     * generates per fire rather than reusing the task id.
      */
     @Test
     @DisplayName("L-26: a skill result cut at max_tokens becomes a truncated command result, text unchanged")

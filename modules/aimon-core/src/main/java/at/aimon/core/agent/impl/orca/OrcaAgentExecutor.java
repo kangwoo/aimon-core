@@ -312,8 +312,8 @@ public class OrcaAgentExecutor
      * iteration. The conversation-compaction subsystem performs L3 summarisation (an LLM-generated summary replaces a
      * span of history — see {@code CompactionEngine}), so the strategy is fixed here rather than derived from
      * {@code CompactionMetadata}, which carries only the <em>trigger</em> (AUTO/MANUAL) and token deltas, not a
-     * strategy label. The trigger dimension is already observable via the {@code BUDGET_COMPACT}
-     * {@link LoopTransition} tag on the iteration span.
+     * strategy label. The trigger dimension is already observable via the {@code BUDGET_COMPACT} {@link LoopTransition}
+     * tag on the iteration span.
      */
     public static final String COMPACTION_STRATEGY_NAME = "summarization";
 
@@ -332,8 +332,8 @@ public class OrcaAgentExecutor
 
     /**
      * Optional message queue manager for mid-turn injection. When {@code null}, mid-turn injection is a no-op and the
-     * executor behaves exactly as it did before CQ-03. See
-     * {@link #injectQueuedMessages(ExecutionScope)} for the drain contract.
+     * executor behaves exactly as it did before CQ-03. See {@link #injectQueuedMessages(ExecutionScope)} for the drain
+     * contract.
      */
     private final MessageQueueManager messageQueueManager;
 
@@ -411,17 +411,15 @@ public class OrcaAgentExecutor
     /**
      * TRACE-02: governs whether tool result content is captured in {@code TOOL} span outputs (in addition to the
      * {@code isError}/{@code contentChars} summary). Defaults to {@link TracePayloadPolicy#summaryOnly()} (summary
-     * only,
-     * no content); a content-capturing policy is injected via {@link Builder#tracePayloadPolicy(TracePayloadPolicy)}.
-     * {@code volatile} for the same reason as {@link #tracer} — the executor is an agent-scoped singleton shared across
-     * concurrent sessions.
+     * only, no content); a content-capturing policy is injected via
+     * {@link Builder#tracePayloadPolicy(TracePayloadPolicy)}. {@code volatile} for the same reason as {@link #tracer} —
+     * the executor is an agent-scoped singleton shared across concurrent sessions.
      */
     volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
 
     /**
      * Prices each LLM call so per-model cost can be accumulated into the execution's {@link CostSummary} and (when
-     * a
-     * {@link at.aimon.core.agent.budget.ExecutionBudget#getMaxCostUsd() cost budget} is set) enforced as a hard STOP.
+     * a {@link at.aimon.core.agent.budget.ExecutionBudget#getMaxCostUsd() cost budget} is set) enforced as a hard STOP.
      * Defaults to {@link CostEstimator#NOOP} (every call priced at zero), so cost tracking is entirely opt-in and
      * wiring nothing leaves behaviour unchanged. {@code volatile} for the same reason as {@link #tracer} — the executor
      * is an agent-scoped singleton written after construction and read from concurrent request threads.
@@ -447,8 +445,8 @@ public class OrcaAgentExecutor
 
     /**
      * PSTREAM-09: when {@code true}, the ReAct loop routes LLM calls through
-     * {@link LlmCallGateway#sendMessageStreaming} so the caller observes token-level
-     * {@link AssistantTextDelta} events. When {@code false} (the default), the legacy non-streaming path is used.
+     * {@link LlmCallGateway#sendMessageStreaming} so the caller observes token-level {@link AssistantTextDelta} events.
+     * When {@code false} (the default), the legacy non-streaming path is used.
      */
     private final boolean useStreaming;
 
@@ -828,8 +826,7 @@ public class OrcaAgentExecutor
         /**
          * Injects the estimator that prices each LLM call for per-model cost tracking and optional cost-budget
          * enforcement. When unset (or {@code null}), the executor keeps {@link CostEstimator#NOOP} (every call priced
-         * at
-         * zero) and behaviour is unchanged.
+         * at zero) and behaviour is unchanged.
          */
         public Builder costEstimator(CostEstimator costEstimator) {
             this.costEstimator = costEstimator;
@@ -1015,8 +1012,7 @@ public class OrcaAgentExecutor
     /**
      * Creates a per-session tool registry. If the underlying registry is a {@link ToolSearchCatalog}, a new
      * {@link ToolSearchRegistry} is created for session-scoped tool activation. Otherwise, the original registry
-     * is
-     * returned unchanged.
+     * is returned unchanged.
      *
      * @param toolRegistry
      *            the agent runtime.s tool registry
@@ -1409,9 +1405,8 @@ public class OrcaAgentExecutor
      * what the runtime injected. On a version-2 log compaction leaves the log alone, so a compacted execution is fed
      * as it was said; only in the version-1 write mode is it empty when the history was rewritten underneath the
      * execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is skipped rather than
-     * re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
-     * that is wrong about that, because nothing in memory is worth throwing out of a finally block that has already
-     * saved the transcript.
+     * re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink that is wrong about
+     * that, because nothing in memory is worth throwing out of a finally block that has already saved the transcript.
      */
     private void feedExecutionMemory(ExecutionScope scope) {
         if (executionMemorySink == null) {
@@ -1474,11 +1469,9 @@ public class OrcaAgentExecutor
      * the turn span is its natural capture point — recording it here keeps each iteration's LLM span lean rather than
      * repeating the near-identical prompt on every call. {@code systemPromptChars} is always recorded as a summary; the
      * full prompt text is attached (truncated to the policy cap) only when {@code policy} captures content. The policy
-     * is
-     * passed in (rather than read from the field) so the caller can snapshot the volatile once, mirroring
+     * is passed in (rather than read from the field) so the caller can snapshot the volatile once, mirroring
      * {@link ToolCallTracing#recordOutcome}. Secret masking is applied separately by the tracer's {@code SpanRedactor}
-     * at storage
-     * time.
+     * at storage time.
      *
      * @param userMessage
      *            the rendered user message content for this turn
@@ -1530,8 +1523,8 @@ public class OrcaAgentExecutor
 
     /**
      * Injects the assembled {@link ContextBlockKind#USER_PREPEND USER_PREPEND} and
-     * {@link ContextBlockKind#ATTACHMENT ATTACHMENT} blocks as a single synthetic user-role
-     * {@code <system-reminder>} message.
+     * {@link ContextBlockKind#ATTACHMENT ATTACHMENT} blocks as a single synthetic user-role {@code <system-reminder>}
+     * message.
      *
      * <p>
      * No-op when no such blocks were assembled. {@link ContextBlockKind#SYSTEM SYSTEM} blocks are handled separately by
@@ -2167,11 +2160,10 @@ public class OrcaAgentExecutor
      *
      * <p>
      * This is a no-op when {@link #messageQueueManager} is {@code null}. The drain is scoped by matching
-     * {@link QueuedInput#getAgentRuntimeId()} against the active
-     * {@link OrcaAgentRuntime#getId() agent runtime id}, so sub-agent or other-agent queue entries are
-     * NOT consumed here — and an entry addressed to a session ({@link QueuedInput#getSessionId()}) is consumed only by
-     * an execution of that session. Only {@link QueuedInputPriority#NEXT} (and higher-priority) entries are drained —
-     * the
+     * {@link QueuedInput#getAgentRuntimeId()} against the active {@link OrcaAgentRuntime#getId() agent runtime id}, so
+     * sub-agent or other-agent queue entries are NOT consumed here — and an entry addressed to a session
+     * ({@link QueuedInput#getSessionId()}) is consumed only by an execution of that session. Only
+     * {@link QueuedInputPriority#NEXT} (and higher-priority) entries are drained — the
      * {@link QueuedInputPriority#LATER} tier is left in place. The {@code TURN_END} drain path is owned by CQ-05.
      *
      * <p>
@@ -2196,8 +2188,7 @@ public class OrcaAgentExecutor
     /**
      * Drains, before the first LLM call of the execution, the queued inputs addressed to this execution's session
      * ({@link QueuedInput#getSessionId()}), and appends them the way
-     * {@link #injectQueuedMessages(ExecutionScope, List)}
-     * does.
+     * {@link #injectQueuedMessages(ExecutionScope, List)} does.
      *
      * <p>
      * Without it an entry that arrived while the session was idle would wait for the first tool-using iteration of
@@ -2350,8 +2341,8 @@ public class OrcaAgentExecutor
      * conversation at the tail of this turn's last iteration but read by no LLM call of the turn — it stopped right
      * after the drain (interrupt, budget, quota, compaction block, the iteration cap). The notifications stay in the
      * transcript, so the next turn's first LLM call reads them — unless this turn is rewound or retried, which removes
-     * them with its other messages. Recorded under
-     * {@link #UNREAD_SUBAGENT_TASK_IDS_ATTR}; absent when nothing was left. Fail-safe.
+     * them with its other messages. Recorded under {@link #UNREAD_SUBAGENT_TASK_IDS_ATTR}; absent when nothing was
+     * left. Fail-safe.
      */
     private static void recordUnreadSubagentTasks(Tracer.Span turnSpan, List<String> unreadTaskIds) {
         if (unreadTaskIds.isEmpty()) {
@@ -2740,8 +2731,7 @@ public class OrcaAgentExecutor
     /**
      * Discards any eager tool work for the current iteration without harvesting it — used on the skill-approval
      * suspend path that abandons the response. Safe because eager tools are side-effect-free; their partial execution
-     * is
-     * simply dropped. No-op when overlap is off.
+     * is simply dropped. No-op when overlap is off.
      */
     private void discardEagerToolUses(ExecutionScope scope) {
         final StreamingToolScheduler scheduler = scope.streamingToolScheduler;
@@ -3072,8 +3062,7 @@ public class OrcaAgentExecutor
      * the {@code OnStop(success=false)} hooks, emits an {@link ExecutionCompleted} boundary carrying
      * {@link CompletionReason#ERROR}, and returns a failure result. The assistant message and tool_results for the
      * final stalled iteration have already been committed to memory by the loop, so the snapshot reflects the point
-     * at
-     * which convergence was abandoned.
+     * at which convergence was abandoned.
      *
      * <p>
      * The failure message is the guard's ({@link StalledIterationGuard#stopMessage()}): it names
@@ -3114,10 +3103,8 @@ public class OrcaAgentExecutor
      *
      * <p>
      * The assistant text from the previous iteration (if any) is already preserved in the session snapshot
-     * attached
-     * to the result; the {@code finalAnswer} slot carries a concise explanation of the stop cause so callers that
-     * ignore
-     * the snapshot still see why execution ended.
+     * attached to the result; the {@code finalAnswer} slot carries a concise explanation of the stop cause so callers
+     * that ignore the snapshot still see why execution ended.
      *
      * @param scope
      *            The execution scope
@@ -3989,9 +3976,8 @@ public class OrcaAgentExecutor
         /**
          * Per-model estimated cost accumulated across this execution's LLM calls. Reassigned functionally each
          * iteration ({@code costSummary = costSummary.record(...)}) since {@link CostSummary} is immutable, and
-         * attached
-         * once to the result at the {@code execute()} choke point. Starts empty (zero cost) so the field is safe even
-         * when no cost estimator is wired.
+         * attached once to the result at the {@code execute()} choke point. Starts empty (zero cost) so the field is
+         * safe even when no cost estimator is wired.
          */
         CostSummary costSummary = CostSummary.empty();
 

@@ -43,15 +43,13 @@ import at.aimon.core.llm.ToolUseResult;
  *
  * <p>
  * Two-tier bound: the shared pool size ({@link ToolConcurrencyConfig#getMaxConcurrency()}) is the global
- * host-protection
- * ceiling across all concurrent turns. On top of it, each {@link #dispatch} call applies a stack-local
+ * host-protection ceiling across all concurrent turns. On top of it, each {@link #dispatch} call applies a stack-local
  * {@link Semaphore} of {@link ToolConcurrencyConfig#getPerBatchMax()} permits so that no single batch occupies more
- * than
- * its fair share of the shared pool. Permits are acquired on the <em>calling</em> thread before a task is submitted, so
- * a tool waiting for a per-batch slot never pins a shared worker thread (and thus never starves a concurrent turn).
- * When {@code perBatchMax == maxConcurrency} (the default) and a batch fits within the bound the semaphore never blocks
- * and behaviour matches a single-tier pool; a batch larger than the bound throttles submission on the calling thread
- * (backpressure) without exceeding the bound.
+ * than its fair share of the shared pool. Permits are acquired on the <em>calling</em> thread before a task is
+ * submitted, so a tool waiting for a per-batch slot never pins a shared worker thread (and thus never starves a
+ * concurrent turn). When {@code perBatchMax == maxConcurrency} (the default) and a batch fits within the bound the
+ * semaphore never blocks and behaviour matches a single-tier pool; a batch larger than the bound throttles submission
+ * on the calling thread (backpressure) without exceeding the bound.
  *
  * <p>
  * Thread-safety: this class is safe to share across concurrent turns. Pool creation is guarded; result reassembly and
@@ -190,8 +188,7 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
      * <p>
      * Reuses {@link #isParallelizableInterrupt(InterruptBehavior)} — the identical Layer-2 predicate the whole-batch
      * gate applies — so eager eligibility never diverges from {@link #shouldParallelize}. Requires the
-     * streaming-overlap
-     * opt-in as well, so eager dispatch is a strict no-op unless an operator turned it on.
+     * streaming-overlap opt-in as well, so eager dispatch is a strict no-op unless an operator turned it on.
      */
     @Override
     public boolean isEagerEligible(ToolUse toolUse, ToolRegistry registry) {

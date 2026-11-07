@@ -40,8 +40,7 @@ import at.aimon.core.agent.session.store.SessionStore;
  *
  * <p>
  * Reach: the importer sees {@code aimon-core} plus {@code aimon-session-routing}, which is the widest classpath
- * available
- * from any module that can host this rule. The concrete transports ({@code aimon-session-mongodb},
+ * available from any module that can host this rule. The concrete transports ({@code aimon-session-mongodb},
  * {@code -postgres}, {@code -redis}) are downstream of both and therefore out of scope here; they hold no reference to
  * the mutable record today, and each one's own test source set is where a regression there would have to be caught.
  */

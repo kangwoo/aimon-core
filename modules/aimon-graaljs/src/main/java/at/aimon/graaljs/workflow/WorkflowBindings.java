@@ -21,9 +21,8 @@ import at.aimon.graaljs.internal.JsMarshalling;
 /**
  * Installs the proxy-only capability bindings ({@code agent}/{@code parallel}/{@code pipeline}/{@code phase}/
  * {@code log} + read-only {@code args}) that a GraalJS workflow script calls. This is where marshal-before-fan-out
- * happens: fan-out inputs are deep-detached into immutable {@link AgentTask}s on the owner thread,
- * then handed to {@code ctx.parallel} as pure-Java {@code Supplier}s — a worker thread never touches a JS
- * {@code Value}.
+ * happens: fan-out inputs are deep-detached into immutable {@link AgentTask}s on the owner thread, then handed to
+ * {@code ctx.parallel} as pure-Java {@code Supplier}s — a worker thread never touches a JS {@code Value}.
  *
  * <p>
  * All bindings are {@link ProxyExecutable}/{@link ProxyObject}s, so under {@code HostAccess.NONE} the guest's total

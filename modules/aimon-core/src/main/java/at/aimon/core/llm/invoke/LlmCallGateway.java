@@ -94,9 +94,8 @@ public final class LlmCallGateway<M> {
 
     /**
      * Default upper bound applied to a server-supplied {@code Retry-After} hint. Honouring the hint verbatim would let
-     * a
-     * hostile or misconfigured provider pin a worker thread for an unbounded period, so the gateway clamps the hint to
-     * this ceiling. Set a larger value via {@link Builder#maxRetryAfter(Duration)} when the provider is trusted.
+     * a hostile or misconfigured provider pin a worker thread for an unbounded period, so the gateway clamps the hint
+     * to this ceiling. Set a larger value via {@link Builder#maxRetryAfter(Duration)} when the provider is trusted.
      */
     public static final Duration DEFAULT_MAX_RETRY_AFTER = Duration.ofSeconds(60);
 
@@ -365,11 +364,10 @@ public final class LlmCallGateway<M> {
      *
      * <p>
      * The {@code cancellation} token is forwarded to the underlying {@link LlmClient} so a provider that supports
-     * active
-     * abort can cancel the in-flight HTTP call. The gateway itself honours the token at two points: it short-circuits
-     * at
-     * the top of every attempt (so no new attempt or fallback escalation starts once cancellation is requested), and it
-     * treats a {@link LlmCallCancelledException} as <b>terminal</b> — it is never retried or used to trigger fallback.
+     * active abort can cancel the in-flight HTTP call. The gateway itself honours the token at two points: it
+     * short-circuits at the top of every attempt (so no new attempt or fallback escalation starts once cancellation is
+     * requested), and it treats a {@link LlmCallCancelledException} as <b>terminal</b> — it is never retried or used to
+     * trigger fallback.
      *
      * @param cancellation
      *            cooperative cancellation token (must not be {@code null}; use {@link LlmCancellation#none()} to opt
@@ -675,8 +673,7 @@ public final class LlmCallGateway<M> {
     /**
      * Builds the terminal {@link LlmCallCancelledException} thrown when the gateway short-circuits because cancellation
      * was requested before an attempt (or before a retry backoff). The most recent provider failure, if any, is
-     * attached
-     * as a suppressed exception so diagnostics are not lost.
+     * attached as a suppressed exception so diagnostics are not lost.
      *
      * @param attempt
      *            the 1-based attempt index that was about to run
@@ -719,9 +716,8 @@ public final class LlmCallGateway<M> {
 
     /**
      * Extracts a non-negative {@code Retry-After} hint from {@code ex} when present. Only
-     * {@link LlmRateLimitedException}
-     * carries one; a negative hint is discarded so it cannot underflow the backoff. A zero hint is preserved (retry
-     * immediately).
+     * {@link LlmRateLimitedException} carries one; a negative hint is discarded so it cannot underflow the backoff. A
+     * zero hint is preserved (retry immediately).
      */
     private static Optional<Duration> serverRetryAfter(LlmClientException ex) {
         if (ex instanceof LlmRateLimitedException rle) {

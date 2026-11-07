@@ -15,8 +15,8 @@ import java.util.OptionalInt;
  * the call: uncached input, input read from the prompt cache, and input written to it. A provider whose wire format
  * reports only the uncached part (Anthropic's {@code input_tokens}) has the provider module add the cache counters
  * back, so every provider means the same thing by this number and it can be compared against a context window or a
- * context-length price band. The cache counters, when known, are therefore <em>subsets</em> of
- * {@code promptTokens}, never additions to it — see {@link #getCacheReadTokens()}.
+ * context-length price band. The cache counters, when known, are therefore <em>subsets</em> of {@code promptTokens},
+ * never additions to it — see {@link #getCacheReadTokens()}.
  *
  * <p>
  * Immutable value object.

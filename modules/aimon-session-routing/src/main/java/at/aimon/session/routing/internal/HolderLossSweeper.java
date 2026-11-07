@@ -42,8 +42,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
  * <b>Recovery is turn-scoped.</b> It was session-scoped until Stage 3b: the sweeper also completed the local event
  * stream and broadcast {@link SessionSignal.SignalKind#EVICT} so every node tore the session down. But a lost
  * holder does not mean a lost session — the lease expires and a successor claims it, possibly before the sweep
- * even
- * runs — so that broadcast raced the successor's {@code claim()} and evicted a live session, dropping its cached
+ * even runs — so that broadcast raced the successor's {@code claim()} and evicted a live session, dropping its cached
  * session, purging its approvals and completing its subscribers' streams over a turn that had died elsewhere. What the
  * sweeper detects is one dead attempt, and that is now all it reports.
  *

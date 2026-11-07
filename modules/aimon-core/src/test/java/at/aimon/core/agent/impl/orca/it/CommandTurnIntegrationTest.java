@@ -20,10 +20,9 @@ import at.aimon.core.subagent.Subagent;
  *
  * <p>
  * A command takes a <b>different branch of the executor</b> than everything else in this suite: {@code execute()}
- * routes
- * to {@code executeCommandFlow} instead of the ReAct loop, so no LLM call is made at all and the answer comes from the
- * command's own {@code CommandExecutionResult}. That split is what these tests cover — the registry the factory
- * assembled is the one resolving the name, and the command's effect on session state is real.
+ * routes to {@code executeCommandFlow} instead of the ReAct loop, so no LLM call is made at all and the answer comes
+ * from the command's own {@code CommandExecutionResult}. That split is what these tests cover — the registry the
+ * factory assembled is the one resolving the name, and the command's effect on session state is real.
  *
  * <p>
  * The most load-bearing case is {@link #clearDropsTheHistoryTheNextTurnWouldHaveCarried}: {@code /clear} is the only

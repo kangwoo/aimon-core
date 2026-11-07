@@ -46,10 +46,9 @@ import at.aimon.core.tracing.Spans;
  * <ul>
  * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId, plus the
  * tags of the tool context's metadata, and its principal when the request names none) so the summary LLM call is
- * properly attributed to the invoking user and carries
- * the caller's routing and policy tags, and — with tracing on — the command span's position,
- * so the summary LLM span nests under the executor's COMMAND span — under a COMPACTION span, when the executor
- * handed over a {@link ToolContextKeys#COMPACTION_OBSERVER}
+ * properly attributed to the invoking user and carries the caller's routing and policy tags, and — with tracing on —
+ * the command span's position, so the summary LLM span nests under the executor's COMMAND span — under a COMPACTION
+ * span, when the executor handed over a {@link ToolContextKeys#COMPACTION_OBSERVER}
  * <li>Runs it through the agent's {@link ContextEngine#compactNow}, which performs a {@link CompactionTrigger#MANUAL}
  * compaction and resets the AUTO circuit breaker on success so AUTO compactions can resume
  * <li>Fires {@code OnStopHook} after the compaction completes — observability tools that listen for execution-stop

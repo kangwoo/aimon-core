@@ -34,8 +34,7 @@ import at.aimon.core.llm.TokenUsage;
  * {@code outputTokens()} and {@code totalTokens()} throw at the top level, {@code outputTokensDetails()} throws beside
  * them, and {@code reasoningTokens()} throws one level down inside that — so a usage document missing any top-level
  * counter throws <em>before</em> the details are ever reached. The rule is <em>accounting degrades, identity
- * throws</em>:
- * a missing counter must not fail a turn that otherwise succeeded.
+ * throws</em>: a missing counter must not fail a turn that otherwise succeeded.
  *
  * <p>
  * The fixtures are deserialised rather than built, because that is the only way to express a document with a counter

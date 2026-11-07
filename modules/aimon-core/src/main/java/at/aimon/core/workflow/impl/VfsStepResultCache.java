@@ -38,22 +38,18 @@ import at.aimon.core.workflow.StepResultCache;
  *
  * <p>
  * <b>Best-effort.</b> Every backend/codec interaction is guarded: a failed {@code save} logs a warning and never
- * throws,
- * and a malformed, wrong-version, key-mismatched, or unreadable object {@code load}s as {@link Optional#empty()} —
- * exactly as an evicted in-memory entry would, so a cache problem degrades to re-execution. Bounding is delegated to
- * the
- * backend / an external retention policy rather than an LRU cap. Thread-safe: each operation is an independent
- * single-object read/write/delete.
+ * throws, and a malformed, wrong-version, key-mismatched, or unreadable object {@code load}s as
+ * {@link Optional#empty()} — exactly as an evicted in-memory entry would, so a cache problem degrades to re-execution.
+ * Bounding is delegated to the backend / an external retention policy rather than an LRU cap. Thread-safe: each
+ * operation is an independent single-object read/write/delete.
  */
 public final class VfsStepResultCache implements StepResultCache {
 
     /**
      * Default base directory for per-step cache objects, relative to the root of the filesystem the store is built over
-     * — the
-     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
-     * {@code {project}/.aimon/step-cache} as before the control store was split from the workspace. Construct it over
-     * the control store: this is framework state (resume points), not files the
-     * model works on.
+     * — the <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location
+     * is {@code {project}/.aimon/step-cache} as before the control store was split from the workspace. Construct it
+     * over the control store: this is framework state (resume points), not files the model works on.
      */
     public static final String DEFAULT_BASE_DIR = "step-cache";
 

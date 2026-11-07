@@ -14,10 +14,9 @@
  * <p>
  * This package is nested under {@code session} rather than sitting beside it because it is <b>inside</b> the session
  * aggregate, not next to it: the record contains a transcript, the handle holds a buffer, the store hands out a
- * manager,
- * and in the other direction the buffer needs a {@link at.aimon.core.agent.session.SessionId} and the manager needs a
- * {@link at.aimon.core.agent.session.store.SessionRecordStore}. As siblings the two would form a package cycle, and the
- * cycle would be honest.
+ * manager, and in the other direction the buffer needs a {@link at.aimon.core.agent.session.SessionId} and the manager
+ * needs a {@link at.aimon.core.agent.session.store.SessionRecordStore}. As siblings the two would form a package cycle,
+ * and the cycle would be honest.
  *
  * <h2>Key Concepts</h2>
  *
@@ -28,9 +27,7 @@
  * {@link at.aimon.core.agent.session.transcript.SessionLogState} that a record holds as one field. The log state is the
  * seq-addressed session log — entries of {@code (seq, message, origin)}, {@code nextSeq}, {@code floorSeq}, the rewind
  * point and the format it must be written in — and it crosses every hop of the load and save chains whole. Immutability
- * is what lets record copies share it by reference instead of
- * duplicating
- * the message list:
+ * is what lets record copies share it by reference instead of duplicating the message list:
  *
  * <pre>
  * {
@@ -48,8 +45,7 @@
  * {@link at.aimon.core.agent.session.transcript.TranscriptBuffer} is the live, mutable history of a running turn, and
  * the <b>only</b> append path — {@code SessionRecord} deliberately has no append method, because appending to an
  * immutable transcript is O(n) per message and would race the buffer the turn is actually writing to. The buffer
- * reports
- * mutations through a monotonic version counter plus an optional dirty listener:
+ * reports mutations through a monotonic version counter plus an optional dirty listener:
  *
  * <pre>
  * {
@@ -124,17 +120,15 @@
  *
  * <p>
  * The name is a known misnomer for the same reason: {@code initialize} reads as "once per session" but fires every
- * turn.
- * {@code beginTurn} / {@code endTurn} would be accurate; renaming it is a separate change from the vocabulary work,
- * because it moves a call boundary rather than a name.
+ * turn. {@code beginTurn} / {@code endTurn} would be accurate; renaming it is a separate change from the vocabulary
+ * work, because it moves a call boundary rather than a name.
  *
  * <h3>ThrowingPromptTooLongHandler</h3>
  *
  * <p>
  * {@link at.aimon.core.agent.session.transcript.ThrowingPromptTooLongHandler} is the do-nothing default for callers
- * with
- * no compaction strategy wired: it rethrows the triggering exception verbatim, so behaviour matches having installed no
- * handler at all. Real compaction lives in {@link at.aimon.core.agent.compact}.
+ * with no compaction strategy wired: it rethrows the triggering exception verbatim, so behaviour matches having
+ * installed no handler at all. Real compaction lives in {@link at.aimon.core.agent.compact}.
  *
  * <h2>Thread Safety</h2>
  *

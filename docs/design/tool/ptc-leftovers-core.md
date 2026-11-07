@@ -1,6 +1,6 @@
 # Design — ptc-leftovers-core
 
-> Status: **PR 1 and PR 2 IMPLEMENTED**; PR 3 not yet built. **PR 1** — `aimon-core` and `aimon-graaljs` (tests only):
+> Status: **PR 1, PR 2 and PR 3 IMPLEMENTED**. **PR 1** — `aimon-core` and `aimon-graaljs` (tests only):
 > the language notice skips a refused `ExecuteCode` call (`ExecuteCodeLanguageNotice`, breaking signature), fail-safe
 > span recording (`at.aimon.core.tracing.Spans.*Safely`), the Python runtime's loop-only-when-needed, pre-imports and
 > program-only tracebacks (`aimon_ptc.py`, `ToolApiRenderer.PYTHON_RESERVED`), the script-error line with an excerpt
@@ -15,10 +15,13 @@
 > loops). The docs it changed are `programmatic-tool-calling.md` Status, §7.2, §12.1, §12.2, §21,
 > [`tool-call-dispatcher.md`](tool-call-dispatcher.md) §6, §7 and the skill guide; it closes TC-23, TC-25, TC-26 and
 > TC-24 (decided "no").
+> **PR 3** — build only: `CommentReflowTest` scans the whole repository, and the lines it found were reflowed with no
+> word changed; it closes TC-21.
 >
-> **[§4](#4-after-the-pr-1-build--where-the-implementation-departed) and
-> [§5](#5-after-the-pr-2-build--where-the-implementation-departed), appended after the PR 1 and PR 2 builds, are where
-> the build departs from this document;** PR 3 appends a section after them. Everything between this header and §4 is
+> **[§4](#4-after-the-pr-1-build--where-the-implementation-departed),
+> [§5](#5-after-the-pr-2-build--where-the-implementation-departed) and
+> [§6](#6-after-the-pr-3-build--where-the-implementation-departed), appended after the PR 1, PR 2 and PR 3 builds, are
+> where the build departs from this document.** Everything between this header and §4 is
 > the body as approved by design review round 3, kept byte-exact rather than corrected
 > ([`../README.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록)). The body's citations (`file:line`) are at
 > `318805f5`; its path shorthands (`core/`, `coreT/`, `rt`, `ptc.md`, `shell.md`, `features.md`, `register`) are defined
@@ -1290,3 +1293,56 @@ monotone ceiling applied at the next iteration boundary, with no suspension once
 - The CHANGELOG's runtime bullet says a program without top-level `await` no longer runs inside a loop.
 - This document's header now lists every section of `programmatic-tool-calling-shell.md` PR 1 changed.
 - The over-wide line in `programmatic-tool-calling-shell.md` §8 is left to PR 3.
+
+## 6. After the PR 3 build — where the implementation departed
+
+*Appended 2026-11-07, after the PR 3 build. The body above is unchanged. Sources: the run's `build/pr3/deviations.md`,
+design review 3's note on the CHANGELOG scope, and what was found while building.*
+
+**No PR 3 decision changed.** The scope is every module's `src/main/java` and `src/test/java`, `docs/**/*.md` and the
+root documents; the fixes are a throwaway reflow, whitespace and newlines only; `ALLOWED` takes what is laid out on
+purpose. TC-21 is closed in the register with the numbers below.
+
+### 6.1 Where the build departed from the body
+
+- **The volume (§3.1).** Rerun at `e65443bc` (the PR 2 merge, not `318805f5`), the PR 1 predicate found **865 Java
+  lines in 436 files** — `aimon-core` 600, `aimon-session-routing` 117, `aimon-session-mongodb` 43, `aimon-llm-openai`
+  22, `aimon-llm-anthropic` 15, `aimon-session-redis` 14, `aimon-cli` 11, `aimon-bootstrap`, `aimon-session-postgres`
+  and `aimon-spring-boot-starter` 9 each, `aimon-scheduling-quartz` 8, `aimon-graaljs` 4, `aimon-scheduling-testkit` 2,
+  `aimon-memory-testkit` and `aimon-session-testkit` 1 each (two of them in `CommentReflowTest` itself) — and **116
+  Markdown lines**. All Java lines were reflowed; `ALLOWED` has no Java entry. There are no generated sources under any
+  `src/` (annotation-processor output is in `build/generated`), so nothing is excluded.
+- **The Markdown calibration needed two more signs (§3.1).** The body's two signs — a next line starting with `[`, `**`
+  or `` ` ``, and a sentence end (`.`, `:`, `)`) followed by a capital or `**` — took the 116 down to 38. The "previous
+  line" of the second sign is read as the short line itself, the one that ends the sentence. Most of the 38 were still
+  laid out on purpose: a short line before a line holding a link the author kept whole. Two signs from the Java
+  predicate's logic were added: the next line's first token would not have fitted after the short line (Java's
+  joinability), and the next line is over 120 columns because it holds a token over 60 wide. That left 20; 17 were
+  reflowed and 3 are in `ALLOWED` with reasons (`docs/design/README.md` starts each area of its deleted-records note on
+  a line of its own, twice; `subagent-tracing-backlog.md` introduces the enumerated `(a)` / `(b)` constructors). OQ-5's
+  fallback, narrowing Markdown to `docs/design/**` and `docs/backlog/**`, was not needed.
+- **The CHANGELOG reads `[Unreleased]` only (design review 3).** Released sections are history; the test cuts a
+  `CHANGELOG*` file at its second `## [` heading. It found nothing there.
+- **The reflow is narrower than "the paragraph" (§3.2).** The script joins the orphan to the line after it, re-wraps
+  greedily, and stops at the first original line break where the line it has just written is no longer an orphan, so a
+  paragraph's untouched lines stay as they were. Inline tags (`{@link …}`) and, in Markdown, code spans are never
+  split; a Java line starting with an inline element (`<b>`, `<i>`, `<em>`) continues the paragraph, a block element
+  ends it. Markdown is wrapped at 120 *display* columns (Hangul two), the width the test measures, so a reflowed Korean
+  line can be shorter than neighbours wrapped by characters.
+- **`./gradlew format` changed nothing in the reflow.** Replaying the script on a clean checkout of `e65443bc` gives
+  byte-identical files to the formatted tree for all 436 Java files. It did change `CommentReflowTest`'s own class
+  javadoc: an unbalanced `{@code {@code}` made the formatter put the following `<p>` and `<h2>` at column 0 (the file
+  had the same damage before, at its `<ul>`). The javadoc now says `{@code {@code ...}}`, and the formatter leaves it.
+- **Verification of "no word changed".** `git diff -w --word-diff=porcelain --word-diff-regex='[^[:space:]*]+'` shows
+  no changed word (the regex leaves out the `*` that a joined javadoc line drops). Two scripted checks back it: every
+  changed file's sequence of whitespace-separated tokens, lone `*` aside, is the same before and after, and every
+  changed Java file is byte-identical with its comments stripped.
+- **The over-wide line in `programmatic-tool-calling-shell.md` §8** (188 display columns, left by PR 1) was re-wrapped
+  with the two lines after it.
+- **Translations (§3.2).** The pairs `hook-config-guide` (both sides had hits), `context-engine-guide` and
+  `memory-usage-guide` (only the canonical had one) have their `source_commit` set to the canonical's pre-edit commit;
+  all three were fresh before. Four translations had hits of their own with an untouched canonical
+  (`CONTRIBUTING.ko.md`, `tool-development-guide.en.md`, `opensearch-knowledge-store-guide.en.md`,
+  `embedding-agent-in-application.en.md`); their `source_commit` is unchanged. No translation was stale.
+- **Tests (§3.3).** Besides the scope and predicate tests, `markdownCalibration` covers each of the four signs and the
+  `[Unreleased]` cut, and `javaScopeCoversEveryModule` asserts at least 15 modules and both source sets.

@@ -25,10 +25,8 @@ import at.aimon.core.knowledge.SearchResult;
  * <p>
  * Enables wiki knowledge bases to integrate with the existing agent execution pipeline without modifying
  * {@code OrcaAgentRuntime}, {@code OrcaAgentExecutor}, or {@code OrcaAgentRuntimeFactory}. The
- * adapter
- * translates between {@link KnowledgeStore} types ({@link KnowledgeScope}, {@link KnowledgeSource}, etc.) and wiki
- * types
- * ({@link WikiScope}, {@link WikiSource}, etc.).
+ * adapter translates between {@link KnowledgeStore} types ({@link KnowledgeScope}, {@link KnowledgeSource}, etc.) and
+ * wiki types ({@link WikiScope}, {@link WikiSource}, etc.).
  *
  * <p>
  * Scope mapping: {@link KnowledgeScope#getAgentName()} maps to {@link WikiScope#getAgentName()}, and

@@ -65,9 +65,9 @@ public final class SchedulingEngine implements AutoCloseable {
      *
      * <p>
      * The engine is the subscriber rather than the {@link RoutineExecutor} because honouring a remote request and
-     * making one must stay separate concerns. If the executor both listened and published, its own
-     * {@code shutdown()} — which interrupts everything in flight here — would broadcast that to the cluster and stop
-     * runs on nodes that are not shutting down at all.
+     * making one must stay separate concerns. If the executor both listened and published, its own {@code shutdown()} —
+     * which interrupts everything in flight here — would broadcast that to the cluster and stop runs on nodes that are
+     * not shutting down at all.
      */
     private final ScheduledTaskInterruptBus.Subscription interruptSubscription;
     private final boolean rehydrateAtStart;

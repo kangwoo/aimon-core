@@ -93,8 +93,7 @@ public final class DefaultSkillContentRenderer implements SkillContentRenderer {
      * <p>
      * <b>Per-session.</b> Two concurrent sessions of the same agent render different values, so unlike
      * {@link #VAR_AIMON_AGENT_RUNTIME_ID} this <i>is</i> usable as a uniqueness discriminator — a body wanting a
-     * private
-     * scratch directory should write {@code /tmp/work/${AIMON_SESSION_ID}}.
+     * private scratch directory should write {@code /tmp/work/${AIMON_SESSION_ID}}.
      *
      * <p>
      * <b>Empty when the run rendering the skill has no session of its own</b> — inside a subagent fork or a scheduled
@@ -104,8 +103,7 @@ public final class DefaultSkillContentRenderer implements SkillContentRenderer {
      * <p>
      * This literal spent one release as a deprecated alias of {@link #VAR_AIMON_AGENT_RUNTIME_ID}. The alias was
      * withdrawn, not re-pointed: a body that ignored the {@code WARN} and kept using it now receives a different value
-     * —
-     * the per-session one its name always promised.
+     * — the per-session one its name always promised.
      */
     public static final String VAR_AIMON_SESSION_ID = "AIMON_SESSION_ID";
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 7da424e4
+source_commit: 2ba9ec61
 ---
 
 # Context Engine Guide — shrinking the context of long conversations

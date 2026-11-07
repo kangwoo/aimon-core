@@ -144,8 +144,7 @@ public final class MemoryChatTool extends AbstractTool {
 
     /**
      * Not callable from model-written code: it calls an LLM, whose tokens and cost a script's budget does not see
-     * ({@code docs/design/tool/programmatic-tool-calling.md}
-     * decision 15).
+     * ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
      */
     @Override
     public boolean isCodeCallable() {

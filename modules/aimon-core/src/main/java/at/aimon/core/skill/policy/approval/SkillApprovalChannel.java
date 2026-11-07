@@ -25,11 +25,10 @@ import at.aimon.core.skill.policy.pending.PendingSkillRequest;
  * a place the active {@link at.aimon.core.skill.policy.SkillInvocationPolicy} chain reads — typically a
  * {@link AgentApprovalStore} that sits in front of the rule-based policy. The scanner does not re-read the channel's
  * decisions; it relies on the policy chain picking them up on the next check (which happens at {@code SkillTool}
- * execution time within the same turn). Note how far that write reaches: the store is keyed by
- * {@link AgentRuntimeId}, so a decision taken here is <b>agent-scoped, not session-scoped</b> — it silently
- * applies to every later session and {@code LiveSession} of the same agent until {@code /revoke} (or runtime
- * destruction) drops it. An implementation that prompts the user should say so, so the user knows what they are
- * agreeing to.</li>
+ * execution time within the same turn). Note how far that write reaches: the store is keyed by {@link AgentRuntimeId},
+ * so a decision taken here is <b>agent-scoped, not session-scoped</b> — it silently applies to every later session and
+ * {@code LiveSession} of the same agent until {@code /revoke} (or runtime destruction) drops it. An implementation that
+ * prompts the user should say so, so the user knows what they are agreeing to.</li>
  * <li><b>Never throw.</b> Implementations must catch their own infrastructure errors (I/O, user-interrupt, time-outs)
  * and write a safe-default decision — {@link SkillInvocationDecision#DENY} for the un-decided skills — rather than
  * propagating the exception. The scanner runs inside the agent loop; an uncaught exception here would bubble through

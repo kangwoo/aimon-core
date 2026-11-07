@@ -12,8 +12,7 @@ import java.util.Optional;
  * runtime factory ({@code OrcaAgentRuntimeFactory#withSubagentExecutionPolicies}) — and asked with the name of the
  * subagent about to run. The name is the one thing about the launch the model chooses; the policy for it is not, so a
  * model cannot raise a limit by what it writes into the {@code Task} call, and a subagent definition file cannot
- * either.
- * An empty answer launches the subagent exactly as before the policy existed.
+ * either. An empty answer launches the subagent exactly as before the policy existed.
  *
  * <p>
  * Implementations must be thread-safe: one resolver serves every launch of a runtime.

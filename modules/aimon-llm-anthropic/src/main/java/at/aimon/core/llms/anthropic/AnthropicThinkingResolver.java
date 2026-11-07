@@ -101,10 +101,10 @@ final class AnthropicThinkingResolver {
      *
      * <p>
      * The effort is resolved <em>here</em> rather than back in the request builder, and that is what closes the third
-     * of the reporting defects. {@link #intendedEffort} applies the same precedence
-     * {@link #resolveExtendedThinking} does — an explicit {@code thinkingBudgetTokens} beats a rung set on the call —
-     * and until this moved, only the budgeted branch said so. The path is reachable in one shape: a budget is legal
-     * only under {@link AnthropicThinkingMode#EXTENDED} ({@code AnthropicConfig}), so it reaches an adaptive request
+     * of the reporting defects. {@link #intendedEffort} applies the same precedence {@link #resolveExtendedThinking}
+     * does — an explicit {@code thinkingBudgetTokens} beats a rung set on the call — and until this moved, only the
+     * budgeted branch said so. The path is reachable in one shape: a budget is legal only under
+     * {@link AnthropicThinkingMode#EXTENDED} ({@code AnthropicConfig}), so it reaches an adaptive request
      * only by translation, and there the number cannot go on the wire at all.
      */
     private AnthropicThinkingResolution resolveAdaptiveThinking(AnthropicThinkingResolution.Builder resolution,
@@ -137,8 +137,8 @@ final class AnthropicThinkingResolver {
      * <li><strong>The mode contradicts a known dialect.</strong> Honouring it is a <em>certain</em> HTTP 400 — each
      * shape is rejected by a model that speaks only the other — and omitting the parameter throws away the thinking
      * that was asked for. So the request is translated to the dialect the model speaks and the substitution is
-     * reported. The intent survives because both dialects are spellings of the same neutral
-     * {@link ReasoningEffort}, which {@link AnthropicThinkingBudgets} maps in either direction.
+     * reported. The intent survives because both dialects are spellings of the same neutral {@link ReasoningEffort},
+     * which {@link AnthropicThinkingBudgets} maps in either direction.
      * <li><strong>{@link ThinkingDialect#EITHER}.</strong> A named mode is honoured, unreported: nothing is a 400 and
      * nothing diverges, so translating would be a substitution with nothing to justify it.
      * <li><strong>{@link AnthropicThinkingMode#AUTO} against a model nothing describes.</strong> Nothing is sent,

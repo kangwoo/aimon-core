@@ -34,12 +34,11 @@ import at.aimon.core.filesystem.exception.VirtualFileSystemException;
  * <b>Where branches come from.</b> Each branch is an {@link ExecutionEnvironment#isolate(String) isolate(key)} of the
  * parent, under a key the caller derives deterministically; the local environment accepts keys of the shape
  * {@code [A-Za-z0-9_]+} ({@code LocalExecutionEnvironment.isolate}). An assembler that knows only the keys — for
- * example from listing {@code .worktrees/} — rebuilds each branch with
- * {@code parent.isolate(key).orElseThrow()}: isolation is deterministic on the key, so this is the same view the run
- * used. Staged skill copies are shared with the parent and never appear in a branch listing, so they are never
- * promoted — nor is a branch-local staging directory a shell made, which the branch listing leaves out too; a branch
- * cannot write under its own {@code .aimon/} (the parent's path rules apply at the branch root), so a merge never
- * meets one.
+ * example from listing {@code .worktrees/} — rebuilds each branch with {@code parent.isolate(key).orElseThrow()}:
+ * isolation is deterministic on the key, so this is the same view the run used. Staged skill copies are shared with the
+ * parent and never appear in a branch listing, so they are never promoted — nor is a branch-local staging directory a
+ * shell made, which the branch listing leaves out too; a branch cannot write under its own {@code .aimon/} (the
+ * parent's path rules apply at the branch root), so a merge never meets one.
  */
 public final class WorktreeMerge {
 

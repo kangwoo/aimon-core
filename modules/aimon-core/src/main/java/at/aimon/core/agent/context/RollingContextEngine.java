@@ -82,21 +82,19 @@ import at.aimon.core.llm.token.TokenEstimator;
  * warning) over the same thresholds: {@link ModelContextLimits#getAutoCompactThreshold() auto} is
  * {@code autoCompactRatio × effective} from the resolved {@link ModelContextLimits} (an agent sets the ratio with
  * AGENT.md {@code context.auto-compact-ratio}), {@code warning = auto − warningBuffer}, and a budget-forced call
- * compacts at {@code warning}. Every size
- * counts the system prompt. The cut is chosen from estimates <em>before</em> the summary is asked for, retreating from
- * the tail budget to half of it to the last legal cut; if even that would not end below the threshold the engine warns
- * instead of compacting ({@link CompactionKind#FALLBACK}), except at the blocking limit, where the head is absorbed
- * too. Before any summary, eliding large tool results in the part about to be absorbed is tried first
- * ({@link CompactionKind#PRUNE}); when that alone is enough nothing is summarized.
+ * compacts at {@code warning}. Every size counts the system prompt. The cut is chosen from estimates <em>before</em>
+ * the summary is asked for, retreating from the tail budget to half of it to the last legal cut; if even that would not
+ * end below the threshold the engine warns instead of compacting ({@link CompactionKind#FALLBACK}), except at the
+ * blocking limit, where the head is absorbed too. Before any summary, eliding large tool results in the part about to
+ * be absorbed is tried first ({@link CompactionKind#PRUNE}); when that alone is enough nothing is summarized.
  *
  * <p>
  * <b>What the model has not read yet.</b> Every cut stops at the view's
- * {@linkplain ViewProjection#firstUnreadPosition()
- * unread part} — the tool results answering the last {@code tool_use}, or the input after the last reply — so no
- * compaction elides it or absorbs it into the summary before the model has responded to it (context-engine §13.10).
- * When that part alone keeps the view over the threshold, the engine warns instead of compacting; at the blocking
- * limit it absorbs everything before it, head included, and sends the view even if it is still over, with a WARN; when
- * nothing is left to absorb it blocks.
+ * {@linkplain ViewProjection#firstUnreadPosition() unread part} — the tool results answering the last {@code tool_use},
+ * or the input after the last reply — so no compaction elides it or absorbs it into the summary before the model has
+ * responded to it (context-engine §13.10). When that part alone keeps the view over the threshold, the engine warns
+ * instead of compacting; at the blocking limit it absorbs everything before it, head included, and sends the view even
+ * if it is still over, with a WARN; when nothing is left to absorb it blocks.
  *
  * <p>
  * <b>Falling back.</b> Rolling only pays when a compacted view ends below the warning band:
@@ -123,9 +121,8 @@ public final class RollingContextEngine implements ContextEngine {
 
     /**
      * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compacted view is still at or
-     * above
-     * the blocking limit: everything before the unread part was summarized, head included, and the unread part alone
-     * keeps it there. The view is sent as it is; the provider, or prompt-too-long recovery, has the last word
+     * above the blocking limit: everything before the unread part was summarized, head included, and the unread part
+     * alone keeps it there. The view is sent as it is; the provider, or prompt-too-long recovery, has the last word
      * (context-engine §13.10). The same fact reaches the execution result as
      * {@link CompactionMetadata#isOverBlockingLimit()} on that compaction's record.
      */

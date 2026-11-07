@@ -47,9 +47,9 @@ public final class SkillRenderContextAccess {
      *
      * <p>
      * Populates the agent runtime identifier, the identity of the run doing the rendering, principal, and the skill
-     * directory. Missing values are simply omitted; the
-     * renderer is expected to handle absent fields gracefully. A builder is returned rather than a context so a caller
-     * holding a more specific value (a command's own principal, say) can set it before building.
+     * directory. Missing values are simply omitted; the renderer is expected to handle absent fields gracefully. A
+     * builder is returned rather than a context so a caller holding a more specific value (a command's own principal,
+     * say) can set it before building.
      *
      * <p>
      * The three ids address different lifetimes. The runtime id is <b>agent-scoped</b>: every session served by this

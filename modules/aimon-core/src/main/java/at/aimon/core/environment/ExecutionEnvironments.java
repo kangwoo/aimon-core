@@ -19,9 +19,9 @@ public final class ExecutionEnvironments {
      * Resolves the environment of an execution whose caller may attach per-run attributes (a main turn or a routine):
      * extracts the {@code environment.*} subset of {@code executionAttributes} into the request (see
      * {@link EnvironmentRequestAttributes}), then resolves as
-     * {@link #resolveOrUnavailable(ExecutionEnvironmentProvider,
-     * EnvironmentRequest)} does. An extraction failure is an unavailable environment too, and the provider is not
-     * called: the caller asked for a placement core cannot express, and resolving without it would silently ignore it.
+     * {@link #resolveOrUnavailable(ExecutionEnvironmentProvider, EnvironmentRequest)} does. An extraction failure is an
+     * unavailable environment too, and the provider is not called: the caller asked for a placement core cannot
+     * express, and resolving without it would silently ignore it.
      *
      * @param provider
      *            the provider, or null if none is configured
@@ -49,8 +49,7 @@ public final class ExecutionEnvironments {
     /**
      * Resolves the execution's environment, turning every failure into an {@link UnavailableExecutionEnvironment}
      * instead of failing the execution (execution-environment design §7). A {@code null} provider or a {@code null}
-     * answer counts as a
-     * failure. Never falls back to a host environment.
+     * answer counts as a failure. Never falls back to a host environment.
      *
      * @param provider
      *            the provider, or null if none is configured

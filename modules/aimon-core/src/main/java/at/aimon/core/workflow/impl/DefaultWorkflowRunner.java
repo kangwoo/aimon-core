@@ -360,8 +360,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      * Casts a live entry's handle to the caller's expected result type. Unchecked by necessity: the registry stores
      * handles untyped, and a re-submit is presumed to carry the same script (and thus the same {@code T}) as the live
      * run it joins — re-submitting a live id with a differently-typed script surfaces as a {@code ClassCastException}
-     * at the caller's {@code await}/{@code future} use site (documented on
-     * {@code WorkflowRunner#runInBackground}).
+     * at the caller's {@code await}/{@code future} use site (documented on {@code WorkflowRunner#runInBackground}).
      */
     @SuppressWarnings("unchecked")
     private static <T> RunHandle<T> castHandle(RunningRunRegistry.Entry entry) {

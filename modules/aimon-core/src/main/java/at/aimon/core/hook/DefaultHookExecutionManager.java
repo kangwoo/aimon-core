@@ -277,8 +277,7 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
      * The returned list preserves order and length of the input; non-ASK entries pass through unchanged.
      * {@code feedback}
      * / {@code updatedInput} / {@code updatedOutput} from the original ASK result are preserved on the promoted result
-     * so
-     * the dispatcher can still surface why the hook had asked.
+     * so the dispatcher can still surface why the hook had asked.
      *
      * <p>
      * When {@code refuseAsks} is set — the call came from model-written code — no prompt is shown and every ASK becomes

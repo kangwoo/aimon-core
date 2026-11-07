@@ -365,8 +365,8 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
     /**
      * Creates what a runtime reads and writes — its workspace file system and the control store beside it — and binds
      * the runtime to the stack's execution environment provider (execution-environment design §4,
-     * execution-environment-files design §3.3). Everything
-     * created here goes to {@code sink}; the provider and a caller-supplied shared file system do not.
+     * execution-environment-files design §3.3). Everything created here goes to {@code sink}; the provider and a
+     * caller-supplied shared file system do not.
      *
      * <p>
      * The binding is made first and therefore closed last: after the runtime, after its control store. Closing it

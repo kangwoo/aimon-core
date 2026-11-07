@@ -55,8 +55,7 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * <p>
  * Wiring mirrors {@link DefaultLiveSessionInterruptTest}: a stub streaming executor publishes a
  * {@link DefaultInterruptCoordinator} through the request's interrupt observer and parks on a controllable future, so
- * the
- * session's own bookkeeping is observable without running a real ReAct loop.
+ * the session's own bookkeeping is observable without running a real ReAct loop.
  */
 @DisplayName("DefaultLiveSession turn addressing")
 class DefaultLiveSessionTurnIdTest {

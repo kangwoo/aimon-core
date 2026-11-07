@@ -80,9 +80,9 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * {@link CompletionReason#INTERRUPTED}. On any other outcome nothing else recorded the caller's request, so the flag
  * is re-armed last of all — after the persist and after the memory feed, both of which are owed a swept thread.
  * These tests pin every consequence: the PreTool block is enforced regardless of the ambient flag, a turn that saw the
- * flag ends as {@code INTERRUPTED} instead of drifting on, nothing escapes onto the
- * caller's thread on that path, the OnStop hooks still run to completion on an error exit, and an interrupt the turn
- * never reported is handed back rather than eaten.
+ * flag ends as {@code INTERRUPTED} instead of drifting on, nothing escapes onto the caller's thread on that path, the
+ * OnStop hooks still run to completion on an error exit, and an interrupt the turn never reported is handed back rather
+ * than eaten.
  */
 @DisplayName("OrcaAgentExecutor thread-interrupt-flag hygiene")
 class OrcaAgentExecutorInterruptFlagHygieneTest {

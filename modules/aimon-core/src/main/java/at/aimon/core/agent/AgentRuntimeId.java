@@ -147,8 +147,7 @@ public final class AgentRuntimeId {
      * Intended for callers that hold the agent name but not the live {@link Agent} instance — typically session
      * dispatch layers (e.g., {@code SessionRouter}) routing requests to a pre-registered context. Production
      * paths that resolve a live {@link Agent} should prefer {@link #from(Agent)} so the agent-name source is
-     * unambiguous
-     * at the call site.
+     * unambiguous at the call site.
      *
      * @param agentName
      *            the agent name (must be non-blank and must not contain {@code ':'})

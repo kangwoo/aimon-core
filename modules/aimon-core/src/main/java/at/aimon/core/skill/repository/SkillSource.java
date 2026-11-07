@@ -6,8 +6,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
 
 /**
  * Where a skill's files can be read from to stage them into an execution environment (execution-environment-staging
- * design
- * §9): a filesystem and the skill's directory on it. Only the read side of the filesystem is used. Immutable.
+ * design §9): a filesystem and the skill's directory on it. Only the read side of the filesystem is used. Immutable.
  */
 public final class SkillSource {
 

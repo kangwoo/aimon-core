@@ -12,10 +12,10 @@ import at.aimon.core.agent.session.TurnId;
  * <p>
  * Most failures of a forwarded turn cannot say that. A deadline, a lost reservation or a lost holder leaves open that
  * the input ran, or is running, somewhere; those fail with a plain {@link IllegalStateException}. This type is used
- * only
- * where the "not run" is proven by the node that had the message in hand: it removed the message from the inbox itself
- * ({@link Reason#PURGED}), or it took the message out and gave up on it before starting ({@link Reason#NOT_HOLDER},
- * {@link Reason#UNREADABLE}, {@link Reason#REJECTED}). Design: {@code docs/design/session/routing.md} §11.3.
+ * only where the "not run" is proven by the node that had the message in hand: it removed the message from the inbox
+ * itself ({@link Reason#PURGED}), or it took the message out and gave up on it before starting
+ * ({@link Reason#NOT_HOLDER}, {@link Reason#UNREADABLE}, {@link Reason#REJECTED}). Design:
+ * {@code docs/design/session/routing.md} §11.3.
  *
  * <p>
  * Extends {@link IllegalStateException} so code that caught the failures before this type existed keeps catching

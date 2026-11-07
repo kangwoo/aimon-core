@@ -32,8 +32,7 @@ import at.aimon.core.subagent.task.codec.TaskResultCodec;
  * <p>
  * One object per task means a save is one PUT (atomic on object stores) and a load one GET — no listing or segment
  * reassembly, unlike the append-only {@link VfsTaskOutputStore}. {@link #save} deletes any existing object first, so
- * the
- * newest result wins regardless of whether the backend's {@code write} overwrites, rejects, or versions an existing
+ * the newest result wins regardless of whether the backend's {@code write} overwrites, rejects, or versions an existing
  * path.
  *
  * <p>
@@ -50,9 +49,8 @@ public final class VfsTaskResultStore implements TaskResultStore {
 
     /**
      * Default base directory for per-task result objects, relative to the root of the filesystem the store is built
-     * over — the
-     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
-     * {@code {project}/.aimon/task-result} as before the control store was split from the workspace.
+     * over — the <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical
+     * location is {@code {project}/.aimon/task-result} as before the control store was split from the workspace.
      */
     public static final String DEFAULT_BASE_DIR = "task-result";
 

@@ -143,9 +143,9 @@ import at.aimon.core.tracing.Tracer;
  *
  * <p>
  * This executor mirrors the {@code OrcaAgentExecutor} ReAct loop for parity: tool execution carries the same
- * {@link ToolContext} keys (LLM call metadata, artifact collector, cancellation signal, per-tool
- * {@code toolUseId}), fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook
- * exception never discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
+ * {@link ToolContext} keys (LLM call metadata, artifact collector, cancellation signal, per-tool {@code toolUseId}),
+ * fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook exception never
+ * discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
  * that loop gives ({@link TruncatedResponses}): a final answer ends as {@link CompletionReason#TRUNCATED} with the
  * shared marker, and tool calls are refused rather than run. And it stops on the same stalled-iteration guard
  * ({@link StalledIterationGuard}): consecutive iterations whose tool calls all failed — refused or failing — end
@@ -222,9 +222,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * PAR-04: dispatcher that may parallelise a batch of
-     * {@link at.aimon.core.agent.tool.ConcurrencyBehavior#CONCURRENT_SAFE
-     * CONCURRENT_SAFE} subagent tools. Defaults to sequential (parallel disabled); inject a parallel-enabled dispatcher
-     * via {@link #withParallelToolDispatcher(ParallelToolDispatcher)}. The dispatcher is an executor field rather than
+     * {@link at.aimon.core.agent.tool.ConcurrencyBehavior#CONCURRENT_SAFE CONCURRENT_SAFE} subagent tools. Defaults to
+     * sequential (parallel disabled); inject a parallel-enabled dispatcher via
+     * {@link #withParallelToolDispatcher(ParallelToolDispatcher)}. The dispatcher is an executor field rather than
      * part of the immutable per-execution {@link LoopContext}, mirroring the main-agent executor.
      *
      * <p>
@@ -261,8 +261,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * The client is auto-wrapped in a pass-through {@link LlmCallGateway} (default retry policy, no fallback, no
      * prompt-too-long handler) and compaction is disabled ({@link ContextEngine#passthrough()}). This preserves the
-     * legacy
-     * single-client construction path used by callers and tests.
+     * legacy single-client construction path used by callers and tests.
      *
      * @param llmClient
      *            The LLM client (must not be null)
@@ -433,8 +432,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * through a timer that trips the fork's cancellation, the structured result through the
      * {@value StructuredResultReport#TOOL_NAME} tool it offers and answers itself, and the context settings on every
      * context request — the last only when this executor's own engine compacts; with
-     * {@link ContextEngine#passthrough()} (how
-     * {@code OrcaAgentExecutorFactory} builds it) they are left out, because they would do nothing.
+     * {@link ContextEngine#passthrough()} (how {@code OrcaAgentExecutorFactory} builds it) they are left out, because
+     * they would do nothing.
      *
      * @return the enforced capabilities
      */
@@ -1031,8 +1030,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * The transcript is captured <b>before</b> the goal goes in, and that is what a blocked fork hands back, so a goal
-     * a
-     * guard refused is never persisted and replayed by a later resume. It is empty for a fresh fork, which therefore
+     * a guard refused is never persisted and replayed by a later resume. It is empty for a fresh fork, which therefore
      * saves nothing and stays unresumable; for a resume it is the restored conversation, unchanged.
      *
      * <p>
@@ -1190,10 +1188,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Returns {@code true} if the execution-scoped signal is tripped or the current thread carries an interrupt.
-     * Delegates to
-     * {@link SubagentInterrupts#isCancelledOrInterrupted(CancellationSignal)} so the ReAct and code-behavior paths
-     * share
-     * one definition — including its interrupt-flag-clearing semantics — and cannot drift.
+     * Delegates to {@link SubagentInterrupts#isCancelledOrInterrupted(CancellationSignal)} so the ReAct and
+     * code-behavior paths share one definition — including its interrupt-flag-clearing semantics — and cannot drift.
      *
      * @param cancellationSignal
      *            the execution-scoped cancellation signal (must not be null)
@@ -1494,8 +1490,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Opens one iteration's trace from the fork's inline-skill ceiling as it stands now, read once, so the offer and
-     * the
-     * iteration's dispatcher are built from the same snapshot (TC-26).
+     * the iteration's dispatcher are built from the same snapshot (TC-26).
      */
     private IterationTrace openIteration(LoopContext lc, int iterationCount) {
         final InlineSkillCeiling.Snapshot ceiling = lc.ceilingSnapshot();
@@ -1808,9 +1803,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * Nothing on the tool path runs for these calls: no PermissionRequest, PreTool or PostTool hook, and no execution.
      * The progress stream still shows each call and its error, as {@link #executeToolUses} would. A refused
      * iteration is all-error, so the stalled-iteration guard counts it, as on a turn: a fork whose every response is
-     * cut ends as {@link CompletionReason#ERROR} after
-     * {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS} of them, with a stop message that names
-     * {@code max_tokens}.
+     * cut ends as {@link CompletionReason#ERROR} after {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS}
+     * of them, with a stop message that names {@code max_tokens}.
      *
      * @param lc
      *            the loop context
@@ -1880,8 +1874,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * block), and THREAD_INTERRUPT tools additionally get a {@code Thread.currentThread()::interrupt} terminator
      * pre-registered. Permission is enforced both via the PermissionRequest hook chain and the subagent's
      * {@code allowedTools} allow-list passed to the {@link ToolExecutionManager}. PostTool hook failures are isolated
-     * so
-     * a hook exception never discards the real tool result.
+     * so a hook exception never discards the real tool result.
      *
      * <p>
      * TRACE-01: when {@code toolContext} carries a span parent, the call runs inside a {@code TOOL} span, and the tool
@@ -2117,8 +2110,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * Creates the result of a fork that asked for more tool calls than its policy allows:
      * {@link CompletionReason#TOOL_CALL_BUDGET_EXCEEDED} — or {@link CompletionReason#TOKEN_BUDGET_EXCEEDED} when the
      * batch was refused because the response carrying it spent the token budget. The calls over the cap were never run;
-     * their error results
-     * are in the transcript.
+     * their error results are in the transcript.
      */
     private SubagentExecutionResult createToolCallBudgetResult(LoopContext lc, int iterationCount,
             TokenUsage accumulatedTokens) {
@@ -2155,10 +2147,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * Cost mirror: when a cost estimator is wired, the call's price is folded into the tracker so a request-level
      * {@code ExecutionBudget.maxCostUsd} stops the loop in-flight — the result-time estimate alone would only report
-     * the
-     * total after the loop already exited. USD-only by contract, like {@code OrcaAgentExecutor}'s cost block: a non-USD
-     * estimate is not enforced as a STOP. The quota charge goes to the turn's keys — the session's among them, though
-     * the fork has none; an unpriced call charges tokens only.
+     * the total after the loop already exited. USD-only by contract, like {@code OrcaAgentExecutor}'s cost block: a
+     * non-USD estimate is not enforced as a STOP. The quota charge goes to the turn's keys — the session's among them,
+     * though the fork has none; an unpriced call charges tokens only.
      */
     private void recordCallCost(LoopContext lc, LlmResponse response) {
         Money callCost = null;
@@ -2399,8 +2390,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * One fork's consecutive failures per tool, which {@code SubagentExecutionPolicy#getMaxConsecutiveToolFailures}
      * bounds. A call that was run and came back an error adds one to its tool's count; one that came back a success
      * resets it. A tool whose count has reached the limit is not run again in this fork, so its count never resets
-     * after
-     * that. Calls answered without being run — refused for a budget, a cut response or by this class — count for
+     * after that. Calls answered without being run — refused for a budget, a cut response or by this class — count for
      * nothing. A permission denial does count: the call reached the tool pipeline and failed there.
      *
      * <p>

@@ -30,8 +30,7 @@ public interface Tracer {
 
     /**
      * Starts a root span for a new trace (one turn). The returned span's {@link Span#context() context} has its trace
-     * id
-     * equal to its span id and no parent.
+     * id equal to its span id and no parent.
      *
      * @param sessionId
      *            the session id (must not be null)

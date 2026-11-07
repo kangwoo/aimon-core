@@ -24,8 +24,7 @@ import at.aimon.core.base.Principal;
  *
  * <p>
  * Step 1 ran <em>before</em> step 2, so a node validated a binding it had not yet earned the right to act on, and step
- * 3
- * might never happen at all (every side-field writer on {@link SessionRecordStore} is a documented no-op when the
+ * 3 might never happen at all (every side-field writer on {@link SessionRecordStore} is a documented no-op when the
  * record is absent). {@link #claim} performs all three, in the order that makes them safe.
  *
  * <h2>Atomic by ordering, not by transaction</h2>
@@ -40,12 +39,10 @@ import at.aimon.core.base.Principal;
  *
  * <p>
  * {@link SessionLeaseStore} and {@link SessionRecordStore} are shared by every node and are
- * application-scoped.
- * A {@code SessionStore} is <b>node-scoped</b>: one per session manager, because it tracks which leases
- * <em>this</em>
- * node holds so {@link #records()} can fence a write without every caller threading a fencing token through the ReAct
- * call chain. A deployment with two managers in one JVM (the multi-node test harnesses, notably) must build two stores
- * over the same two backends — not share one.
+ * application-scoped. A {@code SessionStore} is <b>node-scoped</b>: one per session manager, because it tracks which
+ * leases <em>this</em> node holds so {@link #records()} can fence a write without every caller threading a fencing
+ * token through the ReAct call chain. A deployment with two managers in one JVM (the multi-node test harnesses,
+ * notably) must build two stores over the same two backends — not share one.
  *
  * <h2>Fencing, and the window it does not close</h2>
  *
@@ -59,8 +56,7 @@ import at.aimon.core.base.Principal;
  * <p>
  * It does <em>not</em> close the sub-millisecond interleaving between the re-proof and the delegated write: doing that
  * requires the record write itself to carry the token, i.e. a fenced compare-and-set record backend. That is
- * deliberately
- * out of scope here — do not cite this class as a complete remedy for split-brain.
+ * deliberately out of scope here — do not cite this class as a complete remedy for split-brain.
  */
 public interface SessionStore {
 
@@ -130,15 +126,12 @@ public interface SessionStore {
      *
      * <p>
      * The primitive {@link #claim} is built on: {@code claim} is this plus binding settlement. Callers that have no
-     * agent
-     * to assert use it directly, and there are exactly two of them. An inbox drain adopts whatever the session is
+     * agent to assert use it directly, and there are exactly two of them. An inbox drain adopts whatever the session is
      * already bound to, so it has no requested agent to validate — it must hold the session <em>before</em> it can
      * see the queued messages that would name one, and a late {@link ClaimResult.AgentConflict} would return the lease
      * with messages already taken out of the at-most-once inbox. A delete is about to remove the record, so its binding
-     * is
-     * not a question worth asking. Both read the binding afterwards through {@link #load} and, when they must write
-     * one,
-     * through {@link #records()} — fenced by the lease this call hands back.
+     * is not a question worth asking. Both read the binding afterwards through {@link #load} and, when they must write
+     * one, through {@link #records()} — fenced by the lease this call hands back.
      *
      * <p>
      * The record is provisioned even when the caller only means to read it, so that a subsequent side-field write
@@ -190,8 +183,7 @@ public interface SessionStore {
 
     /**
      * Reads a record without claiming anything. Unfenced by definition — a read cannot corrupt history, and callers
-     * such
-     * as a status projection legitimately need to look at sessions they do not hold.
+     * such as a status projection legitimately need to look at sessions they do not hold.
      *
      * @param sessionId
      *            the session to read (must not be null)
@@ -210,8 +202,7 @@ public interface SessionStore {
      *
      * <p>
      * Stage 4 of the session-first restructure collapses this into a single {@code put(lease, snapshot)}, at which
-     * point
-     * the remaining mutator surface disappears. Until then this is the fenced write path.
+     * point the remaining mutator surface disappears. Until then this is the fenced write path.
      *
      * @return a fenced repository view; never null
      */
@@ -257,8 +248,7 @@ public interface SessionStore {
     /**
      * The segment delete path under a chosen {@link SessionFence}. {@link SessionFence#HOLDER_ONLY} is
      * {@link #segments(SessionLogSegmentStore)}; the default refuses the other policy, as
-     * {@link #records(SessionFence)}
-     * does.
+     * {@link #records(SessionFence)} does.
      *
      * @param raw
      *            the application's segment store (must not be null)

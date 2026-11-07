@@ -290,8 +290,8 @@ auto 144K, warning 124K, blocking 177K 다.
   시스템 프롬프트 크기는 빌드 시점에 알 수 없으므로 판정 시점에 본다. 불가능하면 그 모델·그 시스템 프롬프트 조합에서는
   **`DefaultContextEngine` 의 동작으로 물러나고** 한 번 WARN 을 남긴다. 128K 창(effective 108K)에서 기본값이면 auto
   86.4K, warning 66.4K 라서 시스템 프롬프트와 head 가 합쳐 약 52K 를 넘는 에이전트는 이 검사에서 걸린다. 32K 창에서는
-  warning 이 0 으로 clamp 된다. 작은
-  창에서 롤링을 강행하면 매 iteration `WARN` 에 머물다 blocking 에서 head 까지 삼키는, 기본 engine 보다 나쁜 결과가 나온다
+  warning 이 0 으로 clamp 된다. 작은 창에서 롤링을 강행하면 매 iteration `WARN` 에 머물다 blocking 에서 head 까지
+  삼키는, 기본 engine 보다 나쁜 결과가 나온다
 
 **`/compact`** — `compactNow` 는 임계값 판정만 건너뛰고 구간 선택은 따른다(`WARN` 행 없이 — 사용자가 요청했다).
 `compaction.md` §7 의 근거("명령을 쳤다는 사실이 판정을 대체한다")는 "언제" 에 대한 것이다. 세션 락은 `tryLock` 이다 —

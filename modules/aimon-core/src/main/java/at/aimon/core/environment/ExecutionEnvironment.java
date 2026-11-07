@@ -67,8 +67,8 @@ public interface ExecutionEnvironment {
     /**
      * Makes a control-plane file set readable from this environment's shell and file tools, and returns the path to
      * use (execution-environment-staging design §3). The copy is content-addressed
-     * ({@code {stagingRoot}/{name}/{contentKey}/}) and skipped only
-     * when the target's {@code .staged} marker exists — never from provider memory.
+     * ({@code {stagingRoot}/{name}/{contentKey}/}) and skipped only when the target's {@code .staged} marker exists —
+     * never from provider memory.
      *
      * <p>
      * <b>Every call checks the copy.</b> An existing copy is checked against the resource's content key on every call

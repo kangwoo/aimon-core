@@ -87,8 +87,7 @@ public final class InboundMessage {
     /**
      * The {@link TurnId} the submitting node issued for this input, so the holder node runs the turn under the identity
      * the submitter already reported to its caller (via {@code SubmitDisposition.getTurnId()}) and every event the
-     * holder
-     * relays back is attributable to it.
+     * holder relays back is attributable to it.
      *
      * <p>
      * Optional by design, for two reasons. An inbox holds work that has <em>not been done yet</em>, so at every upgrade
@@ -99,8 +98,7 @@ public final class InboundMessage {
      *
      * <p>
      * <b>Codec note:</b> all four built-in inbox codecs (in-memory, Redis, Postgres, MongoDB) round-trip this field,
-     * and
-     * absence round-trips as absence.
+     * and absence round-trips as absence.
      *
      * @return the turn id, or {@link Optional#empty()} when the producer did not supply one
      */
@@ -162,8 +160,7 @@ public final class InboundMessage {
      *
      * <p>
      * <b>Codec note:</b> all four built-in inbox codecs (in-memory, Redis, Postgres, MongoDB) round-trip every
-     * {@link at.aimon.core.agent.input.InputType}, through
-     * {@link at.aimon.core.subagent.task.codec.UserInputCodec}.
+     * {@link at.aimon.core.agent.input.InputType}, through {@link at.aimon.core.subagent.task.codec.UserInputCodec}.
      *
      * @return the input, never null
      */

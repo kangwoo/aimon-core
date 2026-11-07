@@ -13,28 +13,25 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  * (system prompt + full ReAct message history) is saved here under the run's {@code taskId}. A later {@code Task}
  * invocation with {@code resume=<taskId>} loads it and hands it to the executor as
  * {@code SubagentExecutionRequest.previousSnapshot}, so the subagent continues from the prior transcript rather
- * than
- * starting fresh. The snapshot namespace is the same {@code taskId} namespace used by {@link BackgroundTaskStore} and
- * {@link TaskOutputStore}, so a single task id addresses its metadata, its output log, and its resumable transcript.
+ * than starting fresh. The snapshot namespace is the same {@code taskId} namespace used by {@link BackgroundTaskStore}
+ * and {@link TaskOutputStore}, so a single task id addresses its metadata, its output log, and its resumable
+ * transcript.
  *
  * <p>
  * <b>Owner-tagged, immutable value, last-write-wins.</b> A snapshot is stored together with the name of the subagent
  * that produced it and the {@link AgentRuntimeId} that owns it (as a {@link ResumableSession}) so resume
  * can verify the caller is resuming the same subagent <em>and</em> confine the resume to the caller's own agent
- * context;
- * {@link SessionSnapshot} is an immutable value object, so implementations store the reference directly (no
- * defensive copy needed).
- * {@link #save(String, String, AgentRuntimeId, SessionSnapshot)} overwrites any previously stored
- * snapshot
- * for the same {@code taskId}; {@link #load(String)} returns the current owner-tagged snapshot or empty.
+ * context; {@link SessionSnapshot} is an immutable value object, so implementations store the reference directly (no
+ * defensive copy needed). {@link #save(String, String, AgentRuntimeId, SessionSnapshot)} overwrites any previously
+ * stored snapshot for the same {@code taskId}; {@link #load(String)} returns the current owner-tagged snapshot or
+ * empty.
  *
  * <p>
  * <b>Bounded, in-memory default, shareable alternatives.</b> The default {@link InMemorySessionSnapshotStore}
  * keeps snapshots in a per-node, size-bounded map — resume works within a single JVM and long-running agent contexts
  * cannot accumulate transcripts without limit. A scale-out deployment supplies a shared/persistent implementation (a
  * VFS/session-backed store, ...) so a task started on one node can be resumed on another. Persisting a snapshot to
- * bytes
- * requires a hand-written {@code SessionSnapshot}/{@code Message} codec (the core message types are not
+ * bytes requires a hand-written {@code SessionSnapshot}/{@code Message} codec (the core message types are not
  * Jackson-ready); that codec ({@link at.aimon.core.subagent.task.codec.JsonSessionSnapshotCodec},
  * {@code FORMAT_VERSION=1}) and a VFS-backed store ({@link VfsSessionSnapshotStore}) are implemented. Per the
  * project's multi-instance rule, swapping the backend is an implementation change, not a refactoring.
@@ -92,8 +89,7 @@ public interface SessionSnapshotStore {
      * <p>
      * The returned {@link ResumableSession} carries the owning {@link AgentRuntimeId} (when it was tagged
      * at save time) so a caller can confine a resume to its own context; {@code ScopedSessionSnapshotStore}
-     * applies
-     * that confinement.
+     * applies that confinement.
      *
      * @param taskId
      *            the task identifier (must not be null)

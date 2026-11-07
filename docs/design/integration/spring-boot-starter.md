@@ -1839,8 +1839,7 @@ main 소스에 있고(`at.aimon.core.credential.InMemoryCredentialStore`), 스�
 (`options.withBudget(budget)`)다. 그러므로 이 결정을 여는 사람이 상대할 것은 빈 자리가 아니라 **이미
 영속되어 돌고 있는 한 축과 그 축이 이미 골라 둔 반대 방향의 병합**이다 — 필드 단위로 바꾸면 저장된
 오버라이드의 의미가 함께 바뀐다("이 세션의 예산은 이것" → "이 세션은 이 필드만 덮는다"). 열린 항목의
-정본은 [`docs/backlog/spring-boot-starter-open-items.md`](../../backlog/spring-boot-starter-open-items.md)
-이다.
+정본은 [`docs/backlog/spring-boot-starter-open-items.md`](../../backlog/spring-boot-starter-open-items.md) 이다.
 
 ---
 

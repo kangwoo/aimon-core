@@ -23,10 +23,9 @@ import at.aimon.core.llm.LlmResponse;
  * Locks in the per-turn scope isolation contract: two sessions driven through one agent-scoped
  * {@link OrcaAgentExecutor} concurrently each build their own {@code ExecutionScope}, so the per-turn
  * {@link BudgetTracker} and {@link InterruptCoordinator} published to the request observers are <b>distinct
- * instances</b>
- * — never a shared singleton. If either were shared across turns, a budget trip or interrupt on one session would
- * bleed into the other; capturing both live objects while the two turns are pinned together on a {@link CyclicBarrier}
- * and asserting reference-distinctness guards that seam.
+ * instances</b> — never a shared singleton. If either were shared across turns, a budget trip or interrupt on one
+ * session would bleed into the other; capturing both live objects while the two turns are pinned together on a
+ * {@link CyclicBarrier} and asserting reference-distinctness guards that seam.
  *
  * <p>
  * The final answers are also asserted to route back to the correct session, so this doubles as a routing-integrity

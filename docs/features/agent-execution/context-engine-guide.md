@@ -45,8 +45,8 @@ aimon:
 줄이지 않으므로, 세그먼트 저장소가 없으면 아무것도 봉인되지 않고 레코드가 세션의 전 이력을 영원히 싣는다 — 그래서 스타터는
 그때 **기동을 실패시킨다**(`log-write-format: v1` 로 고정하면 필요 없다. `InMemorySessionRecordStore` 빈에는 in-memory 세그먼트
 저장소를 스스로 짝짓는다). `AimonStackSpec` 조립이라면 `SessionSpec.segmentStore(...)` 로 주고, 주지 않으면 스택은
-`session-log-sealing` degradation 을 기록한다.
-다시 열리지 않는 세션의 고아 세그먼트까지 치우려면 `aimon.session.segment-sweep-interval` 로 저장소 단위 스윕을 켠다 —
+`session-log-sealing` degradation 을 기록한다. 다시 열리지 않는 세션의 고아 세그먼트까지 치우려면
+`aimon.session.segment-sweep-interval` 로 저장소 단위 스윕을 켠다 —
 [웹 세션 배포 가이드](../session/web-session-deployment-guide.md) 참조.
 
 ### 2.2 에이전트별 — AGENT.md
