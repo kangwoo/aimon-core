@@ -10,6 +10,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -18,8 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * No comment line in the programmatic-tool-calling code is left stranded by a wrap: one or two words alone on a line
- * that the next line continues ({@code docs/design/tool/ptc-features-core.md} A.1).
+ * No comment line in the repository's Java sources, and no prose line in its documentation, is left stranded by a
+ * wrap: one or two words alone on a line that the next line continues ({@code docs/design/tool/ptc-features-core.md}
+ * A.1, widened to the whole repository by {@code docs/design/tool/ptc-leftovers-core.md} PR 3, backlog TC-21).
  *
  * <h2>Why it recurs</h2>
  *
@@ -27,44 +30,56 @@ import org.junit.jupiter.api.Test;
  * {@code config/eclipse/eclipse-formatter.xml} sets {@code comment.line_length=120} and
  * {@code join_lines_in_comments=false}: a comment line written slightly over 120 columns is broken, and the formatter
  * never joins lines back, so the last word or two end up on a line of their own ({@code returns} / {@code null}).
- * Turning the join on would reflow every comment in the repository at once; this test guards the PTC code instead, and
- * its {@link #JAVA_ROOTS} and {@link #MARKDOWN} lists are the extension point for a wider sweep.
+ * Turning the join on would reflow every comment in the repository whenever any file is formatted; this test keeps the
+ * result of one mechanical reflow instead.
+ *
+ * <h2>Scope</h2>
+ *
+ * <p>
+ * Every {@code modules/*}{@code /src/main/java} and {@code modules/*}{@code /src/test/java} tree: the artefact comes
+ * from the formatter, which runs on all of them, so no module is less exposed than another. There are no generated
+ * sources under {@code src/} (annotation-processor output goes to {@code build/generated}), so nothing is excluded.
+ * For Markdown, every {@code docs/**}{@code /*.md} file, translations included, and the repository-root documents
+ * ({@code README}, {@code CONTRIBUTING}, {@code SECURITY}, {@code CODE_OF_CONDUCT}, {@code CHANGELOG} and their
+ * {@code .ko.md}). Of a {@code CHANGELOG} only the {@code [Unreleased]} section is read: released sections are history
+ * and stay as they were written.
  *
  * <h2>The orphan</h2>
  *
  * <p>
  * A javadoc or block-comment continuation line ({@code * text}) is a candidate when it does not start a tag, an HTML
- * element, {@code {@code}, a list dash or a table bar, and the next line continues the same paragraph. It is an orphan
- * when its length plus a space plus the next line's first unbreakable unit ({@link #unit}: an inline tag such as
- * {@code {@link Foo}} with the punctuation glued to it, or else the first token) fits in 120 columns — a reflow would
- * have joined them; that condition is the formatter's signature, and it lets a long single token on its own line pass
- * — and, in addition, either
+ * element, an inline {@code {@code ...}}, a list dash or a table bar, and the next line continues the same paragraph.
+ * It is an orphan when its length plus a space plus the next line's first unbreakable unit ({@link #unit}: an inline
+ * tag such as {@code {@link Foo}} with the punctuation glued to it, or else the first token) fits in 120 columns — a
+ * reflow would have joined them; that condition is the formatter's signature, and it lets a long single token on its
+ * own line pass — and, in addition, it is of form A or form B.
  *
-<ul>
+ * <p>
+ * <b>Form A</b>: its text has at most two tokens — the last word or two of a line broken by force.
  *
-<li><b>form A</b>: its text has at most two tokens — the last word or two of a line broken by force; or
+ * <p>
+ * <b>Form B</b>: it is at most {@link #FORM_B_MAX_LINE} columns wide, and the line before it is in the same paragraph
+ * and was broken by force — that line plus a space plus this line's first unit is over 120. This is the formatter's
+ * other artefact: the medium-length remainder of a line written more than a word or two over 120, which the next line
+ * could have filled. Hand-wrapped prose, broken by the author at 110–116 columns, fails the forced-break condition.
  *
-<li><b>form B</b>: it is at most {@link #FORM_B_MAX_LINE} columns wide, and the line before it is in the same
- * paragraph and was broken by force — that line plus a space plus this line's first unit is over 120. This is the
- * formatter's other artefact: the medium-length remainder of a line written more than a word or two over 120, which
- * the next line could have filled. Hand-wrapped prose, broken by the author at 110–116 columns, fails the
- * forced-break condition.
- *
-</ul>
- * In the design documents, a prose line of at most two tokens, or at most 60 display columns wide, between two prose
- * lines, the previous one at least 100 columns wide (Hangul counted as two), is the same artefact: the second form is
+ * <p>
+ * In Markdown, a prose line of at most two tokens, or at most 60 display columns wide, between two prose lines, the
+ * previous one at least 100 columns wide (Hangul counted as two), is the same artefact — the second form is
  * {@code programmatic-tool-calling-shell.md}'s stranded {@code 모델}, which ended a short line rather than standing
- * alone.
+ * alone — unless one of four signs says the short line was laid out on purpose: the next line starts a new block
+ * (a link, {@code **} or {@code `}); the short line ends a sentence ({@code .}, {@code :}, {@code )}) and the next
+ * starts a capital or {@code **}; the next line's first token would not have fitted after it; or the next line is
+ * over 120 columns because it holds a token over {@link #MARKDOWN_LONG_TOKEN} wide, such as a link kept whole on a
+ * line of its own.
  *
+ * <h2>Inputs</h2>
  *
-<h2>Inputs</h2>
- *
- *
-<p>
- * The sources of {@code aimon-graaljs}, {@code aimon-code-engine-testkit}, {@code aimon-cli} and the docs are not
- * inputs of this module's {@code test} task, for the reason {@code ReleaseGateMatchesCiGateTest} gives: declaring them
- * would re-run core's tests after any edit there. After an edit only in those trees the task can be
- * {@code UP-TO-DATE} locally; {@code --rerun} or CI, which always runs from clean, catches it.
+ * <p>
+ * The other modules' sources and the docs are not inputs of this module's {@code test} task, for the reason
+ * {@code ReleaseGateMatchesCiGateTest} gives: declaring them would re-run core's tests after any edit there. After an
+ * edit only in those trees the task can be {@code UP-TO-DATE} locally; {@code --rerun} or CI, which always runs from
+ * clean, catches it.
  */
 class CommentReflowTest {
 
@@ -72,97 +87,88 @@ class CommentReflowTest {
     /**
      * The widest line form B flags: at least 20 columns spare. Calibrated with a throwaway scan of every
      * {@code modules/*}{@code /src/*}{@code /java} at {@code 318805f5} (ptc-leftovers-core §1.10): form A alone found
-     * 546
-     * lines; form B without this bound and the forced-break condition 2 374, mostly hand-wrapped prose at 110–116
+     * 546 lines; form B without this bound and the forced-break condition 2 374, mostly hand-wrapped prose at 110–116
      * columns; with both, 212, which sampled as genuine artefacts.
      */
     private static final int FORM_B_MAX_LINE = 100;
     private static final int MARKDOWN_WIDE_LINE = 100;
     private static final int MARKDOWN_SHORT_LINE = 60;
+    /** A Markdown token this wide is a link or a path the author kept whole, not prose. */
+    private static final int MARKDOWN_LONG_TOKEN = 60;
 
-    private static final String CORE_MAIN = "modules/aimon-core/src/main/java/at/aimon/core/";
-    private static final String CORE_TEST = "modules/aimon-core/src/test/java/at/aimon/core/";
-
-    /** The PTC code, as directories or single files, each with why it is in scope. */
-    private static final Map<String, String> JAVA_ROOTS = Map.ofEntries(
-            Map.entry(CORE_MAIN + "programmatic", "the engine SPI"),
-            Map.entry(CORE_MAIN + "tools/code", "ExecuteCode, its bridge and the shell engine"),
-            Map.entry(CORE_MAIN + "shell", "the shell contract the shell engine runs on"),
-            Map.entry(CORE_MAIN + "agent/tool/ToolOfferContext.java", "the offer ExecuteCode describes itself in"),
-            Map.entry(CORE_MAIN + "agent/tool/ToolDescriptor.java", "the descriptor ExecuteCode fills"),
-            Map.entry(CORE_MAIN + "environment/RuntimeFileSystem.java", "the shell engine's runtime file SPI"),
-            Map.entry(CORE_MAIN + "skill/execution/llm/LlmSkillExecutor.java", "the slash-skill loop's PTC wiring"),
-            Map.entry(CORE_TEST + "tools/code", "test mirror"), Map.entry(CORE_TEST + "shell", "test mirror"),
-            Map.entry(CORE_TEST + "architecture/InternalPackageBoundaryTest.java", "a named site of the C review"),
-            Map.entry("modules/aimon-graaljs/src/main/java/at/aimon/graaljs/code", "the JavaScript engine"),
-            Map.entry("modules/aimon-code-engine-testkit/src/main/java", "the engine contract suite"),
-            Map.entry(CORE_MAIN + "agent/tool/ToolCallDispatcher.java", "the SPI that carries the caller's settings"),
-            Map.entry(CORE_MAIN + "agent/tool/ProgrammaticToolSettings.java", "the settings and their narrowing"),
-            Map.entry(CORE_MAIN + "agent/tool/ProgrammaticFrontmatter.java", "the shared frontmatter reading"),
-            Map.entry(CORE_MAIN + "toolinvocation/ToolCallDispatchers.java", "the ungated dispatcher's PTC wiring"),
-            Map.entry(CORE_MAIN + "tools/CallerProgrammatic.java", "the caller-ceiling accessor"),
-            Map.entry("modules/aimon-cli/src/main/java/at/aimon/cli/config/ProgrammaticConfig.java",
-                    "the CLI's PTC configuration"),
-            Map.entry("modules/aimon-cli/src/test/java/at/aimon/cli/e2e", "the real-model E2E harness"));
-
-    /**
-     * The PTC design documents. {@code docs/design/} is not translated (documentation guide §5.1), so there is no
-     * {@code .en.md} to scan.
-     */
-    private static final List<String> MARKDOWN = List.of("docs/design/tool/programmatic-tool-calling",
-            "docs/design/tool/programmatic-tool-calling-shell", "docs/design/tool/ptc-qc4-and-nonblocking-fixes",
-            "docs/design/tool/tool-call-dispatcher", "docs/design/tool/ptc-features-core",
-            "docs/design/tool/ptc-leftovers-core");
+    /** The repository-root documents, each scanned with its {@code .ko.md} translation when one exists. */
+    private static final List<String> ROOT_DOCUMENTS = List.of("README", "CONTRIBUTING", "SECURITY", "CODE_OF_CONDUCT",
+            "CHANGELOG");
 
     /** Accepted orphans, keyed by {@code <path>:<trimmed line text>}, each with its reason. */
-    private static final Map<String, String> ALLOWED = Map.of();
+    private static final Map<String, String> ALLOWED = Map.of("docs/design/README.md:옛 절 번호가 맞지 않는다.",
+            "the deleted-records note starts each area (llm, session, tool) on a line of its own",
+            "docs/design/README.md:`08c686e8` · `18fe9033` · `dabaafc3` · `2ba9ec61` 이다.",
+            "the deleted-records note starts each area (llm, session, tool) on a line of its own",
+            "docs/design/observability/subagent-tracing-backlog.md:실행기가 둘 생긴다). 그래서 private 생성자는 둘이다 —",
+            "the dash introduces the enumerated (a) / (b) constructors, each starting its own line");
 
     private static final Pattern CONTINUATION = Pattern.compile("^\\s*\\*\\s(.*)$");
     private static final Pattern BLOCK_START = Pattern
             .compile("^(@|<p>|<li>|</|<pre>|<ul>|<ol>|<h\\d|<table|<blockquote|<dl>|<dt>|<dd>)");
     private static final Pattern MARKDOWN_NOT_PROSE = Pattern.compile("^\\s*([-*+]\\s|\\d+[.)]\\s|\\||#|>|```|<)");
+    private static final Pattern SENTENCE_END = Pattern.compile("[.:)]$");
 
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
     @Test
-    @DisplayName("no PTC comment line is stranded by a wrap: a word or two, or a forced remainder, a reflow would have"
+    @DisplayName("no Java comment line is stranded by a wrap: a word or two, or a forced remainder, a reflow would have"
             + " joined to the next line")
     void noOrphansInJava() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
         final List<String> orphans = new ArrayList<>();
-        int files = 0;
-        for (String root : JAVA_ROOTS.keySet()) {
-            final Path path = REPOSITORY_ROOT.resolve(root);
-            assertThat(path).as("scope entry %s still exists", root).exists();
-            try (Stream<Path> walk = Files.walk(path)) {
-                for (Path file : walk.filter(p -> p.toString().endsWith(".java")).toList()) {
-                    files++;
-                    final List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-                    for (int i : javaOrphans(lines)) {
-                        report(orphans, file, i, lines.get(i));
-                    }
-                }
+        final List<Path> files = javaSources();
+        for (Path file : files) {
+            final List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            for (int i : javaOrphans(lines)) {
+                report(orphans, file, i, lines.get(i));
             }
         }
-        assertThat(files).as("files scanned").isGreaterThan(50);
-        assertThat(orphans).as("comment lines stranded by a wrap — join each to the line before it, or add a"
-                + " reasoned entry to ALLOWED").isEmpty();
+        assertThat(files).as("files scanned").hasSizeGreaterThan(1000);
+        assertThat(orphans).as("comment lines stranded by a wrap — join each to the line after it and re-wrap, or add"
+                + " a reasoned entry to ALLOWED").isEmpty();
     }
 
     @Test
-    @DisplayName("no PTC design document has a prose line of one or two words stranded by a wrap")
+    @DisplayName("the Java scope is every module's main and test sources")
+    void javaScopeCoversEveryModule() throws IOException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+        final Set<String> modules = new TreeSet<>();
+        final Set<String> sourceSets = new TreeSet<>();
+        for (Path file : javaSources()) {
+            final Path relative = REPOSITORY_ROOT.resolve("modules").relativize(file);
+            modules.add(relative.getName(0).toString());
+            sourceSets.add(relative.getName(2).toString());
+        }
+        assertThat(modules).as("modules with Java sources scanned").hasSizeGreaterThanOrEqualTo(15)
+                .contains("aimon-core", "aimon-graaljs", "aimon-cli", "aimon-session-routing");
+        assertThat(sourceSets).containsExactlyInAnyOrder("main", "test");
+    }
+
+    @Test
+    @DisplayName("no Markdown document has a prose line of one or two words stranded by a wrap")
     void noOrphansInMarkdown() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
         final List<String> orphans = new ArrayList<>();
-        for (String doc : MARKDOWN) {
-            final Path file = REPOSITORY_ROOT.resolve(doc + ".md");
-            assertThat(file).as("scope entry %s still exists", doc + ".md").exists();
-            final List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        final List<Path> files = markdownDocuments();
+        for (Path file : files) {
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            if (file.getFileName().toString().startsWith("CHANGELOG")) {
+                lines = unreleasedOnly(lines);
+            }
             for (int i : markdownOrphans(lines)) {
                 report(orphans, file, i, lines.get(i));
             }
         }
-        assertThat(orphans).as("prose lines stranded by a wrap — join each to the line before it").isEmpty();
+        assertThat(files).as("documents scanned").hasSizeGreaterThan(100)
+                .contains(REPOSITORY_ROOT.resolve("CHANGELOG.md"), REPOSITORY_ROOT.resolve("CONTRIBUTING.ko.md"));
+        assertThat(orphans).as("prose lines stranded by a wrap — join each to the line after it and re-wrap, or add a"
+                + " reasoned entry to ALLOWED").isEmpty();
     }
 
     @Test
@@ -217,6 +223,36 @@ class CommentReflowTest {
         assertThat(markdownOrphans(List.of(wide, "- item", "next"))).isEmpty();
         assertThat(markdownOrphans(List.of(wide, wide, wide))).isEmpty();
         assertThat(markdownOrphans(List.of("```", wide, "a b", "c", "```"))).isEmpty();
+        final String english = "When one document carries several spellings and they disagree with each other, the strictest"
+                + " one of them wins";
+        assertThat(english.length()).isGreaterThanOrEqualTo(MARKDOWN_WIDE_LINE);
+        assertThat(markdownOrphans(List.of(english, "the", "verdict, and the rest follows."))).containsExactly(1);
+    }
+
+    @Test
+    @DisplayName("the Markdown calibration: a new block, a sentence boundary, an unjoinable token and a line laid out"
+            + " around a long link end a short line on purpose")
+    void markdownCalibration() {
+        final String wide = "가나다 ".repeat(15) + "and a few more words";
+        // The next line starts a new block: a link, bold text, a code span.
+        assertThat(markdownOrphans(List.of(wide, "설계는", "[`design.md`](design.md) 에 있다."))).isEmpty();
+        assertThat(markdownOrphans(List.of(wide, "설계는", "**정본** 이다."))).isEmpty();
+        assertThat(markdownOrphans(List.of(wide, "테스트는", "`FooTest` 다."))).isEmpty();
+        // A sentence ends the short line and the next starts a capital or bold text.
+        assertThat(markdownOrphans(List.of(wide, "It ends here.", "Next sentence."))).isEmpty();
+        assertThat(markdownOrphans(List.of(wide, "It ends here:", "**Label** follows."))).isEmpty();
+        assertThat(markdownOrphans(List.of(wide, "It ends here.", "but this continues it."))).containsExactly(1);
+        // The next line's first token would not have fitted after the short line.
+        assertThat(markdownOrphans(List.of(wide, "그 경로는", "x".repeat(115) + " 이다."))).isEmpty();
+        // The next line is over the limit because of a link kept whole.
+        final String link = "[`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)";
+        assertThat(markdownOrphans(List.of(wide, "벗어난 점은", "옛 `x.md`(지금은 " + link + ") 에 있었다. 이어서 더"))).isEmpty();
+        assertThat(markdownOrphans(List.of(wide, "벗어난 점은", "옛 `x.md` 에 있었다."))).containsExactly(1);
+
+        // Of a CHANGELOG only [Unreleased] is read.
+        assertThat(unreleasedOnly(List.of("# Changelog", "## [Unreleased]", "a", "## [0.3.3] - 2026-10-01", "b")))
+                .containsExactly("# Changelog", "## [Unreleased]", "a");
+        assertThat(unreleasedOnly(List.of("# Changelog", "## [Unreleased]", "a"))).hasSize(3);
     }
 
     /** The indexes of orphan lines in a Java source (forms A and B, class documentation). */
@@ -323,11 +359,50 @@ class CommentReflowTest {
             if (fenced[i - 1] || fenced[i + 1] || !prose(lines.get(i - 1)) || !prose(lines.get(i + 1))) {
                 continue;
             }
-            if (displayWidth(lines.get(i - 1)) >= MARKDOWN_WIDE_LINE) {
+            if (displayWidth(lines.get(i - 1)) >= MARKDOWN_WIDE_LINE
+                    && !endsOnPurpose(lines.get(i), lines.get(i + 1))) {
                 orphans.add(i);
             }
         }
         return orphans;
+    }
+
+    /**
+     * Whether a short Markdown line is followed by something that ends it on purpose: a new block, a new sentence, a
+     * first token too wide to have joined it, or a line laid out around a token kept whole.
+     */
+    private static boolean endsOnPurpose(String line, String nextLine) {
+        final String text = line.strip();
+        final String next = nextLine.strip();
+        if (next.startsWith("[") || next.startsWith("**") || next.startsWith("`")) {
+            return true;
+        }
+        if (SENTENCE_END.matcher(text).find()
+                && (Character.isUpperCase(next.codePointAt(0)) || next.startsWith("**"))) {
+            return true;
+        }
+        if (displayWidth(line) + 1 + displayWidth(tokens(next)[0]) > LINE_LENGTH) {
+            return true;
+        }
+        if (displayWidth(nextLine) > LINE_LENGTH) {
+            for (String token : tokens(next)) {
+                if (displayWidth(token) > MARKDOWN_LONG_TOKEN) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** The lines of a changelog up to its first released section: released sections are history. */
+    static List<String> unreleasedOnly(List<String> lines) {
+        int sections = 0;
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).startsWith("## [") && ++sections == 2) {
+                return lines.subList(0, i);
+            }
+        }
+        return lines;
     }
 
     private static boolean prose(String line) {
@@ -338,7 +413,7 @@ class CommentReflowTest {
         int width = 0;
         for (int i = 0; i < line.length(); i++) {
             final char c = line.charAt(i);
-            width += c >= 'ᄀ' && (c <= 'ᅟ' || (c >= '⺀' && c <= '꓏') || (c >= '가' && c <= '힣') || (c >= '豈' && c <= '﫿')
+            width += c >= 'ᄀ' && (c <= 'ᅟ' || (c >= '⺀' && c <= '꓏') || (c >= '가' && c <= '힣') || (c >= '豈' && c <= '﫿')
                     || (c >= '＀' && c <= '｠')) ? 2 : 1;
         }
         return width;
@@ -346,6 +421,41 @@ class CommentReflowTest {
 
     private static String[] tokens(String text) {
         return text.strip().split("\\s+");
+    }
+
+    /** Every {@code .java} file under a module's {@code src/main/java} or {@code src/test/java}. */
+    private static List<Path> javaSources() throws IOException {
+        final List<Path> files = new ArrayList<>();
+        try (Stream<Path> modules = Files.list(REPOSITORY_ROOT.resolve("modules"))) {
+            for (Path module : modules.sorted().toList()) {
+                for (String sourceSet : List.of("main", "test")) {
+                    final Path root = module.resolve("src").resolve(sourceSet).resolve("java");
+                    if (Files.isDirectory(root)) {
+                        try (Stream<Path> walk = Files.walk(root)) {
+                            walk.filter(p -> p.toString().endsWith(".java")).sorted().forEach(files::add);
+                        }
+                    }
+                }
+            }
+        }
+        return files;
+    }
+
+    /** Every {@code .md} file under {@code docs/}, plus the root documents and their {@code .ko.md}. */
+    private static List<Path> markdownDocuments() throws IOException {
+        final List<Path> files = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(REPOSITORY_ROOT.resolve("docs"))) {
+            walk.filter(p -> p.toString().endsWith(".md")).sorted().forEach(files::add);
+        }
+        for (String name : ROOT_DOCUMENTS) {
+            for (String suffix : List.of(".md", ".ko.md")) {
+                final Path file = REPOSITORY_ROOT.resolve(name + suffix);
+                if (Files.isRegularFile(file)) {
+                    files.add(file);
+                }
+            }
+        }
+        return files;
     }
 
     private static void report(List<String> orphans, Path file, int index, String line) {

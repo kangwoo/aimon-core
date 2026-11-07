@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 31건 (열림 21 · 닫힘 10)
+# 도구 계약 — 등록 항목 31건 (열림 20 · 닫힘 11)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -263,7 +263,7 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 지연 — `aimon-sandbox` 는 다른 저장소이고 돌아가는 샌드박스가 필요하다. 다시 볼 계기는 위의 그대로 운영에서 보이는 WARN 이다.
 검사: `ShellProgramRunTest`(`close()` 가 돌려주는 대기), `ShellReplyDrainMeasurementTest`.
 
-## TC-21 — 주석 줄바꿈 가드를 PTC 밖으로 넓힌다 · **열림**
+## TC-21 — 주석 줄바꿈 가드를 PTC 밖으로 넓힌다 · **닫힘** *(2026-11-07)*
 
 **무엇을.** `CommentReflowTest` 의 검사 범위(`JAVA_ROOTS`, `MARKDOWN`)를 패키지 하나씩 넓혀, 걸리는 줄을 고친다.
 
@@ -275,6 +275,18 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 설계는 [기능 마무리 설계](../design/tool/ptc-features-core.md) A.1 · §1.3 (OQ-A1). 2026-11-07 확인.
 
 **언제 다시 볼까.** 다른 패키지에서 같은 줄바꿈이 리뷰 지적으로 나올 때 — 그 패키지를 범위에 넣는다.
+
+**어떻게 닫았나.** 패키지 하나씩이 아니라 한 번에 넓혔다([남은 일 설계](../design/tool/ptc-leftovers-core.md) PR 3 · §6).
+`CommentReflowTest` 는 이제 모든 `modules/*/src/main/java` · `src/test/java`(파일 1,000 개 넘게, 모듈 15 개 이상을 단언한다)와
+`docs/**/*.md`, 저장소 루트의 `README` · `CONTRIBUTING` · `SECURITY` · `CODE_OF_CONDUCT` · `CHANGELOG`(와 `.ko.md`)를 읽는다.
+`CHANGELOG` 는 `[Unreleased]` 절만 읽는다 — 배포된 절은 기록이라 다시 흘리지 않는다. 걸린 줄은 버리는 스크립트로 기계적으로 다시
+흘렸고, 낱말은 하나도 바뀌지 않았다(`git diff -w --word-diff` 로 확인). **규모가 달랐다** — 약 450 개는 다른 휴리스틱으로 센
+값이었고, PR 1 의 판정으로 `e65443bc` 에서 저장소 전체를 다시 세니 Java 865 줄(파일 436 개, `aimon-core` 600 · `aimon-session-routing`
+117 · `aimon-session-mongodb` 43 · 나머지 105), Markdown 116 줄이었다. Markdown 은 의도한 짧은 줄이 섞여 판정을 보정했다 — 다음 줄이
+새 블록(링크 · `**` · 코드)이거나, 짧은 줄이 문장을 끝내고 다음 줄이 대문자나 `**` 로 시작하거나, 다음 줄의 첫 토큰이 붙을 수 없거나,
+다음 줄이 통째로 둔 링크 때문에 120 칸을 넘으면 걸리지 않는다. 보정 뒤 20 줄 가운데 17 줄을 다시 흘리고 셋은 이유와 함께 `ALLOWED`
+에 넣었다. 검사: `CommentReflowTest`(`noOrphansInJava` · `javaScopeCoversEveryModule` · `noOrphansInMarkdown` · `predicate` ·
+`markdownCalibration`).
 
 ## TC-22 — 중첩 호출 span 의 결과 내용 기록 · **닫힘** *(2026-11-07)*
 

@@ -7,6 +7,14 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: PTC leftovers — the comment-reflow guard covers the whole repository
+
+`docs/design/tool/ptc-leftovers-core.md` (PR 3). No runtime or API change.
+
+- **Build only:** `CommentReflowTest` now scans every module's main and test Java sources, every `docs/**` Markdown
+  file and the root documents (`CHANGELOG` only for `[Unreleased]`); the 865 Java and 17 Markdown lines it found were
+  rejoined by whitespace-only reflow, with no word changed (backlog TC-21, closed).
+
 ### Changed: PTC leftovers — slash-skill spans, the background-run and inline-skill ceilings
 
 `docs/design/tool/ptc-leftovers-core.md` (PR 2). **One breaking SPI change** — `WorkflowRunner.runInBackground` —
