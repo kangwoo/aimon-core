@@ -124,7 +124,7 @@ class ExecuteCodeShellEndToEndTest {
                 ToolCallOrigin.direct(), context);
 
         assertThat(result.isError()).as(result.getText()).isFalse();
-        assertThat(result.getText()).contains("got Read:/etc/hosts").contains("[ExecuteCode: 1 tool call");
+        assertThat(result.getText()).contains("got Read:/etc/hosts").contains("[ExecuteCode (Python): 1 tool call");
         assertThat(read.calls).singleElement().satisfies(call -> assertThat(call).containsEntry("path", "/etc/hosts"));
         assertThat(prompts).singleElement()
                 .satisfies(prompt -> assertThat(prompt).contains("Bash").contains("ExecuteCode (Python)"));

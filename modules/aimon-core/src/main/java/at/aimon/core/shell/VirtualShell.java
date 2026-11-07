@@ -113,9 +113,9 @@ public interface VirtualShell extends AutoCloseable {
      * {@linkplain ExecutionOptions#isHook() a hook's} and {@linkplain ExecutionOptions#isIsolated() isolated}: the
      * three flags each say the command reads and saves no session state, so a shell that streams at all streams all
      * three. A shell that declares {@link ShellFeature#ISOLATED_EXECUTION} and {@link ShellFeature#STREAMING} therefore
-     * runs
-     * an isolated streamed call ({@code docs/design/tool/programmatic-tool-calling-shell.md} §3) — the shell engine of
-     * {@code ExecuteCode} streams its runtime that way, neither background (it does not outlive the call) nor a hook.
+     * runs an isolated streamed call ({@code docs/design/tool/programmatic-tool-calling-shell.md} §3) — the shell
+     * engine of {@code ExecuteCode} streams its runtime that way, neither background (it does not outlive the call) nor
+     * a hook.
      *
      * <p>
      * <b>Lines are capped before they are materialized.</b> A streaming shell bounds the line it hands over before it

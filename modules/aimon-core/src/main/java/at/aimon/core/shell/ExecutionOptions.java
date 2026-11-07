@@ -152,8 +152,7 @@ public final class ExecutionOptions {
      * <p>
      * The child always writes its full output to the capture file; this only bounds how much is decoded into memory, so
      * a runaway command cannot exhaust the heap. When a stream exceeds this limit the extra is dropped and the result
-     * is
-     * marked {@link ShellCommandResult#outputTruncated() truncated}.
+     * is marked {@link ShellCommandResult#outputTruncated() truncated}.
      *
      * @return the per-stream capture limit in bytes, or null to use the implementation default
      */

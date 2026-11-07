@@ -70,13 +70,11 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * <p>
  * <b>Why files, not pipes:</b> reading a child's stdout/stderr through inherited pipes requires a reader thread that
  * loops on {@code read()} until EOF, and EOF only arrives once <em>all</em> write-ends of the pipe are closed. A
- * command
- * that leaves a backgrounded child holding the write-end (e.g. {@code server & echo done}) therefore delays EOF
+ * command that leaves a backgrounded child holding the write-end (e.g. {@code server & echo done}) therefore delays EOF
  * indefinitely, blocking (leaking) the reader thread and the pipe stream. Redirecting the child's output to temp files
  * via {@link ProcessBuilder} avoids inheriting the pipe fd entirely: the parent's output is fully flushed to the file
  * when it exits, so after {@code waitFor()} the result is read directly from the file — no reader thread, no
- * delayed-EOF
- * drain, and no thread/stream leak (issue #13, superseding the drain-based workaround from issue #10).
+ * delayed-EOF drain, and no thread/stream leak (issue #13, superseding the drain-based workaround from issue #10).
  *
  * <p>
  * <b>Hook and isolated commands keep no file reachable by name, on Unix (EE-109).</b> For a command that is
@@ -119,9 +117,8 @@ public final class LocalShell implements VirtualShell {
     /**
      * Default upper bound on how many bytes of each captured stream are read into memory. The child writes its full
      * output to a temp file regardless; this only bounds how much is decoded into the returned
-     * {@link ShellCommandResult}
-     * (16 MiB), so a runaway command cannot OOM the JVM. Callers can override via
-     * {@link ExecutionOptions#getMaxCaptureBytes()}.
+     * {@link ShellCommandResult} (16 MiB), so a runaway command cannot OOM the JVM. Callers can override via {@link
+     * ExecutionOptions#getMaxCaptureBytes()}.
      */
     private static final long DEFAULT_MAX_CAPTURE_BYTES = 16L * 1024 * 1024;
 

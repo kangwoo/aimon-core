@@ -146,6 +146,10 @@ class DefaultSubagentExecutorTracingTest {
         assertThat(probe.received).hasSize(1);
         final SpanContext parentSeenByTool = SpanContext.readFrom(probe.received.get(0)).orElseThrow();
         assertThat(parentSeenByTool.getSpanId()).isEqualTo(toolSpan.getSpanId());
+        // The fork's tracer and the call's own span ride beside it, for a tool that makes calls of its own (§12.2).
+        assertThat(probe.contexts.get(0).get(ToolContextKeys.TRACER)).isPresent();
+        assertThat(probe.contexts.get(0).get(ToolContextKeys.TOOL_SPAN)).isPresent();
+        assertThat(toolSpan.getAttributes()).containsEntry("tool.path", "direct");
     }
 
     @Test
@@ -571,6 +575,7 @@ class DefaultSubagentExecutorTracingTest {
     private static final class CapturingTool extends AbstractTool {
         private final boolean concurrent;
         private final List<LlmCallMetadata> received = new CopyOnWriteArrayList<>();
+        private final List<ToolContext> contexts = new CopyOnWriteArrayList<>();
 
         CapturingTool(String name, boolean concurrent) {
             super(name, "capturing tool", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
@@ -585,6 +590,7 @@ class DefaultSubagentExecutorTracingTest {
         @Override
         public ToolResult execute(ToolInput input, ToolContext context) {
             context.get(ToolContextKeys.LLM_CALL_METADATA_KEY).ifPresent(received::add);
+            contexts.add(context);
             return ToolResult.success("ok");
         }
     }

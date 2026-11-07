@@ -69,13 +69,13 @@ class ExecuteCodeSupportTest {
         final List<NestedToolCall> calls = List.of(new NestedToolCall("t#1", "Read", "{}", 3, false, null, 1),
                 new NestedToolCall("t#2", "Read", "{}", 3, true, null, 1),
                 new NestedToolCall("t#3", "Write", "{}", 3, true, "write cap", 0));
-        final String text = ExecuteCodeObservation.success(outcome, calls, List.of("env changed"), List.of("audited"),
-                List.of(), Duration.ofMillis(3200),
+        final String text = ExecuteCodeObservation.success(CodeExecutionEngine.PYTHON, outcome, calls,
+                List.of("env changed"), List.of("audited"), List.of(), Duration.ofMillis(3200),
                 CodeExecutionLimits.builder().maxObservationChars(12).maxLogChars(100).build());
         assertThat(text).startsWith("0123456789\n42\n[truncated 2 chars]").contains("[environment]\nenv changed")
-                .contains("[hook feedback]\naudited").contains("[logs]\nlog line")
-                .endsWith("[ExecuteCode: 3 tool calls (Read x2, Write x1), 1 error, 1 refused by write cap, 3.2s]");
-        final String failure = ExecuteCodeObservation.failure(
+                .contains("[hook feedback]\naudited").contains("[logs]\nlog line").endsWith(
+                        "[ExecuteCode (Python): 3 tool calls (Read x2, Write x1), 1 error, 1 refused by write cap, 3.2s]");
+        final String failure = ExecuteCodeObservation.failure(CodeExecutionEngine.JAVASCRIPT,
                 CodeExecutionOutcome.builder().status(CodeExecutionStatus.TIMED_OUT).errorMessage("stack\nlast line")
                         .build(),
                 List.of(), List.of(), List.of(), List.of("Read"), Duration.ZERO, CodeExecutionLimits.defaults());
@@ -88,16 +88,16 @@ class ExecuteCodeSupportTest {
     void partialOutputOnStop() {
         final CodeExecutionLimits limits = CodeExecutionLimits.builder().maxObservationChars(5).build();
         for (CodeExecutionStatus stopped : List.of(CodeExecutionStatus.TIMED_OUT, CodeExecutionStatus.LIMIT_EXCEEDED)) {
-            final String text = ExecuteCodeObservation.failure(
+            final String text = ExecuteCodeObservation.failure(CodeExecutionEngine.JAVASCRIPT,
                     CodeExecutionOutcome.builder().status(stopped).stdout("done 1-3\n").errorMessage("stopped").build(),
                     List.of(), List.of(), List.of(), List.of(), Duration.ZERO, limits);
             assertThat(text).as(stopped.name()).contains("[output before the stop]\ndone \n[truncated 4 chars]");
         }
-        final String noOutput = ExecuteCodeObservation.failure(
+        final String noOutput = ExecuteCodeObservation.failure(CodeExecutionEngine.JAVASCRIPT,
                 CodeExecutionOutcome.builder().status(CodeExecutionStatus.TIMED_OUT).errorMessage("stopped").build(),
                 List.of(), List.of(), List.of(), List.of(), Duration.ZERO, limits);
         assertThat(noOutput).doesNotContain("[output before the stop]");
-        final String scriptError = ExecuteCodeObservation.failure(
+        final String scriptError = ExecuteCodeObservation.failure(CodeExecutionEngine.JAVASCRIPT,
                 CodeExecutionOutcome.builder().status(CodeExecutionStatus.SCRIPT_ERROR).stdout("done 1-3\n")
                         .errorMessage("boom").build(),
                 List.of(), List.of(), List.of(), List.of(), Duration.ZERO, limits);

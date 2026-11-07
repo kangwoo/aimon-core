@@ -2289,7 +2289,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             final ToolContext.Builder toolContext = ToolContext.builder().putAll(lc.toolContext.getContext())
                     .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext);
             if (metadata != lc.effectiveMetadata) {
-                toolContext.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata);
+                // The tracer beside metadata that names this iteration, so a tool that makes calls of its own
+                // (ExecuteCode) opens their TOOL spans under its own (§12.2).
+                toolContext.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata).put(ToolContextKeys.TRACER, lc.tracer);
             }
             return new IterationTrace(span, metadata, toolContext.build(), offerContext);
         }

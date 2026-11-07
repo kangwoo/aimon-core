@@ -17,8 +17,7 @@ import at.aimon.core.llm.ToolDefinition;
  * tool's constant getters, so a tool whose grade depends on its context ({@code ExecuteCode}, whose grade is folded
  * from its engine and the tools it lets code call) gives all of them the same answer
  * ({@code docs/design/tool/programmatic-tool-calling.md} decision 9). Every other tool's descriptor is its getters,
- * read
- * once.
+ * read once.
  *
  * <p>
  * Beyond the existing axes it carries three things that only exist here:
@@ -27,9 +26,8 @@ import at.aimon.core.llm.ToolDefinition;
  * <li>{@link #isApprovalDelegated()} — the approval gate never asks about this tool itself; it judges what the tool
  * dispatches instead, one nested call at a time. Default {@code false}.
  * <li>{@link #getApprovalKey()} — the name a remembered approval answer is stored under. Default the tool's name; a
- * tool
- * that is the same capability as another (the shell engine's {@code ExecuteCode} and {@code Bash}) returns the other's
- * name, so an answer about one is an answer about both.
+ * tool that is the same capability as another (the shell engine's {@code ExecuteCode} and {@code Bash}) returns the
+ * other's name, so an answer about one is an answer about both.
  * <li>{@link #isCodeCallable()} and {@link #getDataReach()} — the declarations programmatic tool calling reads (§7.1).
  * </ul>
  *
@@ -54,6 +52,8 @@ public final class ToolDescriptor {
     private final String approvalVia;
     private final boolean offerable;
     private final Set<String> codeHostedTools;
+    private final String unavailableReason;
+    private final String codeLanguage;
 
     private ToolDescriptor(Builder builder) {
         this.definition = Objects.requireNonNull(builder.definition, "definition cannot be null");
@@ -72,6 +72,8 @@ public final class ToolDescriptor {
         this.approvalVia = builder.approvalVia;
         this.offerable = builder.offerable;
         this.codeHostedTools = Set.copyOf(builder.codeHostedTools);
+        this.unavailableReason = builder.unavailableReason;
+        this.codeLanguage = builder.codeLanguage;
     }
 
     /**
@@ -268,6 +270,28 @@ public final class ToolDescriptor {
         return codeHostedTools;
     }
 
+    /**
+     * Returns why the tool is not offerable here, when it says so — for {@code ExecuteCode} in an agent that opens
+     * tools to code, the reason its plan gave ({@code ptc.unavailable_reason}, §12.2). Meaningful only when
+     * {@link #isOfferable()} is {@code false}; empty for every other tool.
+     *
+     * @return the reason, or empty
+     */
+    public Optional<String> getUnavailableReason() {
+        return Optional.ofNullable(unavailableReason);
+    }
+
+    /**
+     * Returns the language model-written code runs in through this tool in the context it was described in — for an
+     * offered {@code ExecuteCode}, its engine's language ({@code javascript}, {@code python}). Empty for every other
+     * tool.
+     *
+     * @return the language, or empty
+     */
+    public Optional<String> getCodeLanguage() {
+        return Optional.ofNullable(codeLanguage);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -282,14 +306,16 @@ public final class ToolDescriptor {
                 && concurrencyBehavior == other.concurrencyBehavior && interruptBehavior == other.interruptBehavior
                 && dataReach == other.dataReach && approvalKey.equals(other.approvalKey)
                 && Objects.equals(approvalVia, other.approvalVia) && offerable == other.offerable
-                && codeHostedTools.equals(other.codeHostedTools);
+                && codeHostedTools.equals(other.codeHostedTools)
+                && Objects.equals(unavailableReason, other.unavailableReason)
+                && Objects.equals(codeLanguage, other.codeLanguage);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(definition, sideEffectLevel, destructiveBehavior, idempotencyBehavior, concurrencyBehavior,
                 interruptBehavior, codeCallable, dataReach, approvalDelegated, approvalKey, approvalVia, offerable,
-                codeHostedTools);
+                codeHostedTools, unavailableReason, codeLanguage);
     }
 
     @Override
@@ -316,8 +342,30 @@ public final class ToolDescriptor {
         private String approvalVia;
         private boolean offerable = true;
         private Set<String> codeHostedTools = Set.of();
+        private String unavailableReason;
+        private String codeLanguage;
 
         private Builder() {
+        }
+
+        /**
+         * @param unavailableReason
+         *            why the tool is not offerable here; {@code null} for none
+         * @return this builder
+         */
+        public Builder unavailableReason(String unavailableReason) {
+            this.unavailableReason = unavailableReason;
+            return this;
+        }
+
+        /**
+         * @param codeLanguage
+         *            the language code runs in through this tool here; {@code null} for none
+         * @return this builder
+         */
+        public Builder codeLanguage(String codeLanguage) {
+            this.codeLanguage = codeLanguage;
+            return this;
         }
 
         /**

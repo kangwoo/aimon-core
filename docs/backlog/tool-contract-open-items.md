@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 20건 (열림 19 · 닫힘 1)
+# 도구 계약 — 등록 항목 23건 (열림 22 · 닫힘 1)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -248,3 +248,41 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 **어디.** `tools/code/shell/ShellProgramRun.java` 의 `REPLY_DRAIN`, `close()`. 2026-11-06 확인.
 
 **언제 다시 볼까.** "a reply write was still in flight" WARN 이 운영에서 보일 때, 또는 PTC 지연 측정(PTC 문서 §18)을 할 때.
+
+## TC-21 — 주석 줄바꿈 가드를 PTC 밖으로 넓힌다 · **열림**
+
+**무엇을.** `CommentReflowTest` 의 검사 범위(`JAVA_ROOTS`, `MARKDOWN`)를 패키지 하나씩 넓혀, 걸리는 줄을 고친다.
+
+**왜.** 포매터가 `join_lines_in_comments=false` 라 120 칸을 조금 넘긴 주석 줄은 끊기기만 하고 다시 붙지 않는다. 한두 단어가 줄 하나를
+차지하는 자리가 저장소 전체에 약 450 개 있고(2026-11-07 휴리스틱 스캔), 가드는 그중 PTC 코드의 약 20 개만 막는다. 포매터 설정을 켜는
+것은 모든 주석을 한 번에 다시 흘려 열린 브랜치가 모두 충돌하므로 [설계 기록](../design/tool/ptc-features-core.md) A.1 이 기각했다.
+
+**어디.** `modules/aimon-core/src/test/java/at/aimon/core/architecture/CommentReflowTest.java`, `config/eclipse/eclipse-formatter.xml`.
+설계는 [기능 마무리 설계](../design/tool/ptc-features-core.md) A.1 · §1.3 (OQ-A1). 2026-11-07 확인.
+
+**언제 다시 볼까.** 다른 패키지에서 같은 줄바꿈이 리뷰 지적으로 나올 때 — 그 패키지를 범위에 넣는다.
+
+## TC-22 — 중첩 호출 span 의 결과 내용 기록 · **열림**
+
+**무엇을.** `ExecuteCode` 의 중첩 호출 TOOL span 이 결과 내용을 담을지 고르는 도구 문맥 키를 `TRACER` 옆에 둔다(지금은
+`TracePayloadPolicy.summaryOnly()` 고정 — `isError` · `contentChars` 만).
+
+**왜.** 어떤 도구 문맥 키도 `TracePayloadPolicy` 를 나르지 않고, 중첩 결과는 프로그램이 거르는 데이터라 흔히 크고 민감할 수 있어 요약만
+남기기로 했다. 직접 호출 span 은 실행기의 정책을 따르므로, 내용 기록을 켠 배포에서도 코드 경로의 호출만 내용이 없다.
+
+**어디.** `tools/code/DefaultToolCallBridge.java` 의 `dispatch`, `tools/ToolContextKeys.java`. 설계는
+[기능 마무리 설계](../design/tool/ptc-features-core.md) A.5.2. 2026-11-07 확인.
+
+**언제 다시 볼까.** 코드 경로 호출의 결과를 trace 에서 봐야 하는 디버깅 요청이 올 때.
+
+## TC-23 — 슬래시 스킬 루프의 ITERATION · TOOL span · **열림**
+
+**무엇을.** `LlmSkillExecutor` 의 루프가 iteration 마다 ITERATION span 을, 도구 호출마다 TOOL span 을 COMMAND span 아래에 연다.
+
+**왜.** 그 루프에는 span 이 없다. 그래서 슬래시 스킬에서는 `ExecuteCode` 를 제안하지 못한 이유(`ptc.unavailable_reason`)가 남을 자리가
+없고, 스킬의 직접 도구 호출은 trace 에 나오지 않는다 — 스킬의 `ExecuteCode` 가 낸 중첩 호출만 COMMAND span 아래에 붙는다(편차 A-DV2).
+
+**어디.** `skill/execution/llm/LlmSkillExecutor.java`, `agent/impl/orca/CommandTrace.java`. 설계는
+[기능 마무리 설계](../design/tool/ptc-features-core.md) A.5.4 · §1.3, [PTC](../design/tool/programmatic-tool-calling.md) §21. 2026-11-07 확인.
+
+**언제 다시 볼까.** 슬래시 스킬이 `ExecuteCode` 를 제안받게 될 때(PTC PR 2) — 그때 이유를 남길 자리가 필요해진다.

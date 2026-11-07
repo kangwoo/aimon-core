@@ -33,6 +33,8 @@ import at.aimon.core.knowledge.wiki.WikiScope;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.hook.SkillHookActivator;
+import at.aimon.core.tracing.SpanAttributes;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Constants for tool context keys used in agent extension tools.
@@ -515,6 +517,32 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<ContextEngine> CONTEXT_ENGINE = ToolContextKey.writeOnce("contextEngine",
             ContextEngine.class);
+
+    /**
+     * Typed key for the {@link Tracer} recording the run that makes this tool call.
+     *
+     * <p>
+     * Bound beside a {@link #LLM_CALL_METADATA_KEY} that names a span — by the main loop on each iteration's tool
+     * context, by a fork on the context it builds for itself, by the agent executor on a slash command's hand-built
+     * context and by a routine on a step's context — so a tool that makes calls of its own ({@code ExecuteCode}) can
+     * open a {@code TOOL} span for each, under the span the metadata points at
+     * ({@code docs/design/tool/programmatic-tool-calling.md} §12.2). Absent means the run is not traced.
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot redirect the spans of the calls below it.
+     */
+    public static final ToolContextKey<Tracer> TRACER = ToolContextKey.writeOnce("tracer", Tracer.class);
+
+    /**
+     * Typed key for the span of the tool call this context was handed to, as a view that can only add attributes.
+     *
+     * <p>
+     * Put beside the rotated {@link #LLM_CALL_METADATA_KEY} wherever a {@code TOOL} span is opened
+     * ({@link ToolSpans#contextUnder}), so a tool can annotate its own span — {@code ExecuteCode} sets
+     * {@code ptc.language} and {@code ptc.tool_scope} there — without being able to end it. Absent when the call is
+     * not traced. Not write-once: each nested call rotates it to its own span.
+     */
+    public static final ToolContextKey<SpanAttributes> TOOL_SPAN = ToolContextKey.of("toolSpan", SpanAttributes.class);
 
     private ToolContextKeys() {
         throw new AssertionError("This class should not be instantiated");

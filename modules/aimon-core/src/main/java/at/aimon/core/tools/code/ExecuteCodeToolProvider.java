@@ -16,9 +16,8 @@ import at.aimon.core.programmatic.CodeExecutionLimits;
 
 /**
  * Registers {@link ExecuteCodeTool} in an agent runtime's registry
- * ({@code docs/design/tool/programmatic-tool-calling.md}
- * §9). The engines are not tool providers: this provider receives them, application-scoped, from the assembly (the CLI,
- * {@code aimon-bootstrap}) and hands them to the tool.
+ * ({@code docs/design/tool/programmatic-tool-calling.md} §9). The engines are not tool providers: this provider
+ * receives them, application-scoped, from the assembly (the CLI, {@code aimon-bootstrap}) and hands them to the tool.
  *
  * <p>
  * An agent that opens tools to code ({@code programmatic-tools}) in a runtime with no engine gets no

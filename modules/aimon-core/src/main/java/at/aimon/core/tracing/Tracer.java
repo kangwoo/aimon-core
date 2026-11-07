@@ -64,7 +64,7 @@ public interface Tracer {
      * A live span handle. {@link #close()} finalizes and records the span. {@code AutoCloseable} enables
      * try-with-resources; {@link #close()} never throws.
      */
-    interface Span extends AutoCloseable {
+    interface Span extends SpanAttributes, AutoCloseable {
 
         /**
          * Returns the context to propagate to child spans / downstream calls.
@@ -116,6 +116,7 @@ public interface Tracer {
          * @param value
          *            the attribute value (must not be null)
          */
+        @Override
         void setAttribute(String key, String value);
 
         /**

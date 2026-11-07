@@ -30,14 +30,13 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
 
 /**
  * Tests for the file-backed output capture of {@link LocalShell} (issue #13, superseding the drain-based workaround
- * from
- * issue #10).
+ * from issue #10).
  *
  * <p>
  * The child's stdout/stderr are redirected to temp files, so a command that leaves a backgrounded child holding the
  * write-end (e.g. {@code server & echo done}) no longer delays EOF or leaks a reader thread — the output produced
- * before
- * the parent exits is captured in full. Truncation now means only that a stream exceeded the in-memory capture limit.
+ * before the parent exits is captured in full. Truncation now means only that a stream exceeded the in-memory capture
+ * limit.
  *
  * <p>
  * Also covers the termination paths that decide what happens to that capture — a timeout or an interrupt kills the

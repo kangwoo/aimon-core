@@ -111,6 +111,7 @@ class ShellEngineProcessCleanupTest {
         snapshot();
         assertThat(running.get(30, TimeUnit.SECONDS).getStatus()).isEqualTo(CodeExecutionStatus.TIMED_OUT);
         assertAllDead();
+        assertKilledByGroup();
     }
 
     @Test
@@ -123,6 +124,7 @@ class ShellEngineProcessCleanupTest {
         snapshot();
         assertThat(running.get(30, TimeUnit.SECONDS).getStatus()).isEqualTo(CodeExecutionStatus.TIMED_OUT);
         assertAllDead();
+        assertKilledByGroup();
     }
 
     @Test
@@ -140,6 +142,7 @@ class ShellEngineProcessCleanupTest {
         bridge.cancel();
         assertThat(running.get(30, TimeUnit.SECONDS).getStatus()).isEqualTo(CodeExecutionStatus.CANCELLED);
         assertAllDead();
+        assertKilledByGroup();
     }
 
     @Test
@@ -153,6 +156,7 @@ class ShellEngineProcessCleanupTest {
         bridge.cancel();
         assertThat(running.get(30, TimeUnit.SECONDS).getStatus()).isEqualTo(CodeExecutionStatus.CANCELLED);
         assertAllDead();
+        assertKilledByGroup();
     }
 
     @Test
@@ -169,6 +173,7 @@ class ShellEngineProcessCleanupTest {
         assertThat(outcome.getStatus()).isEqualTo(CodeExecutionStatus.LIMIT_EXCEEDED);
         assertThat(bridge.calls()).hasSizeLessThanOrEqualTo(5);
         assertAllDead();
+        assertKilledByGroup();
     }
 
     @Test
@@ -183,7 +188,7 @@ class ShellEngineProcessCleanupTest {
         final CodeExecutionOutcome outcome = running.get(30, TimeUnit.SECONDS);
         assertThat(outcome.getStatus()).isEqualTo(CodeExecutionStatus.LIMIT_EXCEEDED);
         // DONE arrived and the wrapper finished: the shell never had to kill the group (§6 intent).
-        assertThat(shell.groupKills()).isZero();
+        assertNotKilled();
         assertAllDead();
     }
 
@@ -198,6 +203,7 @@ class ShellEngineProcessCleanupTest {
         final CodeExecutionOutcome outcome = running.get(30, TimeUnit.SECONDS);
         assertThat(outcome.getStatus()).isEqualTo(CodeExecutionStatus.COMPLETED);
         assertThat(outcome.getStdout()).contains("bye");
+        assertNotKilled();
         assertAllDead();
     }
 
@@ -262,6 +268,21 @@ class ShellEngineProcessCleanupTest {
         }
         assertThat(alive).as("processes of the run still alive %s after the run ended", DEAD_WITHIN).isEmpty();
         assertThat(pgrep("-f", runMarker)).as("runtime processes matching the run directory").isEmpty();
+    }
+
+    /**
+     * The shell's kill ended the run, and by its process group: a fallback kill means the pid file was not there within
+     * the wait, so the delegate's tree walk did the work and could hide a Q-C4 regression.
+     */
+    private void assertKilledByGroup() {
+        assertThat(shell.groupKills()).as("kills by process group").isGreaterThanOrEqualTo(1);
+        assertThat(shell.fallbackKills()).as("fallback tree kills").isZero();
+    }
+
+    /** The run ended by itself: the shell killed nothing, neither by group nor by its fallback. */
+    private void assertNotKilled() {
+        assertThat(shell.groupKills()).as("kills by process group").isZero();
+        assertThat(shell.fallbackKills()).as("fallback tree kills").isZero();
     }
 
     private List<Long> aliveRecorded() {

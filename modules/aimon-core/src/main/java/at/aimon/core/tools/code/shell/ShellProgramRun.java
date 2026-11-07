@@ -100,7 +100,7 @@ final class ShellProgramRun implements ShellLineListener {
     private final Object lock = new Object();
     private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
     /** The decoded bytes of every ERR line, trimmed from the front to {@link #maxLogBytes}. */
-    private byte[] logBytes = new byte[0];
+    private final ByteTail logBytes;
     private final Deque<String> stderrTail = new ArrayDeque<>();
     private final AtomicReference<String> violation = new AtomicReference<>();
     private final AtomicReference<String> hostFailure = new AtomicReference<>();
@@ -160,6 +160,7 @@ final class ShellProgramRun implements ShellLineListener {
         // Enough for maxLogChars characters of four bytes each, plus one split character; the clamp keeps an absurd
         // maxLogChars from overflowing an array.
         this.maxLogBytes = (int) Math.min(4L * limits.getMaxLogChars() + 4, MAX_ARRAY_BYTES);
+        this.logBytes = new ByteTail(maxLogBytes);
     }
 
     @Override
@@ -269,14 +270,7 @@ final class ShellProgramRun implements ShellLineListener {
         }
         synchronized (lock) {
             // Bytes, not text: a character split across two ERR lines decodes whole (logs()).
-            final long total = (long) logBytes.length + bytes.length;
-            final int keep = (int) Math.min(total, maxLogBytes);
-            final byte[] next = new byte[keep];
-            final int fromNew = Math.min(bytes.length, keep);
-            final int fromOld = keep - fromNew;
-            System.arraycopy(logBytes, logBytes.length - fromOld, next, 0, fromOld);
-            System.arraycopy(bytes, bytes.length - fromNew, next, fromOld, fromNew);
-            logBytes = next;
+            logBytes.append(bytes);
         }
     }
 
@@ -459,9 +453,10 @@ final class ShellProgramRun implements ShellLineListener {
     /** The last {@code maxLogChars} characters of the program's standard error, decoded once from all ERR lines. */
     String logs() {
         synchronized (lock) {
-            final int skip = Utf8Cut.leadingContinuations(logBytes, logBytes.length);
-            final int end = Utf8Cut.completeLength(logBytes, logBytes.length);
-            final String text = end > skip ? new String(logBytes, skip, end - skip, StandardCharsets.UTF_8) : "";
+            final byte[] kept = logBytes.toArray();
+            final int skip = Utf8Cut.leadingContinuations(kept, kept.length);
+            final int end = Utf8Cut.completeLength(kept, kept.length);
+            final String text = end > skip ? new String(kept, skip, end - skip, StandardCharsets.UTF_8) : "";
             if (text.length() <= maxLogChars) {
                 return text;
             }

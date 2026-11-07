@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: 5a1e5ef7
+source_commit: d4836663
 ---
 
 # Execution Tracing Guide
@@ -165,7 +165,7 @@ The principal fields of `TraceSpan` (an immutable value object):
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …). An LLM span's outputs also carry the `stopReason` the provider reported (e.g. `MAX_TOKENS`) |
 | `tokenUsage` / `model` | LLM spans only |
-| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`) and, for a streaming call, `streaming=true` and `ttftMs` to the first content chunk; a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds`; a TURN span the delivered notification's `subagent.received.taskIds` and the unread ones' `subagent.received.unreadTaskIds`; a COMPACTION span the iteration it gates, `iteration`, and `invokerType` (plus `budgetForced=true` when a budget hint forced it, and `executionId` in a fork) |
+| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`) and, for a streaming call, `streaming=true` and `ttftMs` to the first content chunk; a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds`; a TURN span the delivered notification's `subagent.received.taskIds` and the unread ones' `subagent.received.unreadTaskIds`; a COMPACTION span the iteration it gates, `iteration`, and `invokerType` (plus `budgetForced=true` when a budget hint forced it, and `executionId` in a fork). A TOOL span carries its call path, `tool.path` — `direct` for a call the model made itself, `code` for a call an `ExecuteCode` program made, whose span is a child of the `ExecuteCode` span and carries `ptc.parent_tool_use_id` and `ptc.language`, plus `ptc.refused` when the bridge refused it. An `ExecuteCode` span carries `ptc.language` and (for the shell engine) `ptc.tool_scope`; an iteration where an agent with `programmatic-tools` was not offered `ExecuteCode` carries `ptc.unavailable_reason` |
 
 The two paths that start work without a tool call have a parent too. A slash-command turn opens a `COMMAND` span
 (`command:/<name>`) under its TURN, and a fork-mode skill's `SUBAGENT` that the command starts nests under it. A

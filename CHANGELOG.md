@@ -7,6 +7,40 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `ExecuteCode` tracing spans and the language-change notice; shell-engine and review follow-ups
+
+`docs/design/tool/ptc-features-core.md` (PR 1). No public API is removed or changed incompatibly; the additions are
+listed below.
+
+- **Each call an `ExecuteCode` program makes is a `TOOL` span under the `ExecuteCode` span** (ptc §12.2), with
+  `tool.path=code`, `ptc.parent_tool_use_id` and `ptc.language`; its outputs are the summary only (`isError`,
+  `contentChars`), never the result's content. A call the bridge refuses before the dispatcher (closed, call limit, not
+  callable, argument size, write cap, quota) gets a zero-length span with `ptc.refused`, ended in error. A throwing
+  tracer never fails a call.
+- **The `ExecuteCode` span carries `ptc.language`, and `ptc.tool_scope` for an engine bound by
+  `shell-engine-tool-scope`** — on every such run, not only `unrestricted`. An iteration span carries
+  `ptc.unavailable_reason` when an agent with `programmatic-tools` is not offered `ExecuteCode` (the main loop; the
+  slash-skill loop has no spans). The operator WARNs stay.
+- **Language-change notice** (ptc §6.2): when the language `ExecuteCode` runs changes between executions of a session
+  (host ↔ sandboxed), the first tool result of the iteration starts with `[environment] ExecuteCode now runs Python
+  (was JavaScript)`. The previous language is read from the conversation the iteration sends — no new session state —
+  so it survives restarts and node moves; it is sent once.
+- **New API:** tool-context keys `ToolContextKeys.TRACER` (write-once; bound by the main loop, forks, slash commands
+  and routines beside metadata that names a span) and `ToolContextKeys.TOOL_SPAN`; `at.aimon.core.tracing.SpanAttributes`
+  (`Tracer.Span` now extends it — binary compatible); `at.aimon.core.tools.ToolSpans`;
+  `at.aimon.core.tools.code.CodeSpanAttributes`, `ExecuteCodeLanguageNotice`; `ToolDescriptor.getUnavailableReason()`
+  and `getCodeLanguage()` with their builder methods; `ToolOfferContext.getUnavailableReasons()`.
+- **Changed:** the summary line of every `ExecuteCode` observation names the language —
+  `[ExecuteCode (Python): 14 tool calls …]`, was `[ExecuteCode: …]`. Direct `TOOL` spans carry `tool.path=direct`.
+- **Changed:** the shell engine's runtime waits (at most 2 s) for its sweep of stale `.aimon-ptc/` entries before it
+  sends `DONE`, so a short program no longer cuts the sweep off.
+- **Fixed:** the shell engine kept the program's stderr tail by copying it on every chunk — quadratic for a large
+  `maxLogChars`. It is now a bounded ring that grows by doubling (`ByteTail`), linear in what the program writes.
+- **Build only:** `CommentReflowTest` fails on a comment line in the PTC code (or a prose line in its design documents)
+  stranded by a wrap — one or two words a reflow would have joined to the next line; the existing sites were rejoined.
+  The shell-engine tests now prove the sweep ran (a canary entry, or a guard trace) and that every kill went by process
+  group (`fallbackKills() == 0`).
+
 ### Fixed: the shell engine's runtime no longer outlives the shell's kill (Q-C4), and D1/C review follow-ups
 
 `docs/design/tool/ptc-qc4-and-nonblocking-fixes.md`. No public API changes; two javadocs gained a sentence.

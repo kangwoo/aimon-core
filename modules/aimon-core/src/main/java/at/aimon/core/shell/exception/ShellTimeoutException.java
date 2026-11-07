@@ -67,8 +67,7 @@ public final class ShellTimeoutException extends ShellExecutionException {
      *            the partial standard error output produced before timeout, null will be converted to empty string
      * @param outputTruncated
      *            true if even the captured partial output may itself be incomplete because it exceeded the capture
-     *            limit
-     *            or the captured output could not be fully read; see {@link #outputTruncated()}
+     *            limit or the captured output could not be fully read; see {@link #outputTruncated()}
      */
     public ShellTimeoutException(String message, Duration timeout, String stdout, String stderr,
             boolean outputTruncated) {

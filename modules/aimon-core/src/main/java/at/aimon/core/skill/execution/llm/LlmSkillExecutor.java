@@ -100,13 +100,12 @@ import at.aimon.core.tools.ToolContextKeys;
  * <p>
  * <b>How tool calls leave this loop.</b> Step 5 runs every call through the {@link ToolCallDispatcher} the caller
  * bound under {@link ToolContextKeys#TOOL_CALL_DISPATCHER} — on the user-slash path, the agent executor's own —
- * narrowed
- * to the skill's registry and its {@code allowed-tools} intersected with the caller's. The hooks and the side-effect
- * approval gate that stand in front of an agent's tools therefore stand in front of a skill's too, and the skill's
- * {@code allowed-tools} is enforced when a call runs, not only when the offer is filtered. Each call reaches the hooks
- * as {@link ToolCallOrigin#skill(String) a skill call}. A context with no dispatcher bound is refused before the first
- * LLM call: nothing falls back to calling the {@link ToolExecutionManager} directly. A test or an embedder with no
- * hooks binds {@code ToolCallDispatchers.ungated(...)} and says so by name.
+ * narrowed to the skill's registry and its {@code allowed-tools} intersected with the caller's. The hooks and the
+ * side-effect approval gate that stand in front of an agent's tools therefore stand in front of a skill's too, and the
+ * skill's {@code allowed-tools} is enforced when a call runs, not only when the offer is filtered. Each call reaches
+ * the hooks as {@link ToolCallOrigin#skill(String) a skill call}. A context with no dispatcher bound is refused before
+ * the first LLM call: nothing falls back to calling the {@link ToolExecutionManager} directly. A test or an embedder
+ * with no hooks binds {@code ToolCallDispatchers.ungated(...)} and says so by name.
  *
  * <p>
  * A denied or failing call comes back as an error result for that one tool and the skill keeps going, as on the

@@ -4,7 +4,8 @@
 > `at.aimon.core.tools.code.shell`), `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈).
 > 공개 API 호환을 깨는 항목이 있다(§5). 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B), `ExecuteCode`·엔진 SPI·GraalJS
 > 엔진·모듈 개명·계약 스위트(조각 C), 셸 엔진의 코어 쪽 절반(조각 D1 — 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope`)이다.
-> 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 그 저장소에 있다(aimon-sandbox#49). 구현이 본문과 다른 점은 §21.
+> 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 그 저장소에 있다(aimon-sandbox#49). §12.2 의 트레이스와
+> §6.2 의 언어 변경 알림은 [기능 마무리 설계](ptc-features-core.md)로 들어왔다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -253,6 +254,14 @@ CLAUDE.md 에 적는다(샌드박스 분리 때와 같은 형식). 개명이 닿
 언어는 환경 종류(`isolation()`)가 바뀌지 않는 한 바뀌지 않는다. 같은 세션이 실행마다 다른 종류의 환경에서 돌면 언어가 바뀔 수 있고,
 그때는 그 iteration 의 관찰에 "ExecuteCode now runs JavaScript (was Python)" 를 환경 알림으로 싣는다.
 
+"직전 언어" 는 세션 필드가 아니라 그 iteration 이 모델에게 보내는 대화(컨텍스트 엔진의 view)에서 읽는다. 모든 `ExecuteCode` 관찰의
+마지막 줄인 요약이 언어를 밝히고(§12.1), 한 번 실린 알림도 대화에 남는다. view 를 뒤에서부터 훑어 처음 만나는 **읽을 수 있는** 표지 —
+요약을 view 나(본문이 생략되었으면) 로그에서 읽을 수 있는 `ExecuteCode` 프로그램, 또는 실린 알림 — 의 언어를 지금 제안하는 언어와
+비교한다. 요약을 어디서도 읽을 수 없는 프로그램만 보이면 "다른 언어였을 수 있다" 는 보수적 알림을 한 번 싣는다. 알림은 그 iteration 의
+`tool_use` 순서로 첫 도구 결과의 머리에 붙는다. 도구 호출이 없는 iteration 은 싣지 않는다 — 조건이 대화에서 나오므로 다음 기회에 다시
+성립한다. 메인 루프만 한다: 포크와 슬래시 스킬의 대화는 한 실행 안에 있고 한 실행의 환경은 바뀌지 않는다. 근거와 실패 양상은
+[기능 마무리 설계](ptc-features-core.md) A.6.
+
 ### 6.3 설명
 
 `ExecuteCode` 의 설명은 `describe` 가 실행마다 계산한다(`DynamicToolDefinitionProvider` 는 인자 없는 Supplier 라 문맥을 볼 수 없다).
@@ -496,8 +505,11 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 ...
 [logs]                      # only when there were logs; last 4,000 chars
 ...
-[ExecuteCode: 14 tool calls (Read x12, Grep x2), 1 error, 2 refused by write cap, 3.2s]
+[ExecuteCode (Python): 14 tool calls (Read x12, Grep x2), 1 error, 2 refused by write cap, 3.2s]
 ```
+
+요약 줄은 성공·오류 결과 모두의 마지막 줄이고 프로그램의 언어를 밝힌다. §6.2 의 언어 변경 알림이 읽는, 영속된 표지다. 프로그램이
+출력한 같은 모양의 줄은 언제나 진짜 요약 **앞**에 있으므로 표지를 위조하지 못한다.
 
 상태가 `COMPLETED` 가 아니면 `ToolResult.error` 로 돌려준다. 메시지에는 상태, 스크립트 오류의 마지막 줄, 그때까지의 로그 꼬리,
 호출 요약을 싣는다. `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
@@ -513,7 +525,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 
 | 대상 | 무엇이 남는가 |
 |---|---|
-| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`. iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` |
+| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)만. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` |
 | 훅 | 중첩 호출마다 PreTool/PostTool (경로 포함) |
 | UI | `ExecuteCode` 결과의 `renderPayload` 에 코드와 중첩 호출 목록(이름, 입력 요약, 결과 길이, 오류 여부). LLM 으로 직렬화되지 않는다 |
 | 트랜스크립트 | `ExecuteCode` 의 tool_use(코드 포함)와 §12.1 의 관찰 |
@@ -715,8 +727,8 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 중첩 호출의 허용 목록은 `AllowedTools.intersect(부모, 동결된 집합)` (§8.2) | 브리지가 동결된 집합을 이름으로 직접 검사하고, 부모의 허용 목록(인자 패턴 포함)은 바인딩된 디스패처가 그대로 적용한다 | 효과는 교집합과 같다 — 호출은 두 검사를 모두 통과해야 한다. 디스패처 `narrow` 는 레지스트리 부분집합을 요구해 `ExecuteCode` 가 그 레지스트리를 알아야 한다 |
 | `CodeExecutionOutcome` 에 중첩 호출 기록(§9 표) | 기록은 호출을 한 브리지가 든다. 결과에는 상태·출력·로그·반환값·오류 메시지 | 기록은 엔진과 무관하다. 엔진마다 같은 기록을 다시 옮기지 않는다 |
 | 엔진 SPI 의 모양(§9) | `CodeExecutionEngine extends AutoCloseable`(기본 no-op), `ToolCallBridge.limitExceeded()`, `CodeExecutionEngineFactory.create()`, `CodeExecutionEngines.discover/createAll`, 상수 `JAVASCRIPT`·`PYTHON` | 엔진은 Application 수명이라 조립이 닫아야 한다. 엔진은 자식 취소 신호를 보았을 때 그것이 실행 취소인지 브리지가 건 한도(즉시 정지, §8.3)인지 구분해야 `CANCELLED`/`LIMIT_EXCEEDED` 를 고를 수 있다 |
-| 트레이스(§12.2): 중첩 호출마다 TOOL span(부모 `ExecuteCode`, `tool.path=code`), iteration span 의 `ptc.unavailable_reason` | span 은 하지 않았다. `programmatic-tools` 를 둔 에이전트가 `ExecuteCode` 를 제안받지 못한 이유(엔진 미조립 — 조립이 꺼져 있을 때도 —, 고른 언어의 엔진 없음, `auto` 인데 환경이 격리를 선언하지 않음, 엔진 정적 불가, 부를 도구 없음)와 집합에서 빠진 도구는 에이전트·이유마다 한 번 WARN 으로 남는다(`ToolOfferContext.agentName`). 중첩 호출은 `renderPayload` 와 훅으로 남는다 | 디스패처 경로는 span 을 만들지 않는다 — 루프가 만든다. 브리지에서 span 을 열려면 트레이서를 도구 문맥으로 내려야 해 범위가 커진다. 후속 |
-| 언어가 바뀌면 환경 알림(§6.2) | 하지 않았다 | 조각 C 에는 엔진이 하나뿐이라 언어가 바뀔 수 없다. 셸 엔진(조각 D)과 함께 |
+| 트레이스(§12.2): 중첩 호출마다 TOOL span(부모 `ExecuteCode`, `tool.path=code`), iteration span 의 `ptc.unavailable_reason` | 조각 C 에서는 하지 않았고 [기능 마무리](ptc-features-core.md)(PR 1)에서 구현했다 — 아래 그 표의 A-DV2·A-DV5·A-DV6. 트레이서는 도구 문맥 키 `TRACER`(write-once)로, 도구 자신의 span 은 속성만 붙일 수 있는 `TOOL_SPAN`(`SpanAttributes`)으로 내려간다. 운영자 WARN(제안받지 못한 이유, 집합에서 빠진 도구)은 §12.2 의 "로그" 행 그대로 남는다 | 조각 C 당시: 디스패처 경로는 span 을 만들지 않는다 — 루프가 만든다. 브리지에서 span 을 열려면 트레이서를 도구 문맥으로 내려야 했다 |
+| 언어가 바뀌면 환경 알림(§6.2) | 조각 C 에서는 하지 않았고 [기능 마무리](ptc-features-core.md)(PR 1)에서 구현했다 — 아래 그 표의 A-DV3·A-DV4 | 조각 C 당시: 엔진이 하나뿐이라 언어가 바뀔 수 없었다 |
 | `programmatic-tools` 의 도구는 deferred 로 둘 수 없다(결정 13) | 강제하지 않는다. 활성화되지 않은 deferred 도구는 레지스트리 조회에서 빠지므로 호출 가능 집합에서 빠지고 경고된다 | 활성화 전에는 그 도구가 제안 자격(§7.3 순서 1)을 갖지 않는다. 집합이 스크립트 안에서 넓어지는 일(결정 13 의 이유)은 일어나지 않는다 |
 | 결정 12 ④ 검사는 도구 등록 시점과 제안 시점(§7.2) | 제안 시점에만 — `programmatic-only` 의 `READ_ONLY` 아닌 도구는 코드 전용으로 빼지 않고 직접 제안에 남긴다(에이전트·도구마다 경고 한 번) | 제안 문맥이 축을 아는 첫 지점이 제안 시점이다. 빼 버리면 그 도구가 어디에도 나오지 않는다 |
 | `programmatic-only` 는 "직접 제안에서 빼고 코드에서만"(§7.2) — 코드 경로가 있다는 전제 | 같은 제안에서 `ExecuteCode` 가 제안되고 그 호출 가능 집합이 그 도구를 담을 때만 빼고 직접 호출을 거절한다(`ToolDescriptor.getCodeHostedTools()`, `ToolOfferContext.isCodeOnly`). `ExecuteCode` 를 제안할 수 없으면 항목을 무시해 도구는 직접 제안·호출된다 | 그러지 않으면 엔진이 없거나(조립 꺼짐, 고른 언어 없음, 격리 미선언) 집합에서 빠진 도구가 에이전트에게서 조용히 사라진다. 제안 필터와 직접 경로의 거절은 여전히 같은 출처(그 제안 문맥)를 읽는다 |
@@ -739,7 +751,7 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | "`Bash` 에 매치되는 PermissionRequest·PreTool 훅이 없다"(셸 엔진 §4) | 훅 SPI 에는 도구 매처가 없다. `ToolScopedHook`(`at.aimon.core.hook.event`, `mayApplyTo(toolName)`)을 두고, 선언형 `preTool` 훅은 매처(`ToolInputPredicate.mayMatchTool`)로 답한다. 이 인터페이스를 구현하지 않은 훅은 모든 도구에 매치된다고 본다 — 매처가 없는 선언형 `permissionRequest` 훅도 그렇다 | 보수적으로 읽어야 셸 엔진이 `Bash` 를 좁히는 훅을 우회하지 않는다. 코드로 등록한 관찰 전용 훅(CLI 의 `ToolCallDisplayHook` 등)이 있어도 셸 엔진이 막히지만, CLI 는 로컬이라 셸 엔진이 돌지 않는다 |
 | `Bash` 조건의 허용 목록 | 메인 루프만 에이전트의 허용 목록을 제안 문맥에 넘긴다(`CodeOfferKeys.putEnvironmentFacts(builder, context, allowedTools)`). 허용 목록을 넘기지 않은 제안 문맥에서 `Bash` 는 제약 없음이 아니다 | 포크·슬래시 스킬 루프는 `ExecuteCode` 를 제안하지 않는다(조각 C 편차 4) |
 | `shell-engine-tool-scope` 의 애플리케이션 값(셸 엔진 §12.2) | 엔진이 아니라 `ExecuteCodeTool`/`ExecuteCodeToolProvider` 가 받는다(`ToolSpec.shellEngineToolScope`, 스타터 `aimon.programmatic.shell-engine-tool-scope`). 어느 엔진에 적용할지는 SPI `CodeExecutionEngine.isToolScopeBound()` 가 말한다 | `ServiceLoader` 의 엔진 팩토리는 인자가 없어 설정을 받을 수 없다. 한도(`CodeExecutionLimits`)와 같은 길이다 |
-| `unrestricted` 이면 실행마다 `ExecuteCode` span 에 `ptc.tool_scope=unrestricted`(셸 엔진 §12.2) | 하지 않았다. 시작 시 경고는 한다(`ExecuteCodeToolProvider`) | 조각 C 편차 8 과 같다 — 디스패처 경로에 span 이 없다 |
+| `unrestricted` 이면 실행마다 `ExecuteCode` span 에 `ptc.tool_scope=unrestricted`(셸 엔진 §12.2) | D1 에서는 하지 않았고 [기능 마무리](ptc-features-core.md)(PR 1)에서 구현했다 — 범위에 묶인 엔진의 실행마다 실효 값(아래 A-DV1). 시작 시 경고(`ExecuteCodeToolProvider`)는 그대로다 | D1 당시: 조각 C 편차 8 과 같았다 — 디스패처 경로에 span 이 없었다 |
 | CLI 설정 `programmatic.shellEngineToolScope`(§16) | CLI 는 셸 엔진을 조립하지 않고 그 키도 두지 않는다 | CLI 의 실행 환경은 언제나 로컬 호스트이고, 셸 엔진은 샌드박스에서만 돈다(셸 엔진 결정 1). `programmatic-engine: python` 인 에이전트는 "no python engine is assembled" 경고를 받는다 |
 | 오래된 `.aimon-ptc/` 항목의 정리(셸 엔진 §8) | 실행마다 런타임이 응답 디렉터리의 부모 `.aimon-ptc/` — 그것만 — 에서 `max(2 × maxWallClock, 20 분)` 보다 오래된 항목을 지운다. 부모의 이름이 `.aimon-ptc` 이고 링크가 아니며 자기 항목이 그 안에 있을 때만 돈다. `probe-*` 는 건너뛴다 | `RuntimeFileSystem` 에는 목록 연산이 없어 호스트가 아니라 샌드박스 안에서 지운다. 처음에는 탐침 명령 안의 `find` 가 고정된 20 분으로 지웠는데, 탐침은 한도를 모르므로 `maxWallClock` 이 20 분을 넘으면 살아 있는 실행을 지울 수 있었다. 나이는 이제 지우는 실행의 설정을 따른다. 설정이 다른 노드가 한 샌드박스를 나눠 쓰는 경우는 [TC-18](../../backlog/tool-contract-open-items.md) |
 | 실행이 끝나면 브리지를 `CLOSED` 로 둔 **뒤에** 엔진이 실행 디렉터리를 지운다(셸 엔진 §8, D1 의 글) | 엔진은 브리지를 닫지 않는다. 실행 자신의 응답 쓰기 관문을 닫고 이미 시작한 쓰기를 기다린 뒤(상한 5 초) 지우며, 브리지는 엔진이 돌아온 뒤 `ExecuteCode` 가 닫는다. 셸 엔진 §8 의 글을 이에 맞췄다 | 브리지는 `ExecuteCode` 가 만들고 소유한다 — 중첩 호출을 남은 벽시계만큼 기다리고 "still running" 이름을 관찰에 싣는 것(§13.2)도 그 소유자의 일이다. 지켜야 하는 불변식은 "실행 디렉터리를 지운 뒤에는 샌드박스에 아무것도 쓰지 않는다" 이고, 샌드박스에 쓰는 것은 실행의 응답 쓰기뿐이다 |
@@ -750,5 +762,15 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | `RuntimeFileSystem.delete(path)`(셸 엔진 §3) | 파일이나 디렉터리 트리를 링크를 따라가지 않고 지운다. 로컬 `writeNew` 는 `O_EXCL` 로 만든 임시 파일을 `link(2)` 로 대상에 건다 | 엔진이 실행 디렉터리를 한 번에 지운다. `O_EXCL` 만으로는 읽는 쪽이 절반 쓰인 파일을 볼 수 있다 |
 | S8 의 "원인 필드"(셸 엔진 §13) | `ShellCommandResult.killCause()` → `Optional<ShellKillCause>`(`LINE_LIMIT_EXCEEDED`, `OTHER`), 생성은 `withKillCause` | 기존 생성자를 깨지 않는다. 셸 엔진은 `LINE_LIMIT_EXCEEDED` 를 `PROTOCOL_VIOLATION` 으로 분류한다 |
 | 조립(§5.2, §16) | `aimon-core` 가 셸 엔진의 팩토리를 `ServiceLoader` 에 등록하므로 `programmaticEnabled` 인 부트스트랩·스타터는 늘 Python 엔진을 얻는다. 부트스트랩의 "엔진 없음" 경고는 "JavaScript 엔진 없음"(`aimon-graaljs` 를 더하라)으로 바뀌었다 | Python 엔진은 샌드박스 환경에서만 정적 가용이라 호스트 환경에는 아무것도 바꾸지 않는다 |
-| 언어가 바뀌면 환경 알림(§6.2, 조각 C 편차 9) | 여전히 하지 않았다 | 언어는 세션의 환경 종류(`isolation()`)가 **턴 사이에** 바뀔 때만 바뀐다 — 실행 환경은 실행마다 한 번 정해진다. 직전 언어를 기억하려면 노드 이동을 넘어 살아남는 세션 쪽 상태가 필요하고(scope-model), 트리 안의 제공자 가운데 한 세션의 환경 종류를 바꾸는 것은 없다. 그런 제공자가 생길 때 함께 한다 |
+| 언어가 바뀌면 환경 알림(§6.2, 조각 C 편차 9) | D1 에서는 하지 않았고 [기능 마무리](ptc-features-core.md)(PR 1)에서 구현했다. 세션 쪽 상태는 새로 두지 않는다 — 직전 언어를 레코드 쪽에 이미 있는 대화에서 읽는다(아래 A-DV4) | D1 당시: 직전 언어를 기억하려면 노드 이동을 넘어 살아남는 세션 쪽 상태가 필요하다고 보았다(scope-model) |
 
+PTC 기능 마무리 PR 1([설계 기록](ptc-features-core.md) — 트레이스, 언어 변경 알림, 비차단 지적)이 본문과 다르게 정한 점:
+
+| 본문 | 구현 | 이유 |
+|---|---|---|
+| `unrestricted` 이면 `ptc.tool_scope`(셸 엔진 §12.2) | **A-DV1.** 범위에 묶인 엔진의 실행마다 실효 값을 싣는다 | 상위 집합이다. `environment`·`host` 로 좁힌 실행도 trace 에서 보인다 |
+| iteration span 의 `ptc.unavailable_reason`(§12.2) | **A-DV2.** 메인 루프만. 슬래시 스킬 루프에는 ITERATION·TOOL span 이 없어 그 속성도 없다 — 그 스킬의 `ExecuteCode` 가 낸 중첩 호출은 COMMAND span 아래에 붙는다. 포크 루프는 PR 2(포크가 `ExecuteCode` 를 제안받을 때)에서 | 스킬 루프에 트레이서를 들이는 것은 이 변경의 범위 밖이다 — [TC-23](../../backlog/tool-contract-open-items.md) |
+| §12.1 의 요약 줄 `[ExecuteCode: …]` | **A-DV3.** `[ExecuteCode (Python): …]` — 언어를 싣는다 | §6.2 의 알림이 읽는 영속 표지다 |
+| "같은 세션의 직전 언어"(§6.2) | **A-DV4.** 세션 필드 없이 view 의 가장 새로운 읽을 수 있는 표지에서 읽는다. 읽을 수 없는 프로그램만 보이면 보수적 알림을 한 번. 첫 도구 결과에 싣고, 도구 호출이 없는 iteration 은 미룬다 | `SessionRecord` 필드는 코덱과 세 백엔드에 걸친 스키마 변경이고, `LiveSession` 필드는 노드 이동에서 사라진다. 대화가 이미 그 사실을 증명한다 |
+| 중첩 호출마다 TOOL span(§12.2) | **A-DV5.** 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 span(`ptc.refused`) | trace 가 `renderPayload` 와 같은 호출을 나열한다 |
+| `tool.path=code`(§12.2) | **A-DV6.** 직접 호출의 TOOL span 에도 `tool.path=direct` | 두 경로를 같은 속성으로 거른다 |

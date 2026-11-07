@@ -82,6 +82,15 @@ final class CommandTrace {
     }
 
     /**
+     * Whether a command span was opened, so the command's tools are traced under it.
+     *
+     * @return {@code true} when there is a command span
+     */
+    boolean traced() {
+        return span != null;
+    }
+
+    /**
      * Returns the observer a {@code /compact} run by this command hands its compaction: one that opens a COMPACTION
      * span under the command span. Empty when there is no command span (tracing off), so the command's tool context
      * gains no key.

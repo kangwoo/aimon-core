@@ -5,10 +5,9 @@ import java.util.Optional;
 
 /**
  * Whether an engine can run code here, and why not when it cannot
- * ({@code docs/design/tool/programmatic-tool-calling.md}
- * §9). A static unavailability keeps {@code ExecuteCode} out of the offer and reaches the operator as a warning; a
- * probe
- * unavailability fails that one {@code ExecuteCode} call and reaches the model once.
+ * ({@code docs/design/tool/programmatic-tool-calling.md} §9). A static unavailability keeps {@code ExecuteCode} out of
+ * the offer and reaches the operator as a warning; a probe unavailability fails that one {@code ExecuteCode} call and
+ * reaches the model once.
  *
  * <p>
  * Immutable.

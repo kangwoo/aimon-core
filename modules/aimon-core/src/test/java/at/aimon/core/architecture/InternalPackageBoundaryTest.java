@@ -30,9 +30,8 @@ import org.junit.jupiter.api.Test;
  * {@link PackageDependencyArchitectureTest}; this is the same promise for {@code internal}, which the policy also says
  * the build enforces. {@code at.aimon.session.mongodb.internal.ListenDispatcher} may be imported by anything under
  * {@code at.aimon.session.mongodb}, and by nothing else, and only from the module that holds it: a package prefix is
- * not
- * a boundary on its own, since another module may put classes under the same tree ({@code aimon-graaljs} could declare
- * {@code at.aimon.core.foo} and import {@code at.aimon.core.internal}).
+ * not a boundary on its own, since another module may put classes under the same tree ({@code aimon-graaljs} could
+ * declare {@code at.aimon.core.foo} and import {@code at.aimon.core.internal}).
  *
  * <h2>Why a source scan and not ArchUnit</h2>
  *

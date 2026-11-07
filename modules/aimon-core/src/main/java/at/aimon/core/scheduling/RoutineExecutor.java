@@ -672,7 +672,9 @@ public class RoutineExecutor {
             builder.put(ToolContextKeys.QUOTA_GUARD, quota.guard);
         }
         putExecutionEnvironment(builder, task, executionId, attributes);
-        trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata));
+        trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata)
+                // and the tracer beside it, so a step tool that makes calls of its own (ExecuteCode) traces them
+                .put(ToolContextKeys.TRACER, trace.tracer));
         return builder.build();
     }
 

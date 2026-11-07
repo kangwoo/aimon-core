@@ -79,8 +79,7 @@ public final class ToolGrade {
 
     /**
      * Returns the approval key {@code ExecuteCode} is asked under, when it is another tool's ({@code Bash} for the
-     * shell
-     * engine, decision 11).
+     * shell engine, decision 11).
      *
      * @return the key, empty for {@code ExecuteCode}'s own name
      */
