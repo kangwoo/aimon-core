@@ -1,10 +1,13 @@
 package at.aimon.core.tracing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Proxy;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
@@ -86,5 +89,57 @@ class SpansTest {
         final LlmCallMetadata base = LlmCallMetadata.builder().traceId("routine:t1").build();
         assertThat(fallback.enrich(base)).isSameAs(base);
         fallback.close();
+    }
+
+    @Test
+    @DisplayName("each *Safely recording helper swallows a RuntimeException from the span")
+    void safelySwallowsRuntimeExceptions() {
+        final Tracer.Span span = throwingSpan(new IllegalStateException("span is broken"));
+        Spans.setAttributeSafely(span, "k", "v");
+        Spans.setAttributeQuietly(span, "k", "v");
+        Spans.setOutputsSafely(span, Map.of());
+        Spans.errorSafely(span, "message");
+        Spans.errorSafely(span, new RuntimeException("work failed"));
+        Spans.interruptedSafely(span);
+        Spans.closeSafely(span);
+        // twice: the second failure of an operation is logged at DEBUG, and still swallowed
+        Spans.closeSafely(span);
+    }
+
+    @Test
+    @DisplayName("each *Safely recording helper lets an Error through, as startChildSafely does")
+    void safelyLetsErrorsThrough() {
+        final Tracer.Span span = throwingSpan(new AssertionError("fatal"));
+        final List<Runnable> operations = List.of(() -> Spans.setAttributeSafely(span, "k", "v"),
+                () -> Spans.setAttributeQuietly(span, "k", "v"), () -> Spans.setOutputsSafely(span, null),
+                () -> Spans.errorSafely(span, "m"), () -> Spans.errorSafely(span, new RuntimeException()),
+                () -> Spans.interruptedSafely(span), () -> Spans.closeSafely(span));
+        for (Runnable operation : operations) {
+            assertThatThrownBy(operation::run).isInstanceOf(AssertionError.class).hasMessage("fatal");
+        }
+    }
+
+    @Test
+    @DisplayName("the *Safely helpers record on a working span")
+    void safelyRecords() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final Tracer.Span span = tracer.startRoot("s", SpanType.TOOL, "t", null);
+        Spans.setAttributeSafely(span, "k", "v");
+        Spans.setOutputsSafely(span, Map.of("o", 1));
+        Spans.errorSafely(span, "bad");
+        Spans.closeSafely(span);
+        assertThat(store.bySession("s")).singleElement().satisfies(recorded -> {
+            assertThat(recorded.getAttributes()).containsEntry("k", "v");
+            assertThat(recorded.getStatus()).isEqualTo(SpanStatus.ERROR);
+            assertThat(recorded.getOutputs()).isPresent();
+        });
+    }
+
+    private static Tracer.Span throwingSpan(Throwable failure) {
+        return (Tracer.Span) Proxy.newProxyInstance(Tracer.Span.class.getClassLoader(),
+                new Class<?>[]{Tracer.Span.class}, (proxy, method, args) -> {
+                    throw failure;
+                });
     }
 }

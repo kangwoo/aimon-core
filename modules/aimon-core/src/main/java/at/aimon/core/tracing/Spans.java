@@ -3,6 +3,8 @@ package at.aimon.core.tracing;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -11,7 +13,8 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.llm.LlmCallMetadata;
 
 /**
- * Fail-safe helpers for opening child spans and rotating the span parent carried by {@link LlmCallMetadata}.
+ * Fail-safe helpers for opening child spans, rotating the span parent carried by {@link LlmCallMetadata}, and
+ * recording on a span that is already open.
  *
  * <p>
  * Every site that nests a span under the one a caller handed it does the same three things: read the parent from the
@@ -20,11 +23,22 @@ import at.aimon.core.llm.LlmCallMetadata;
  * subagent execution manager all do it, so it lives here once.
  *
  * <p>
- * Stateless; all methods are static.
+ * The {@code *Safely} recording helpers ({@link #setAttributeSafely}, {@link #setOutputsSafely},
+ * {@link #errorSafely(Tracer.Span, String)}, {@link #interruptedSafely}, {@link #closeSafely}) give the same promise
+ * for a span that is already open: a {@link Tracer.Span} that throws cannot fail the work it records, nor replace that
+ * work's own exception from a {@code finally}. They catch {@link RuntimeException} only — an {@link Error} propagates,
+ * as it does from {@link #startChildSafely}. The first failure of each operation is logged at WARN and later ones at
+ * DEBUG, so a tracer broken for good does not flood the log once per call.
+ *
+ * <p>
+ * Stateless apart from that logging bookkeeping; all methods are static.
  */
 public final class Spans {
 
     private static final Logger log = LoggerFactory.getLogger(Spans.class);
+
+    /** The span operations whose failure has been logged at WARN once: at most one entry per operation name. */
+    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
 
     private Spans() {
     }
@@ -146,6 +160,136 @@ public final class Spans {
         } catch (RuntimeException e) {
             log.warn("Tracer.Span.enrich failed; keeping the parent span: {}", e.getMessage());
             return base;
+        }
+    }
+
+    /**
+     * Sets an attribute, swallowing a failing span ({@linkplain Spans class documentation}).
+     *
+     * @param span
+     *            the span or its attribute view (must not be null)
+     * @param key
+     *            the attribute key (must not be null)
+     * @param value
+     *            the attribute value (must not be null)
+     */
+    public static void setAttributeSafely(SpanAttributes span, String key, String value) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.setAttribute(key, value);
+        } catch (RuntimeException e) {
+            failed("setAttribute", e);
+        }
+    }
+
+    /**
+     * Like {@link #setAttributeSafely}, but a failure is logged at DEBUG only, every time — for an attribute set on a
+     * hot path (a streaming call's first-chunk time) where even one WARN per process would be noise.
+     *
+     * @param span
+     *            the span or its attribute view (must not be null)
+     * @param key
+     *            the attribute key (must not be null)
+     * @param value
+     *            the attribute value (must not be null)
+     */
+    public static void setAttributeQuietly(SpanAttributes span, String key, String value) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.setAttribute(key, value);
+        } catch (RuntimeException e) {
+            log.debug("Setting span attribute '{}' failed: {}", key, e.getMessage());
+        }
+    }
+
+    /**
+     * Sets the span's outputs, swallowing a failing span ({@linkplain Spans class documentation}).
+     *
+     * @param span
+     *            the span (must not be null)
+     * @param outputs
+     *            the output snapshot (may be null)
+     */
+    public static void setOutputsSafely(Tracer.Span span, Object outputs) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.setOutputs(outputs);
+        } catch (RuntimeException e) {
+            failed("setOutputs", e);
+        }
+    }
+
+    /**
+     * Marks the span failed with a message, swallowing a failing span ({@linkplain Spans class documentation}).
+     *
+     * @param span
+     *            the span (must not be null)
+     * @param message
+     *            the error message (may be null)
+     */
+    public static void errorSafely(Tracer.Span span, String message) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.error(message);
+        } catch (RuntimeException e) {
+            failed("error", e);
+        }
+    }
+
+    /**
+     * Marks the span failed with a throwable, swallowing a failing span ({@linkplain Spans class documentation}).
+     *
+     * @param span
+     *            the span (must not be null)
+     * @param failure
+     *            what the work threw (must not be null)
+     */
+    public static void errorSafely(Tracer.Span span, Throwable failure) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.error(failure);
+        } catch (RuntimeException e) {
+            failed("error", e);
+        }
+    }
+
+    /**
+     * Marks the span interrupted, swallowing a failing span ({@linkplain Spans class documentation}).
+     *
+     * @param span
+     *            the span (must not be null)
+     */
+    public static void interruptedSafely(Tracer.Span span) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.interrupted();
+        } catch (RuntimeException e) {
+            failed("interrupted", e);
+        }
+    }
+
+    /**
+     * Closes the span, swallowing a failing span ({@linkplain Spans class documentation}) — so a {@code finally} that
+     * closes it cannot replace the exception the work itself threw.
+     *
+     * @param span
+     *            the span (must not be null)
+     */
+    public static void closeSafely(Tracer.Span span) {
+        Objects.requireNonNull(span, "span cannot be null");
+        try {
+            span.close();
+        } catch (RuntimeException e) {
+            failed("close", e);
+        }
+    }
+
+    private static void failed(String operation, RuntimeException e) {
+        if (WARNED.add(operation)) {
+            log.warn("Tracer.Span.{} failed: {} (further failures of this operation are logged at DEBUG)", operation,
+                    e.getMessage());
+        } else {
+            log.debug("Tracer.Span.{} failed: {}", operation, e.getMessage());
         }
     }
 

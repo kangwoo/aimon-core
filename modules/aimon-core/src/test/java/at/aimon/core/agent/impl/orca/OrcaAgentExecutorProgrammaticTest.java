@@ -54,6 +54,7 @@ import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.PostToolHook;
+import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
@@ -280,6 +281,25 @@ class OrcaAgentExecutorProgrammaticTest {
         llm.enqueue(LlmResponse.text("turn 4 done"));
         run(executor(null), runtime, "s-flip");
         assertThat(resultContent("tu-3")).startsWith(NOTICE + "JavaScript (was Python)\n");
+    }
+
+    @Test
+    @DisplayName("a fresh session whose first ExecuteCode call a PreTool hook denies, then a direct tool: no notice"
+            + " (the refused call ran no program)")
+    void refusedCallDeliversNoNotice() {
+        hooks.register(HookEventType.PRE_TOOL,
+                (PreToolHook) context -> ExecuteCodeTool.TOOL_NAME.equals(context.getCurrentToolUse().getName())
+                        ? HookResult.deny("not today")
+                        : HookResult.allow());
+        final OrcaAgentExecutor executor = executor(null);
+        final OrcaAgentRuntime runtime = runtime(settings(), new Engine(CodeExecutionEngine.JAVASCRIPT, false));
+        llm.enqueue(executeCode("tu-1"));
+        llm.enqueue(LlmResponse.of("", List.of(echo("tu-2")), null));
+        llm.enqueue(LlmResponse.text("done"));
+        run(executor, runtime, "s-refused");
+
+        assertThat(resultContent("tu-1")).doesNotContain("[ExecuteCode (");
+        assertThat(resultContent("tu-2")).doesNotContain(NOTICE);
     }
 
     @Test

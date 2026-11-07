@@ -42,10 +42,9 @@ public interface ToolCallDispatcher {
 
     /**
      * Returns a dispatcher that can only do less than this one: every tool in {@code registry} must be a tool of this
-     * dispatcher's registry, and the allow-list becomes the intersection of this dispatcher's and
-     * {@code allowedTools} ({@code AllowedTools.intersect}). An empty allow-list on this dispatcher means unrestricted
-     * for the allow-list, but never for the registry: a registry holding a tool this one does not is refused either
-     * way.
+     * dispatcher's registry, and the allow-list becomes the intersection of this dispatcher's and {@code allowedTools}
+     * ({@code AllowedTools.intersect}). An empty allow-list on this dispatcher means unrestricted for the allow-list,
+     * but never for the registry: a registry holding a tool this one does not is refused either way.
      *
      * <p>
      * Its programmatic settings — published to every call as {@code ToolContextKeys.CALLER_PROGRAMMATIC}, and so the

@@ -2,6 +2,7 @@ package at.aimon.core.tools.code.shell;
 
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentIsolation;
@@ -33,10 +34,20 @@ final class SandboxedLocalEnvironment implements ExecutionEnvironment {
     }
 
     SandboxedLocalEnvironment(Path root, VirtualShell shell) {
+        this(root, shell, UnaryOperator.identity());
+    }
+
+    /** With the runtime file system wrapped, e.g. to add latency to its writes. */
+    SandboxedLocalEnvironment(Path root, UnaryOperator<RuntimeFileSystem> wrapRuntimeFiles) {
+        this(root, new LocalShell(root), wrapRuntimeFiles);
+    }
+
+    private SandboxedLocalEnvironment(Path root, VirtualShell shell,
+            UnaryOperator<RuntimeFileSystem> wrapRuntimeFiles) {
         this.root = root;
         this.shell = shell;
         this.fileSystem = new LocalFileSystem(new LocalFileSystemConfig(root.toString()));
-        this.runtimeFileSystem = new LocalRuntimeFileSystem(root);
+        this.runtimeFileSystem = wrapRuntimeFiles.apply(new LocalRuntimeFileSystem(root));
         this.descriptor = EnvironmentDescriptor.builder().workingDirectory(root.toString())
                 .isolation(EnvironmentIsolation.SANDBOXED).runtime(EnvironmentDescriptor.RUNTIME_PYTHON3)
                 .shellName("bash").build();

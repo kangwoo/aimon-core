@@ -245,8 +245,8 @@ public final class ExecutionOptions {
      * <p>
      * <b>Branches are views.</b> An environment that declares its lineage through
      * {@code ExecutionEnvironment.isolatedFrom()} is a view of its base environment, not an environment with a root of
-     * its own, and core runs isolated commands on that base environment's shell. A provider whose
-     * {@code isolate(...)} returns a genuinely separate environment must not declare lineage that way.
+     * its own, and core runs isolated commands on that base environment's shell. A provider whose {@code isolate(...)}
+     * returns a genuinely separate environment must not declare lineage that way.
      *
      * @return {@code true} for a command that must not see or leave per-session state
      */

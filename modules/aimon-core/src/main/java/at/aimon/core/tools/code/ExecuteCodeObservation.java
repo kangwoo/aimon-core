@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.programmatic.CodeExecutionOutcome;
@@ -27,6 +28,12 @@ final class ExecuteCodeObservation {
 
     /** The most hook-feedback entries an observation carries. */
     static final int MAX_HOOK_FEEDBACK = 20;
+
+    /** The longest source line a syntax-error excerpt shows ({@link #errorLine}); longer is minified code. */
+    static final int MAX_EXCERPT_SOURCE_CHARS = 200;
+
+    /** A caret line: carets, tildes and spaces, starting with a caret after any indentation. */
+    private static final Pattern CARET_LINE = Pattern.compile("^\\s*\\^[\\^~\\s]*$");
 
     private ExecuteCodeObservation() {
         throw new AssertionError("This class should not be instantiated");
@@ -67,7 +74,7 @@ final class ExecuteCodeObservation {
             CodeExecutionLimits limits) {
         final int maxLogChars = limits.getMaxLogChars();
         final StringBuilder out = new StringBuilder("ExecuteCode ").append(describe(outcome.getStatus()));
-        outcome.getErrorMessage().map(ExecuteCodeObservation::lastLine)
+        outcome.getErrorMessage().map(ExecuteCodeObservation::errorLine)
                 .ifPresent(message -> out.append(": ").append(message));
         if (outcome.getStatus() == CodeExecutionStatus.TIMED_OUT
                 || outcome.getStatus() == CodeExecutionStatus.LIMIT_EXCEEDED) {
@@ -161,9 +168,33 @@ final class ExecuteCodeObservation {
         return text.length() <= max ? text : "…" + text.substring(text.length() - max);
     }
 
-    private static String lastLine(String message) {
-        final String trimmed = message.strip();
-        final int newline = trimmed.lastIndexOf('\n');
-        return newline < 0 ? trimmed : trimmed.substring(newline + 1);
+    /**
+     * The part of an engine's error message the observation shows. Normally its last line: an engine may put long or
+     * multi-part text in the message (a host exception's), and the last line is the error itself. A message whose last
+     * line is a caret line — a syntax error as GraalJS reports it: the message line, the source line, the caret — would
+     * show only {@code ^} that way, so its first line is the header instead, followed by the source line and the caret
+     * as an excerpt, each indented by two spaces so the caret stays under the column it points at. A source line longer
+     * than {@link #MAX_EXCERPT_SOURCE_CHARS} (minified code) gets the header alone, rather than a caret nobody can
+     * align. The rule is engine-neutral: it reads the message's shape, not which engine wrote it.
+     */
+    static String errorLine(String message) {
+        final String[] lines = message.strip().split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            lines[i] = stripCarriageReturn(lines[i]);
+        }
+        final String last = lines[lines.length - 1];
+        if (lines.length < 3 || !CARET_LINE.matcher(last).matches()) {
+            return last.strip();
+        }
+        final String header = lines[0].strip();
+        final String source = lines[lines.length - 2];
+        if (source.length() > MAX_EXCERPT_SOURCE_CHARS) {
+            return header;
+        }
+        return header + "\n  " + source + "\n  " + last;
+    }
+
+    private static String stripCarriageReturn(String line) {
+        return line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
     }
 }

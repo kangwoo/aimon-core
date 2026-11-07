@@ -272,6 +272,31 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("TC-22 — the main loop binds the executor's payload policy beside the tracer in a tool's context")
+    void payloadPolicyBoundBesideTheTracer() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Probe", Map.of())), TokenUsage.of(5, 3, 8)));
+        stub.enqueue(LlmResponse.text("done"));
+        final CapturingTool probe = new CapturingTool("Probe");
+        final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        toolRegistry.register(probe);
+        final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
+        executor.tracer = tracer;
+        final TracePayloadPolicy policy = TracePayloadPolicy.full(77);
+        executor.tracePayloadPolicy = policy;
+
+        executor.execute(createContext(toolRegistry),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-policy")).build());
+
+        assertThat(probe.contexts).singleElement().satisfies(context -> {
+            assertThat(context.get(ToolContextKeys.TRACER)).contains(tracer);
+            assertThat(context.get(ToolContextKeys.TRACE_PAYLOAD_POLICY)).contains(policy);
+        });
+    }
+
+    @Test
     @DisplayName("TRACE-02 — a FULL payload policy captures the system prompt in the TURN span")
     void fullPolicyCapturesSystemPrompt() {
         final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
@@ -1007,6 +1032,7 @@ class OrcaAgentExecutorTracingTest {
     /** A CONCURRENT_SAFE tool recording the LLM call metadata its ToolContext carried. */
     private static final class CapturingTool extends AbstractTool {
         private final List<LlmCallMetadata> received = new CopyOnWriteArrayList<>();
+        private final List<ToolContext> contexts = new CopyOnWriteArrayList<>();
 
         CapturingTool(String name) {
             super(name, "capturing tool", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
@@ -1020,6 +1046,7 @@ class OrcaAgentExecutorTracingTest {
         @Override
         public ToolResult execute(ToolInput input, ToolContext context) {
             context.get(ToolContextKeys.LLM_CALL_METADATA_KEY).ifPresent(received::add);
+            contexts.add(context);
             return ToolResult.success("ok");
         }
     }

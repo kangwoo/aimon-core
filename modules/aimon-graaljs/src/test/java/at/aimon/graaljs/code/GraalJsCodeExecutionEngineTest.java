@@ -208,4 +208,18 @@ class GraalJsCodeExecutionEngineTest {
                 """);
         assertThat(outcome.getStdout()).contains("Echo\n").contains("read-only").contains("undefined");
     }
+
+    @Test
+    @DisplayName("a syntax error's message is the message line, the source line and a caret line (the shape the core's"
+            + " observation relies on, TC-28)")
+    void syntaxErrorMessageShape() {
+        final CodeExecutionOutcome outcome = run("const x = 1 +;\n");
+        assertThat(outcome.getStatus()).isEqualTo(CodeExecutionStatus.SCRIPT_ERROR);
+        assertThat(outcome.getErrorMessage()).hasValueSatisfying(message -> {
+            final String[] lines = message.strip().split("\n");
+            assertThat(lines.length).as(message).isGreaterThanOrEqualTo(3);
+            assertThat(lines[0]).contains("SyntaxError");
+            assertThat(lines[lines.length - 1]).as(message).matches("^\\s*\\^[\\^~\\s]*$");
+        });
+    }
 }

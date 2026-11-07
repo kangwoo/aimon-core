@@ -41,6 +41,7 @@ import at.aimon.core.programmatic.ToolGrade;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tracing.Spans;
 
 /**
  * {@code ExecuteCode} — runs a program the model wrote, whose function calls are tool calls
@@ -327,8 +328,9 @@ public final class ExecuteCodeTool extends AbstractTool {
      */
     private static void annotateSpan(ToolContext context, CodeExecutionEngine engine, ExecuteCodePlan plan) {
         ToolSpans.currentSpan(context).ifPresent(span -> {
-            span.setAttribute(CodeSpanAttributes.LANGUAGE, engine.language());
-            plan.toolScope().ifPresent(scope -> span.setAttribute(CodeSpanAttributes.TOOL_SCOPE, scope.wireName()));
+            Spans.setAttributeSafely(span, CodeSpanAttributes.LANGUAGE, engine.language());
+            plan.toolScope().ifPresent(
+                    scope -> Spans.setAttributeSafely(span, CodeSpanAttributes.TOOL_SCOPE, scope.wireName()));
         });
     }
 

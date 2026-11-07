@@ -191,6 +191,23 @@ class ShellRuntimeSweepTest {
         assertThat(precious).exists();
     }
 
+    @Test
+    @DisplayName("a program stopped at the output limit gets DONE at once: _watch does not wait for a slow sweep")
+    void outputLimitDoesNotJoinTheSweep() throws Exception {
+        Files.createDirectories(ptc.resolve("own"));
+        final Duration took = timeRuntime(ptc.resolve("own").toString(),
+                "import time\nprint('x' * 2000, flush=True)\ntime.sleep(10)\n", 1000);
+        assertThat(took).isLessThan(Duration.ofMillis(1500));
+    }
+
+    @Test
+    @DisplayName("a program that completes still waits for the sweep, at most the join bound")
+    void completionJoinsTheSweep() throws Exception {
+        Files.createDirectories(ptc.resolve("own"));
+        final Duration took = timeRuntime(ptc.resolve("own").toString(), "pass\n", 1000);
+        assertThat(took).isBetween(Duration.ofSeconds(2), Duration.ofMillis(3000));
+    }
+
     private CodeExecutionOutcome run(CodeExecutionLimits limits) {
         return run("pass\n", limits);
     }
@@ -226,6 +243,30 @@ class ShellRuntimeSweepTest {
         assertThat(process.exitValue()).isZero();
         assertThat(trace).as("the sweep wrote its trace before DONE").exists();
         return Files.readString(trace).strip();
+    }
+
+    /**
+     * Runs the runtime with a hand-written run directory whose sweep first sleeps 5 s
+     * ({@code sweep_test_delay_seconds}, a test seam like {@code sweep_trace}), and returns how long the process took
+     * to end — which is when it sent {@code DONE}, give or take the interpreter's start.
+     */
+    private Duration timeRuntime(String replyDirectory, String program, int maxOutputBytes) throws Exception {
+        final Path run = Files.createDirectories(root.resolve("run-" + UUID.randomUUID()));
+        try (InputStream in = ShellCodeExecutionEngine.class.getResourceAsStream("aimon_ptc.py")) {
+            Files.write(run.resolve("aimon_ptc.py"), in.readAllBytes());
+        }
+        Files.writeString(run.resolve("main.py"), program);
+        Files.writeString(run.resolve("config.json"), "{\"tools\":[],\"max_output_bytes\":" + maxOutputBytes + ","
+                + "\"max_reply_bytes\":1000,\"max_log_chars\":100,\"wall_clock_seconds\":20,\"sweep_age_seconds\":1200,"
+                + "\"sweep_test_delay_seconds\":5}");
+        Files.writeString(run.resolve("key"), HexFormat.of().formatHex(new byte[16]));
+        Files.writeString(run.resolve("reply_dir"), replyDirectory);
+        final long start = System.nanoTime();
+        final Process process = new ProcessBuilder("python3", "-I", "-u", run.resolve("aimon_ptc.py").toString())
+                .directory(root.toFile()).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        assertThat(process.waitFor(30, TimeUnit.SECONDS)).isTrue();
+        return Duration.ofNanos(System.nanoTime() - start);
     }
 
     private static Path backdated(Path path, Duration age) throws IOException {

@@ -33,10 +33,24 @@ import org.junit.jupiter.api.Test;
  * <h2>The orphan</h2>
  *
  * <p>
- * A javadoc or block-comment continuation line ({@code * text}) is an orphan when its text has at most two tokens, does
- * not start a tag, an HTML element, {@code {@code}, a list dash or a table bar, the next line continues the same
- * paragraph, and the orphan's length plus a space plus the next line's first token fits in 120 columns — a reflow would
- * have joined them. That last condition is the formatter's signature; it lets a long single token on its own line pass.
+ * A javadoc or block-comment continuation line ({@code * text}) is a candidate when it does not start a tag, an HTML
+ * element, {@code {@code}, a list dash or a table bar, and the next line continues the same paragraph. It is an orphan
+ * when its length plus a space plus the next line's first unbreakable unit ({@link #unit}: an inline tag such as
+ * {@code {@link Foo}} with the punctuation glued to it, or else the first token) fits in 120 columns — a reflow would
+ * have joined them; that condition is the formatter's signature, and it lets a long single token on its own line pass
+ * — and, in addition, either
+ *
+<ul>
+ *
+<li><b>form A</b>: its text has at most two tokens — the last word or two of a line broken by force; or
+ *
+<li><b>form B</b>: it is at most {@link #FORM_B_MAX_LINE} columns wide, and the line before it is in the same
+ * paragraph and was broken by force — that line plus a space plus this line's first unit is over 120. This is the
+ * formatter's other artefact: the medium-length remainder of a line written more than a word or two over 120, which
+ * the next line could have filled. Hand-wrapped prose, broken by the author at 110–116 columns, fails the
+ * forced-break condition.
+ *
+</ul>
  * In the design documents, a prose line of at most two tokens, or at most 60 display columns wide, between two prose
  * lines, the previous one at least 100 columns wide (Hangul counted as two), is the same artefact: the second form is
  * {@code programmatic-tool-calling-shell.md}'s stranded {@code 모델}, which ended a short line rather than standing
@@ -47,14 +61,22 @@ import org.junit.jupiter.api.Test;
  *
  *
 <p>
- * The sources of {@code aimon-graaljs}, {@code aimon-code-engine-testkit}, {@code aimon-cli} and the docs are not inputs of this module's
- * {@code test} task, for the reason {@code ReleaseGateMatchesCiGateTest} gives: declaring them would re-run core's
- * tests after any edit there. After an edit only in those trees the task can be {@code UP-TO-DATE} locally;
- * {@code --rerun} or CI, which always runs from clean, catches it.
+ * The sources of {@code aimon-graaljs}, {@code aimon-code-engine-testkit}, {@code aimon-cli} and the docs are not
+ * inputs of this module's {@code test} task, for the reason {@code ReleaseGateMatchesCiGateTest} gives: declaring them
+ * would re-run core's tests after any edit there. After an edit only in those trees the task can be
+ * {@code UP-TO-DATE} locally; {@code --rerun} or CI, which always runs from clean, catches it.
  */
 class CommentReflowTest {
 
     private static final int LINE_LENGTH = 120;
+    /**
+     * The widest line form B flags: at least 20 columns spare. Calibrated with a throwaway scan of every
+     * {@code modules/*}{@code /src/*}{@code /java} at {@code 318805f5} (ptc-leftovers-core §1.10): form A alone found
+     * 546
+     * lines; form B without this bound and the forced-break condition 2 374, mostly hand-wrapped prose at 110–116
+     * columns; with both, 212, which sampled as genuine artefacts.
+     */
+    private static final int FORM_B_MAX_LINE = 100;
     private static final int MARKDOWN_WIDE_LINE = 100;
     private static final int MARKDOWN_SHORT_LINE = 60;
 
@@ -89,7 +111,8 @@ class CommentReflowTest {
      */
     private static final List<String> MARKDOWN = List.of("docs/design/tool/programmatic-tool-calling",
             "docs/design/tool/programmatic-tool-calling-shell", "docs/design/tool/ptc-qc4-and-nonblocking-fixes",
-            "docs/design/tool/tool-call-dispatcher", "docs/design/tool/ptc-features-core");
+            "docs/design/tool/tool-call-dispatcher", "docs/design/tool/ptc-features-core",
+            "docs/design/tool/ptc-leftovers-core");
 
     /** Accepted orphans, keyed by {@code <path>:<trimmed line text>}, each with its reason. */
     private static final Map<String, String> ALLOWED = Map.of();
@@ -102,7 +125,8 @@ class CommentReflowTest {
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
     @Test
-    @DisplayName("no PTC comment line is one or two words a reflow would have joined to the next line")
+    @DisplayName("no PTC comment line is stranded by a wrap: a word or two, or a forced remainder, a reflow would have"
+            + " joined to the next line")
     void noOrphansInJava() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
         final List<String> orphans = new ArrayList<>();
@@ -142,7 +166,8 @@ class CommentReflowTest {
     }
 
     @Test
-    @DisplayName("the orphan predicate: a stranded word is found; a long token, a paragraph break and a list are not")
+    @DisplayName("the orphan predicate: a stranded word or a forced remainder is found; a long token, hand-wrapped"
+            + " prose, a paragraph break and a list are not")
     void predicate() {
         assertThat(javaOrphans(List.of("    /**",
                 "     * Returns the thing, or the other thing when there is none, and"
@@ -158,6 +183,33 @@ class CommentReflowTest {
         // Inside <pre> nothing is prose.
         assertThat(javaOrphans(List.of("     * <pre>", "     * a b", "     * more code", "     * </pre>"))).isEmpty();
 
+        // Form B: the medium-length remainder of a line broken by force, which the next line could have filled — the
+        // ToolCallDispatcher shape.
+        final String forced = " * The dispatcher runs one call through the same pipeline the loop uses; what it may"
+                + " call is fixed by the binding and";
+        assertThat(forced.length()).isEqualTo(117);
+        assertThat(javaOrphans(
+                List.of(forced, " * what varies per call is an", " * argument, which the caller passes in.")))
+                .containsExactly(1);
+        // A hand-wrapped paragraph at about 110 columns: the line before was not broken by force.
+        final String hand = " * This paragraph was wrapped by its author, a little short of the limit, which is how"
+                + " people write their prose";
+        assertThat(hand.length()).isBetween(100, 112);
+        assertThat(javaOrphans(List.of(hand, " * by hand and nothing a formatter did to",
+                " * it, so nothing is stranded here at all."))).isEmpty();
+        // A {@link ...} unit that does not fit after the line is not joinable, although its first token would be.
+        final String sixtyNine = " * " + "word ".repeat(13) + "x";
+        assertThat(javaOrphans(List.of(forced, sixtyNine + " y z",
+                " * {@link at.aimon.core.agent.tool.ToolCallDispatcher#dispatch(ToolUse, ToolCallOrigin, ToolContext)}"
+                        + " rest")))
+                .isEmpty();
+        // A forced break followed by a full line: the full line cannot take the next unit.
+        final String full = " * " + "y".repeat(10) + " " + "word ".repeat(19) + "end";
+        assertThat(full.length()).isGreaterThan(110);
+        assertThat(javaOrphans(List.of(forced, full, " * nextword continues."))).isEmpty();
+        assertThat(unit("({@link Foo#bar(int, long)}), then")).isEqualTo("({@link Foo#bar(int, long)}),");
+        assertThat(unit("plain words")).isEqualTo("plain");
+
         final String wide = "가나다 ".repeat(15) + "and a few more words";
         assertThat(markdownOrphans(List.of(wide, "모델", "코드는 그 뒤에 이어진다."))).containsExactly(1);
         assertThat(markdownOrphans(List.of("short line", "모델", "코드는 그 뒤에 이어진다."))).isEmpty();
@@ -167,13 +219,16 @@ class CommentReflowTest {
         assertThat(markdownOrphans(List.of("```", wide, "a b", "c", "```"))).isEmpty();
     }
 
-    /** The indexes of orphan lines in a Java source. */
+    /** The indexes of orphan lines in a Java source (forms A and B, class documentation). */
     static List<Integer> javaOrphans(List<String> lines) {
         final List<Integer> orphans = new ArrayList<>();
         boolean pre = false;
+        // The text of line i - 1 when it is a prose line of the same comment, else null.
+        String previous = null;
         for (int i = 0; i < lines.size(); i++) {
             final Matcher line = CONTINUATION.matcher(lines.get(i));
             if (!line.matches()) {
+                previous = null;
                 continue;
             }
             final String text = line.group(1).strip();
@@ -182,10 +237,13 @@ class CommentReflowTest {
             }
             if (text.contains("</pre>")) {
                 pre = false;
+                previous = null;
                 continue;
             }
-            if (pre || text.isEmpty() || tokens(text).length > 2 || text.startsWith("{@code") || text.startsWith("-")
-                    || text.startsWith("|") || text.startsWith("<") || text.startsWith("@") || i + 1 >= lines.size()) {
+            final String before = previous;
+            previous = pre || text.isEmpty() ? null : text;
+            if (pre || text.isEmpty() || text.startsWith("{@code") || text.startsWith("-") || text.startsWith("|")
+                    || text.startsWith("<") || text.startsWith("@") || i + 1 >= lines.size()) {
                 continue;
             }
             final Matcher next = CONTINUATION.matcher(lines.get(i + 1));
@@ -196,11 +254,52 @@ class CommentReflowTest {
             if (nextText.isEmpty() || BLOCK_START.matcher(nextText).find() || nextText.startsWith("*/")) {
                 continue;
             }
-            if (lines.get(i).length() + 1 + tokens(nextText)[0].length() <= LINE_LENGTH) {
+            if (lines.get(i).length() + 1 + unit(nextText).length() > LINE_LENGTH) {
+                continue;
+            }
+            final boolean formA = tokens(text).length <= 2;
+            final boolean formB = lines.get(i).length() <= FORM_B_MAX_LINE && before != null
+                    && !BLOCK_START.matcher(text).find()
+                    && lines.get(i - 1).length() + 1 + unit(text).length() > LINE_LENGTH;
+            if (formA || formB) {
                 orphans.add(i);
             }
         }
         return orphans;
+    }
+
+    /**
+     * The first unbreakable unit of a comment line's text: an inline tag ({@code {@link Foo}}, {@code {@code a b}}),
+     * with any punctuation in front of it ({@code (}) and the non-space characters after it glued on, or else the first
+     * whitespace token. Splitting {@code {@link Foo}} at its space would report lines a reflow could not have joined.
+     */
+    static String unit(String text) {
+        final String stripped = text.strip();
+        int start = 0;
+        while (start < stripped.length() && "([\"'".indexOf(stripped.charAt(start)) >= 0) {
+            start++;
+        }
+        if (!stripped.startsWith("{@", start)) {
+            return tokens(stripped)[0];
+        }
+        int depth = 0;
+        int end = start;
+        for (; end < stripped.length(); end++) {
+            final char c = stripped.charAt(end);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                break;
+            }
+        }
+        if (end >= stripped.length()) {
+            return stripped;
+        }
+        end++;
+        while (end < stripped.length() && !Character.isWhitespace(stripped.charAt(end))) {
+            end++;
+        }
+        return stripped.substring(0, end);
     }
 
     /** The indexes of orphan prose lines in a Markdown document. */

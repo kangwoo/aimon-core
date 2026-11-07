@@ -674,7 +674,9 @@ public class RoutineExecutor {
         putExecutionEnvironment(builder, task, executionId, attributes);
         trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata)
                 // and the tracer beside it, so a step tool that makes calls of its own (ExecuteCode) traces them
-                .put(ToolContextKeys.TRACER, trace.tracer));
+                .put(ToolContextKeys.TRACER, trace.tracer)
+                // and the run's payload policy, so those nested spans record what the step spans record
+                .put(ToolContextKeys.TRACE_PAYLOAD_POLICY, trace.policy));
         return builder.build();
     }
 

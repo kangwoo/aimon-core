@@ -28,9 +28,9 @@ import java.util.regex.Pattern;
  * A shell never inlines a secret file into the command line or any other process argument, however small it is — it
  * transfers it the way it would transfer a file too large to inline (an upload, a write by the host), and deletes any
  * upload source as soon as the file is placed. An argument stays readable through {@code /proc/<pid>/cmdline} by every
- * process of the machine for as long as the process runs
- * ({@code docs/design/tool/programmatic-tool-calling-shell.md} decision 4). A shell that never inlines anything (the
- * local shell writes every file itself) keeps the mark without doing anything for it.
+ * process of the machine for as long as the process runs ({@code docs/design/tool/programmatic-tool-calling-shell.md}
+ * decision 4). A shell that never inlines anything (the local shell writes every file itself) keeps the mark without
+ * doing anything for it.
  */
 public final class RunDirectory {
 

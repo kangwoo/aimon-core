@@ -50,7 +50,7 @@ public final class ToolContextKey<T> {
      */
     private static final Set<String> BUILT_IN_WRITE_ONCE_NAMES = Set.of("executionEnvironment",
             "executionEnvironmentProvider", "hookRegistry", "quotaGuard", "executionDeadline", "contextEngine",
-            "toolCallDispatcher", "toolOfferContext", "toolCallQuota", "tracer");
+            "toolCallDispatcher", "toolOfferContext", "toolCallQuota", "tracer", "tracePayloadPolicy");
 
     private static final Set<String> WRITE_ONCE_NAMES = ConcurrentHashMap.newKeySet();
 

@@ -41,6 +41,8 @@ import hmac
 import inspect
 import json
 import keyword
+import linecache
+import logging
 import os
 import shutil
 import signal
@@ -50,6 +52,7 @@ import tempfile
 import threading
 import time
 import traceback
+import warnings
 
 RUN_DIR = os.path.dirname(os.path.abspath(__file__))
 MAX_LINE_BYTES = 65536
@@ -58,6 +61,13 @@ MAX_ERROR_CHARS = 4000
 POLL_DELAYS = (0.005, 0.005, 0.01, 0.02, 0.04, 0.08)
 POLL_MAX = 0.1
 SWEEP_JOIN_SECONDS = 2.0
+PROGRAM_FILE = "<program>"
+# The file name the runtime's own coroutines report (call_tool, a tool function): a task's repr in an asyncio log
+# ("coro=<Read() done, defined at ...>") would otherwise name this file's host path.
+RUNTIME_FILE = "<runtime>"
+MAX_EXCEPTION_CHAIN = 5
+_CAUSE = "\nThe above exception was the direct cause of the following exception:\n\n"
+_CONTEXT = "\nDuring handling of the above exception, another exception occurred:\n\n"
 
 
 class ToolError(Exception):
@@ -153,14 +163,21 @@ def _read_tail(path, chars):
     return data[skip:].decode("utf-8", "replace")[-chars:]
 
 
-def _finish(status, error=None):
+def _finish(status, error=None, join_sweep=True):
     """Sends the captured output, the log tail and DONE, once. Returns whether this call was the one.
 
     First it waits, at most SWEEP_JOIN_SECONDS, for the sweep: os._exit after DONE would otherwise cut it off before it
     ran for a short program (§8). The callers are the main thread, _watch and _violation on the program's thread; the
-    sweep thread never takes _finish_lock and never calls this, so the join cannot deadlock on any of them."""
+    sweep thread never takes _finish_lock and never calls this, so the join cannot deadlock on any of them.
+
+    Two callers pass join_sweep=False: _watch on the output limit and _violation. On those paths the program is still
+    running while _finish waits, and can keep writing or be pushed past its wall clock into a kill, so stopping it now
+    matters more than the sweep. A sweep cut off there is continued by the next run (§8). The main thread's paths —
+    completion, a script error, the watchdog error — keep the join: the program is over, and the join only delays DONE
+    for housekeeping."""
     sweep = _state.get("sweep")
-    if sweep is not None and not _finished.is_set() and sweep is not threading.current_thread():
+    if (join_sweep and sweep is not None and not _finished.is_set()
+            and sweep is not threading.current_thread()):
         sweep.join(SWEEP_JOIN_SECONDS)
     with _finish_lock:
         if _finished.is_set():
@@ -207,7 +224,7 @@ def _end_process(code):
 
 
 def _violation(message):
-    _finish("violation", message)
+    _finish("violation", message, join_sweep=False)
     _end_process(3)
 
 
@@ -221,7 +238,7 @@ def _watch():
         except OSError:
             continue
         if size > limit:
-            if _finish("output_limit", "the program wrote more than %d bytes of output" % limit):
+            if _finish("output_limit", "the program wrote more than %d bytes of output" % limit, join_sweep=False):
                 _end_process(4)
             return
 
@@ -305,19 +322,130 @@ def _tool_function(name):
 
     tool.__name__ = name
     tool.__qualname__ = name
+    tool.__code__ = tool.__code__.replace(co_filename=RUNTIME_FILE)
     return tool
 
 
+def _hide_runtime_file(function):
+    """Makes `function` report RUNTIME_FILE as its file, so a coroutine of it named in an asyncio log carries no host
+    path. Its frames are dropped from tracebacks anyway (_format_program_exception)."""
+    function.__code__ = function.__code__.replace(co_filename=RUNTIME_FILE)
+
+
 def _run_program(source, program_globals):
+    """Runs the program, with an event loop only when it needs one.
+
+    Compiled with top-level await allowed, the program evaluates to a coroutine only when it uses top-level await; that
+    coroutine is run with asyncio.run. A program without top-level await runs synchronously right here, outside any
+    loop, so its own asyncio.run(main()) or loop.run_until_complete(...) works. call_tool only sleeps on whatever loop
+    is current, so both shapes can call tools. A program that mixes top-level await with asyncio.run gets Python's own
+    error, as it would in plain Python."""
     flags = getattr(ast, "PyCF_ALLOW_TOP_LEVEL_AWAIT", 0)
-    code = compile(source, "<program>", "exec", flags=flags, dont_inherit=True)
+    code = compile(source, PROGRAM_FILE, "exec", flags=flags, dont_inherit=True)
+    result = eval(code, program_globals)
+    if inspect.iscoroutine(result):
+        asyncio.run(result)
 
-    async def runner():
-        result = eval(code, program_globals)
-        if inspect.iscoroutine(result):
-            await result
 
-    asyncio.run(runner())
+def _format_program_exception(exc):
+    """Formats `exc` as a traceback of the program's own frames only.
+
+    The model reads stderr as [logs], and the full traceback would show this runtime's frames, with the run directory's
+    host path, and the interpreter's stdlib frames, with its install path. Only frames of PROGRAM_FILE are kept; their
+    code lines come from linecache, where main registers the source. The chain (__cause__, or __context__ unless
+    suppressed) is followed, at most MAX_EXCEPTION_CHAIN deep, oldest first as Python prints it. An exception with no
+    program frame left — raised inside a tool function the program awaited — is printed as its exception line alone;
+    the program frame that awaited it is still in the newer exception's traceback or in this one's."""
+    chain = []
+    seen = set()
+    current, link = exc, None
+    while current is not None and id(current) not in seen and len(chain) < MAX_EXCEPTION_CHAIN:
+        seen.add(id(current))
+        chain.append((current, link))
+        if current.__cause__ is not None:
+            current, link = current.__cause__, _CAUSE
+        elif current.__context__ is not None and not current.__suppress_context__:
+            current, link = current.__context__, _CONTEXT
+        else:
+            current = None
+    parts = []
+    for index in range(len(chain) - 1, -1, -1):
+        exception, link = chain[index]
+        frames = [frame for frame in traceback.extract_tb(exception.__traceback__) if frame.filename == PROGRAM_FILE]
+        if frames:
+            parts.append("Traceback (most recent call last):\n")
+            parts.extend(traceback.StackSummary.from_list(frames).format())
+        parts.extend(traceback.format_exception_only(type(exception), exception))
+        if index > 0:
+            parts.append(link)
+    return "".join(parts)
+
+
+def _print_program_exception(exc):
+    try:
+        sys.stderr.write(_format_program_exception(exc))
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _thread_excepthook(args):
+    """threading.excepthook: a thread the program started died of an exception."""
+    if args.exc_type is SystemExit:
+        return
+    name = args.thread.name if args.thread is not None else "?"
+    try:
+        sys.stderr.write("Exception in thread %s:\n" % name)
+    except Exception:
+        pass
+    if args.exc_value is not None:
+        _print_program_exception(args.exc_value)
+
+
+def _unraisable_hook(unraisable):
+    """sys.unraisablehook: an exception Python could not raise ("Exception ignored in: ...", a failing __del__)."""
+    try:
+        message = unraisable.err_msg or "Exception ignored in"
+        if unraisable.object is not None:
+            sys.stderr.write("%s: %r\n" % (message, unraisable.object))
+        else:
+            sys.stderr.write("%s\n" % message)
+    except Exception:
+        pass
+    if unraisable.exc_value is not None:
+        _print_program_exception(unraisable.exc_value)
+
+
+def _show_warning(message, category, filename, lineno, file=None, line=None):
+    """warnings.showwarning: the category and message, and the location only when it is the program's.
+
+    A never-awaited tool call (Read({...}) without await) warns from wherever the coroutine was collected — a runtime
+    frame, or sys:1 — so no other location is printed."""
+    where = " (%s:%s)" % (PROGRAM_FILE, lineno) if filename == PROGRAM_FILE else ""
+    try:
+        (file or sys.stderr).write("%s: %s%s\n" % (category.__name__, message, where))
+    except Exception:
+        pass
+
+
+class _ProgramFormatter(logging.Formatter):
+    """Formats the asyncio logger's records ("Task exception was never retrieved") with program-only tracebacks."""
+
+    def formatException(self, ei):
+        return _format_program_exception(ei[1]).rstrip("\n")
+
+
+def _install_printers(source):
+    """Routes every printer of an uncaught exception through _format_program_exception (§11)."""
+    linecache.cache[PROGRAM_FILE] = (len(source), None, source.splitlines(True), PROGRAM_FILE)
+    threading.excepthook = _thread_excepthook
+    sys.unraisablehook = _unraisable_hook
+    warnings.showwarning = _show_warning
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_ProgramFormatter("%(message)s"))
+    asyncio_logger = logging.getLogger("asyncio")
+    asyncio_logger.addHandler(handler)
+    asyncio_logger.propagate = False
 
 
 def _redirect(fd, path):
@@ -475,7 +603,7 @@ def _trace(path, line):
         pass
 
 
-def _sweep(reply_dir, age, trace=None):
+def _sweep(reply_dir, age, trace=None, test_delay=None):
     """Removes entries of .aimon-ptc/ older than `age` seconds: runs that ended without cleaning up (§8). Housekeeping:
     every error is ignored.
 
@@ -483,7 +611,11 @@ def _sweep(reply_dir, age, trace=None):
     somewhere unrelated — under a local shell, the system temp directory — and must never be used here.
 
     `trace`, when given, names a file that gets one line: the guard that stopped the sweep (basename, symlink,
-    own-missing, error) or "swept N". Only tests set it; the engine's config.json never carries it."""
+    own-missing, error) or "swept N". Only tests set it; the engine's config.json never carries it. `test_delay`, the
+    same kind of seam, makes the sweep sleep that many seconds first, so a test can tell a joined sweep from one cut
+    off."""
+    if test_delay:
+        time.sleep(test_delay)
     reply_root = reply_dir.rstrip("/")
     sweep_root = os.path.dirname(reply_root)
     own = os.path.basename(reply_root)
@@ -532,7 +664,8 @@ def main():
     if config.get("sweep_age_seconds") is not None:
         # Joined (bounded) by _finish, so a run that ends by itself does not cut the sweep off.
         sweep = threading.Thread(target=_sweep, args=(_state["reply_dir"], float(config["sweep_age_seconds"]),
-                                                     config.get("sweep_trace")),
+                                                     config.get("sweep_trace"),
+                                                     config.get("sweep_test_delay_seconds")),
                                  name="aimon-ptc-sweep", daemon=True)
         _state["sweep"] = sweep
         sweep.start()
@@ -566,16 +699,21 @@ def main():
         shutil.rmtree(capture, ignore_errors=True)
         os._exit(0)
 
+    # The non-dunder keys are ToolApiRenderer.PYTHON_RESERVED on the host: a tool of one of these names is rendered
+    # as call_tool("name", args), since the global below wins over it. ToolApiRendererTest reads this literal.
     program_globals = {
         "__name__": "__main__",
         "__builtins__": __builtins__,
         "ToolError": ToolError,
         "call_tool": call_tool,
+        "asyncio": asyncio,
+        "json": json,
     }
     for name in config["tools"]:
         if name.isidentifier() and not keyword.iskeyword(name) and name not in program_globals:
             program_globals[name] = _tool_function(name)
 
+    _install_printers(source)
     status, error = "completed", None
     try:
         _run_program(source, program_globals)
@@ -585,12 +723,15 @@ def main():
         if e.code not in (None, 0):
             status, error = "error", "SystemExit: %s" % (e.code,)
     except BaseException as e:
-        traceback.print_exc()
+        _print_program_exception(e)
         status, error = "error", "%s: %s" % (type(e).__name__, e)
     _finish(status, error)
     shutil.rmtree(capture, ignore_errors=True)
     os._exit(0)
 
+
+_hide_runtime_file(call_tool)
+_hide_runtime_file(_await_reply)
 
 if __name__ == "__main__":
     main()

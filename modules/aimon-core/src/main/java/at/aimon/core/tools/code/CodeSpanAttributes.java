@@ -10,6 +10,7 @@ import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.ToolSpans;
 import at.aimon.core.tracing.SpanAttributes;
+import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.Tracer;
 
 /**
@@ -51,7 +52,7 @@ public final class CodeSpanAttributes {
         final String reason = Objects.requireNonNull(offer, "offer cannot be null").getUnavailableReasons()
                 .get(ExecuteCodeTool.TOOL_NAME);
         if (reason != null) {
-            iterationSpan.setAttribute(UNAVAILABLE_REASON, reason);
+            Spans.setAttributeSafely(iterationSpan, UNAVAILABLE_REASON, reason);
         }
     }
 
@@ -105,11 +106,11 @@ public final class CodeSpanAttributes {
             if (span == null) {
                 return null;
             }
-            span.setAttribute(PATH, ToolSpans.PATH_CODE);
-            span.setAttribute(PARENT_TOOL_USE_ID, parentToolUseId);
-            span.setAttribute(LANGUAGE, language);
+            Spans.setAttributeSafely(span, PATH, ToolSpans.PATH_CODE);
+            Spans.setAttributeSafely(span, PARENT_TOOL_USE_ID, parentToolUseId);
+            Spans.setAttributeSafely(span, LANGUAGE, language);
             parentContext.get(ToolContextKeys.ITERATION_COUNT)
-                    .ifPresent(iteration -> span.setAttribute("iteration", String.valueOf(iteration)));
+                    .ifPresent(iteration -> Spans.setAttributeSafely(span, "iteration", String.valueOf(iteration)));
             return span;
         }
 
@@ -135,10 +136,10 @@ public final class CodeSpanAttributes {
                 return;
             }
             try {
-                span.setAttribute(REFUSED, kind);
-                span.error(message);
+                Spans.setAttributeSafely(span, REFUSED, kind);
+                Spans.errorSafely(span, message);
             } finally {
-                span.close();
+                Spans.closeSafely(span);
             }
         }
     }

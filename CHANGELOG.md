@@ -7,28 +7,71 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: PTC leftovers — model-visible error text, the Python runtime's event loop, nested-span payloads
+
+`docs/design/tool/ptc-leftovers-core.md` (PR 1). **One breaking signature change** — `ExecuteCodeLanguageNotice` —
+listed first; the behaviour changes follow it.
+
+- **Breaking:** `ExecuteCodeLanguageNotice.check(List<Message>, Function<String, Optional<String>>, ToolDescriptor)` now
+  takes `Function<String, Optional<ToolUseResult>>`, and `loggedResults(...)` returns that type: the log lookup carries
+  the result's error flag as well as its content. Callers that passed `loggedResults(...)` through are unchanged.
+- **Fixed: a refused `ExecuteCode` call no longer triggers the conservative language notice.** An `ExecuteCode` result
+  that is an error without a summary line ran no program (an invalid parameter, a language not available here, a hook,
+  permission or approval denial, a schema refusal), so the notice skips it instead of counting it as unreadable. A fresh
+  session whose first `ExecuteCode` call was refused used to be told "earlier ExecuteCode programs … may be in another
+  language" once, although nothing had run.
+- **Changed (model-visible): a script error whose message ends with a caret line shows the message line.** A GraalJS
+  syntax error used to reach the model as `ExecuteCode script error:  ^`; it is now the message line
+  (`SyntaxError: <program>:1:14 Expected …`) followed by the source line and the caret, indented so the caret stays
+  aligned. A source line over 200 characters (minified code) gets the message line alone. Every other message keeps the
+  last-line rule. The rule lives in core, not in the engine (backlog TC-28).
+- **Changed (model-visible): the Python runtime prints only the program's own frames.** An uncaught exception, a
+  thread's, an asyncio "Task exception was never retrieved", an unraisable exception and a warning (a never-awaited tool
+  call) no longer show the runtime's frames, the run directory's host path or the interpreter's install path in
+  `[logs]`; the program's frames now show their code line (backlog TC-29).
+- **Changed: the Python runtime runs an event loop only for a program with top-level `await`.** A program without
+  top-level `await` runs synchronously, so its own `asyncio.run(main())` works; `asyncio` and `json` are pre-imported.
+  The `ExecuteCode` description (model-visible) now says "Use top-level await (a program without top-level await may run
+  its own asyncio.run(main()) instead). asyncio and json are already imported." instead of "never call asyncio.run()".
+  A tool named `asyncio`, `json`, `ToolError`, `call_tool`, a Python keyword or a dunder name is rendered as
+  `call_tool("name", args)`, since the runtime does not bind it as a function (`ToolApiRenderer.PYTHON_RESERVED`).
+- **Changed: with content capture on, an `ExecuteCode` program's nested `TOOL` spans carry the result content too.**
+  New write-once tool-context key `ToolContextKeys.TRACE_PAYLOAD_POLICY`, bound beside `TRACER` with the executor's
+  policy (main loop, slash commands, forks, routines); absent means summary only, as before (backlog TC-22).
+- **Changed: the shell engine's reply drain is 2 s** (was 5 s), measured (backlog TC-20), and its WARN names how many
+  writes were still in flight. A program stopped at the output limit or by a protocol violation no longer waits up to 2
+  s for the stale-run sweep before `DONE`.
+- **New API:** `Spans.setAttributeSafely`, `setAttributeQuietly`, `setOutputsSafely`, `errorSafely`, `interruptedSafely`
+  and `closeSafely` — fail-safe recording on an open span (a `RuntimeException` is logged, the first per operation at
+  WARN; an `Error` propagates). Every `ExecuteCode` span site and the loops' `TOOL` span recording use them, so a span
+  that throws can no longer fail a nested call or replace its exception; the loops' `ITERATION` and `TURN` span handling
+  is not changed here.
+- **Build only:** `CommentReflowTest` also flags the formatter's other artefact — the medium-length remainder of a line
+  broken by force (form B) — and reads `{@link …}` as one unit; the sites it found were rejoined. A grandchild-fork
+  test pins the programmatic ceiling across two fork levels. The `[Unreleased]` lines over 120 columns were rewrapped.
+
 ### Added: `ExecuteCode` in forks and slash skills; the CLI assembles the shell engine; a real-model E2E harness
 
-`docs/design/tool/ptc-features-core.md` Part B (PR 2). **One breaking SPI change** — `ToolCallDispatcher.narrow` — listed
-first.
+`docs/design/tool/ptc-features-core.md` Part B (PR 2). **One breaking SPI change** — `ToolCallDispatcher.narrow` —
+listed first.
 
 - **Breaking:** `ToolCallDispatcher.narrow(ToolRegistry, List<AllowedTool>)` is now
   `narrow(ToolRegistry, List<AllowedTool>, ProgrammaticToolSettings)`. The narrowed dispatcher publishes
-  `programmatic.narrowedBy(<its own settings>)` to every call as `ToolContextKeys.CALLER_PROGRAMMATIC`, the ceiling of any
-  fork the call spawns. A subagent started from inside a slash skill is therefore bounded by the skill's programmatic
-  settings, not by the agent's. Implementations add the parameter and must not return settings wider than their own.
-  Callers that do not mean to pass programmatic settings pass `ProgrammaticToolSettings.none()`.
+  `programmatic.narrowedBy(<its own settings>)` to every call as `ToolContextKeys.CALLER_PROGRAMMATIC`, the ceiling of
+  any fork the call spawns. A subagent started from inside a slash skill is therefore bounded by the skill's
+  programmatic settings, not by the agent's. Implementations add the parameter and must not return settings wider than
+  their own. Callers that do not mean to pass programmatic settings pass `ProgrammaticToolSettings.none()`.
   `DefaultToolCallDispatcher.Builder.programmatic(...)` is new and required (`build()` throws without it).
   `ToolCallDispatchers.ungated(manager, registry, programmatic)` is new; the two-argument `ungated` publishes `none()`.
 - **Forks and slash skills can offer `ExecuteCode`** (ptc §7.2, §21 B-DV1). Subagent definitions (frontmatter and
   `Subagent.Builder.programmatic`) and skill frontmatter take the same four keys as an agent — `programmatic-tools`,
-  `programmatic-only`, `programmatic-engine`, `shell-engine-tool-scope`. What a fork or skill uses is its own declaration
-  narrowed by its caller's effective settings (`ProgrammaticToolSettings.narrowedBy`): tools intersected, code-only tools
-  united, an explicit engine conflict is none, the narrower tool scope. A caller without programmatic tool calling is a
-  ceiling of nothing, so a fork under a non-PTC agent is never offered `ExecuteCode`; a misconfigured definition is warned
-  about once per subagent. A fork-mode skill uses its target subagent's declaration, narrowed by the skill's own keys when
-  it has any; an inline skill without keys is a ceiling of nothing for the forks it spawns. The fork loop's iteration span
-  now carries `ptc.unavailable_reason` too.
+  `programmatic-only`, `programmatic-engine`, `shell-engine-tool-scope`. What a fork or skill uses is its own
+  declaration narrowed by its caller's effective settings (`ProgrammaticToolSettings.narrowedBy`): tools intersected,
+  code-only tools united, an explicit engine conflict is none, the narrower tool scope. A caller without programmatic
+  tool calling is a ceiling of nothing, so a fork under a non-PTC agent is never offered `ExecuteCode`; a misconfigured
+  definition is warned about once per subagent. A fork-mode skill uses its target subagent's declaration, narrowed by
+  the skill's own keys when it has any; an inline skill without keys is a ceiling of nothing for the forks it spawns.
+  The fork loop's iteration span now carries `ptc.unavailable_reason` too.
 - **New API:** `ProgrammaticToolSettings.narrowedBy(...)` and `hasEngineConflict(...)`; `ProgrammaticFrontmatter`
   (the frontmatter reading the agent, subagent and skill parsers share; the agent parser's messages are unchanged);
   `SubagentMetadata.getProgrammatic()` / `Builder.programmatic(...)`, `Subagent.Builder.programmatic(...)`,
@@ -42,16 +85,16 @@ first.
   `JSON.parse`. Real models guessed `from functions import …` and `asyncio.run(...)` without it (ptc §21).
 - **`ExecuteCode`'s render payload gains `stdout`** (and `returnValue` when the program produced one) — what the program
   printed before the observation cut it. It is never sent to the model.
-- **CLI:** `programmatic.enablePython` (default `false`) assembles the Python shell engine beside the JavaScript one, and
-  `programmatic.shellEngineToolScope` (`environment` by default; a bad value fails the configuration load naming the key)
-  reaches the stack. On the CLI's local host the Python engine is inert — an agent asking for
+- **CLI:** `programmatic.enablePython` (default `false`) assembles the Python shell engine beside the JavaScript one,
+  and `programmatic.shellEngineToolScope` (`environment` by default; a bad value fails the configuration load naming the
+  key) reaches the stack. On the CLI's local host the Python engine is inert — an agent asking for
   `programmatic-engine: python` is told why it cannot run. The engine is CLI-owned and closed at shutdown and when the
   stack fails to build. `programmatic.limits` now apply whichever engines are assembled.
-- **Real-model E2E harness:** `OPENAI_KEY_FILE=<path> ./gradlew :aimon-cli:llmTest` (or `OPENAI_KEY` / `ANTHROPIC_KEY`)
-  runs an agent whose only way to two host tools is `ExecuteCode`, on the GraalJS engine and on the shell engine over a
-  local environment that declares itself sandboxed, and asserts that the model's program dispatched at least two nested
-  calls covering both tools in a single program and that only what it printed came back. Not part of `test`, `checkAll`, CI or the release gate; see
-  CONTRIBUTING.md, "Real-model ExecuteCode E2E".
+- **Real-model E2E harness:** `OPENAI_KEY_FILE=<path> ./gradlew :aimon-cli:llmTest` (or `OPENAI_KEY` / `ANTHROPIC_KEY`;
+  `ANTHROPIC_API_KEY` is accepted too) runs an agent whose only way to two host tools is `ExecuteCode`, on the GraalJS
+  engine and on the shell engine over a local environment that declares itself sandboxed, and asserts that the model's
+  program dispatched at least two nested calls covering both tools in a single program and that only what it printed
+  came back. Not part of `test`, `checkAll`, CI or the release gate; see CONTRIBUTING.md, "Real-model ExecuteCode E2E".
 
 ### Added: `ExecuteCode` tracing spans and the language-change notice; shell-engine and review follow-ups
 
@@ -71,8 +114,8 @@ listed below.
   (host ↔ sandboxed), the first tool result of the iteration starts with `[environment] ExecuteCode now runs Python
   (was JavaScript)`. The previous language is read from the conversation the iteration sends — no new session state —
   so it survives restarts and node moves; it is sent once.
-- **New API:** tool-context keys `ToolContextKeys.TRACER` (write-once; bound by the main loop, forks, slash commands
-  and routines beside metadata that names a span) and `ToolContextKeys.TOOL_SPAN`; `at.aimon.core.tracing.SpanAttributes`
+- **New API:** tool-context keys `ToolContextKeys.TRACER` (write-once; bound by the main loop, forks, slash commands and
+  routines beside metadata that names a span) and `ToolContextKeys.TOOL_SPAN`; `at.aimon.core.tracing.SpanAttributes`
   (`Tracer.Span` now extends it — binary compatible); `at.aimon.core.tools.ToolSpans`;
   `at.aimon.core.tools.code.CodeSpanAttributes`, `ExecuteCodeLanguageNotice`; `ToolDescriptor.getUnavailableReason()`
   and `getCodeLanguage()` with their builder methods; `ToolOfferContext.getUnavailableReasons()`.
@@ -91,14 +134,14 @@ listed below.
 
 `docs/design/tool/ptc-qc4-and-nonblocking-fixes.md`. No public API changes; two javadocs gained a sentence.
 
-- **A timed-out, cancelled or limit-stopped shell-engine run now ends its program and every child the program
-  started.** The runtime used to leave the shell's process group (`os.setpgid(0, 0)`), so a provider that ends a
-  command by killing its process group — `aimon-sandbox` does — never reached it, and `TIMED_OUT` / `CANCELLED` runs kept
-  spinning in the sandbox. The process the shell starts now forks: the parent (the anchor) stays in the shell's group
-  and holds no secret, the child (the runtime) leads a group of its own, and a watchdog process in that group kills it
-  when the anchor dies. A process, not a thread, so a program that holds the GIL in one long builtin cannot delay it.
-  A `CALL` line that arrives once the run is stopping (stopped, cancelled or out of wall clock) is still verified but
-  no longer runs a tool.
+- **A timed-out, cancelled or limit-stopped shell-engine run now ends its program and every child the program started.**
+  The runtime used to leave the shell's process group (`os.setpgid(0, 0)`), so a provider that ends a command by killing
+  its process group — `aimon-sandbox` does — never reached it, and `TIMED_OUT` / `CANCELLED` runs kept spinning in the
+  sandbox. The process the shell starts now forks: the parent (the anchor) stays in the shell's group and holds no
+  secret, the child (the runtime) leads a group of its own, and a watchdog process in that group kills it when the
+  anchor dies. A process, not a thread, so a program that holds the GIL in one long builtin cannot delay it. A `CALL`
+  line that arrives once the run is stopping (stopped, cancelled or out of wall clock) is still verified but no longer
+  runs a tool.
 - **Behaviour change:** when a program completes, background processes it started and did not wait for are killed
   with the runtime's process group. They used to survive `ExecuteCode`. Use `Bash` with `run_in_background` for a
   process that must outlive the call.
@@ -152,15 +195,16 @@ The `aimon-sandbox` half (piece D2) needs this release of core and is not part o
 - **`shell-engine-tool-scope`** (`environment` default / `host` / `unrestricted`) bounds by data reach the tools an
   agent opens to the shell engine: `ToolSpec.shellEngineToolScope(...)`, starter
   `aimon.programmatic.shell-engine-tool-scope`, and agent frontmatter `shell-engine-tool-scope`, which can only narrow
-  the application's value. `unrestricted` is warned at startup. New enum `at.aimon.core.agent.tool.ShellEngineToolScope`,
-  `ProgrammaticToolSettings.getShellEngineToolScope()`, and new `ExecuteCodeTool` / `ExecuteCodeToolProvider`
-  constructors that take it (the old ones keep `environment`).
+  the application's value. `unrestricted` is warned at startup. New enum
+  `at.aimon.core.agent.tool.ShellEngineToolScope`, `ProgrammaticToolSettings.getShellEngineToolScope()`, and new
+  `ExecuteCodeTool` / `ExecuteCodeToolProvider` constructors that take it (the old ones keep `environment`).
 - **Environment and shell SPI additions:** `at.aimon.core.environment.RuntimeFileSystem` (`writeNew` atomic and
-  create-only, `read` capped without following links, `delete`, `createDirectories`; the local implementation `at.aimon.core.environment.impl.LocalRuntimeFileSystem`)
-  and `ExecutionEnvironment.runtimeFileSystem()` (default empty — never handed to a model tool);
-  `EnvironmentDescriptor.runtimes()` with `RUNTIME_PYTHON3`; `RunDirectory.Builder.secretFile(...)`, `isSecret`,
-  `getSecretPaths` — a shell never inlines a secret file into a process argument; `ShellCommandResult.killCause()` /
-  `withKillCause(...)` with `ShellKillCause` (`LINE_LIMIT_EXCEEDED`, `OTHER`) for a command the shell ended itself.
+  create-only, `read` capped without following links, `delete`, `createDirectories`; the local implementation
+  `at.aimon.core.environment.impl.LocalRuntimeFileSystem`) and `ExecutionEnvironment.runtimeFileSystem()` (default empty
+  — never handed to a model tool); `EnvironmentDescriptor.runtimes()` with `RUNTIME_PYTHON3`;
+  `RunDirectory.Builder.secretFile(...)`, `isSecret`, `getSecretPaths` — a shell never inlines a secret file into a
+  process argument; `ShellCommandResult.killCause()` / `withKillCause(...)` with `ShellKillCause`
+  (`LINE_LIMIT_EXCEEDED`, `OTHER`) for a command the shell ended itself.
 - **Programmatic SPI additions:** `CodeExecutionEngine.isToolScopeBound()`, `ToolCallBridge.markUnattributed()`, and
   `OfferFacts` shell features, runtime-file-system presence and `isBashUnconstrained()`. `CodeOfferKeys` gained
   `SHELL_FEATURES`, `RUNTIME_FILE_SYSTEM`, `BASH_SETTINGS_UNCONSTRAINED` and a `putEnvironmentFacts` overload taking the
@@ -209,9 +253,9 @@ filters and aggregation stay in the program, and only its output becomes the obs
 - **Additive core API:** `EnvironmentDescriptor.isolation()` (`EnvironmentIsolation.HOST` / `SANDBOXED`, empty when
   undeclared; the local environment declares `HOST`), `AgentMetadata` / `AgentDefinition.getProgrammatic()`,
   `ToolOfferContext.programmatic(...)` / `eligible(...)` / `isCodeOnly(...)`, `ToolDescriptor.isOfferable()` /
-  `getApprovalVia()`. A direct call to a code-only tool is refused while `ExecuteCode` is offered and can call it; when it cannot be
-  offered, `programmatic-only` is ignored (and the reason is a WARN) so no tool disappears. An approval asked under another tool's key now
-  names the path, e.g. `'Bash' — via ExecuteCode (Python), 'ExecuteCode(code=…)'`.
+  `getApprovalVia()`. A direct call to a code-only tool is refused while `ExecuteCode` is offered and can call it; when
+  it cannot be offered, `programmatic-only` is ignored (and the reason is a WARN) so no tool disappears. An approval
+  asked under another tool's key now names the path, e.g. `'Bash' — via ExecuteCode (Python), 'ExecuteCode(code=…)'`.
 
 ### Changed: tool axes are read from a per-offer `ToolDescriptor`; the approval gate knows the call's path
 
@@ -280,9 +324,9 @@ loop's tool context under the write-once `ToolContextKeys.TOOL_CALL_DISPATCHER`.
 answers 400 to `temperature`, `top_p` and `top_k` on every model. Design: `docs/design/llm/request-parameters.md` §3.4.
 
 - **`temperature` and `topP` no longer reach Anthropic.** `LlmModel` values and `llm.anthropic.temperature` /
-  `aimon.llm.anthropic.temperature` are still accepted and range-checked, then omitted with one WARN per value and model.
-  A model where a low `temperature` had an effect, such as Claude Sonnet 4.6, now samples at the server default of 1.0,
-  and nothing replaces it. Models that took only the default, Claude 4.7 and later, sample as before.
+  `aimon.llm.anthropic.temperature` are still accepted and range-checked, then omitted with one WARN per value and
+  model. A model where a low `temperature` had an effect, such as Claude Sonnet 4.6, now samples at the server default
+  of 1.0, and nothing replaces it. Models that took only the default, Claude 4.7 and later, sample as before.
 - **The API key is sent as `Authorization: Bearer`, not `X-Api-Key`.** The Anthropic API takes either. For a gateway
   behind `AnthropicConfig.baseUrl` that reads only the old header, set `apiKeyHeader(X_API_KEY)` —
   `llm.anthropic.apiKeyHeader: x-api-key` on the CLI, `aimon.llm.anthropic.api-key-header=x-api-key` on the starter.
@@ -302,11 +346,11 @@ answers 400 to `temperature`, `top_p` and `top_k` on every model. Design: `docs/
 nodes: of all the nodes firing a task, one runs each occurrence, and runs do not overlap. Supplying it to
 `SchedulingEngineBuilder.executionGuard(...)` on `multiNode(true)` with a per-node scheduler also turns on the periodic
 `reconcile()`. One document per task in the new `scheduled_execution_guards` collection, holding the lease and the last
-slot that began. Slots are compared by size, so an older misfire is refused too. A slot more than `maxSkew` (5 minutes by
-default) ahead of the server's clock is refused and not recorded, with a WARN naming the cause, so one fast clock cannot
-stop a task on every node. With per-node triggers another node then runs that occurrence. With a cluster-wide scheduler
-the occurrence is lost, and since Quartz acquires triggers by the local clock a fast node can take occurrence after
-occurrence until its clock is fixed, so treat that WARN as an alert. Design:
+slot that began. Slots are compared by size, so an older misfire is refused too. A slot more than `maxSkew` (5 minutes
+by default) ahead of the server's clock is refused and not recorded, with a WARN naming the cause, so one fast clock
+cannot stop a task on every node. With per-node triggers another node then runs that occurrence. With a cluster-wide
+scheduler the occurrence is lost, and since Quartz acquires triggers by the local clock a fast node can take occurrence
+after occurrence until its clock is fixed, so treat that WARN as an alert. Design:
 `docs/design/scheduling/llm-scheduling-agent.md` §6.5.
 
 - **At most once.** The slot is recorded when the run begins, so an occurrence whose node dies is not run again. A Mongo
@@ -319,21 +363,21 @@ occurrence until its clock is fixed, so treat that WARN as an alert. Design:
 - **Migration notes** — new collection: re-run `db/mongodb/init.js`, or let the first write create it. **Do not add a
   TTL index to it**: a lost document forgets the slot, and a late fire of that occurrence runs again. Nothing changes
   unless you pass the guard. Set `socketTimeoutMS` well below the lease: the driver has none by default, and a call to a
-  stalled server then blocks instead of failing. On per-node schedulers, set `ScheduledTask.timezone` or run every node in
-  the same time zone: otherwise nodes compute different slots and the occurrence runs once per zone.
+  stalled server then blocks instead of failing. On per-node schedulers, set `ScheduledTask.timezone` or run every node
+  in the same time zone: otherwise nodes compute different slots and the occurrence runs once per zone.
 
 ### Added: scheduled execution history says when a run's outcome is unknown
 
-`ScheduledTaskExecutionHistory.isOutcomeUnknown()` (new; builder `outcomeUnknown(boolean)`, default `false`) is true when
-any step of the run reports `StepResult.isOutcomeUnknown()` — its last attempt timed out, so the tool may have done its
-work after all. An operations screen no longer has to parse `errorMessage` to tell such a failure from one the tool
+`ScheduledTaskExecutionHistory.isOutcomeUnknown()` (new; builder `outcomeUnknown(boolean)`, default `false`) is true
+when any step of the run reports `StepResult.isOutcomeUnknown()` — its last attempt timed out, so the tool may have done
+its work after all. An operations screen no longer has to parse `errorMessage` to tell such a failure from one the tool
 reported. Design: `docs/design/scheduling/llm-scheduling-agent.md` §5.4.
 
 - **Migration notes** — the in-memory repository needs no change. An external durable
   `ScheduledTaskExecutionHistoryRepository` must store and read the new field, or every run reads back as known. Rows
   written before the upgrade have no value; read them as `false`, which is what they would have said had anyone asked:
-  it does not mean they were not timeouts. `AbstractScheduledTaskExecutionHistoryRepositoryContractTest`'s round trip now
-  checks the field.
+  it does not mean they were not timeouts. `AbstractScheduledTaskExecutionHistoryRepositoryContractTest`'s round trip
+  now checks the field.
 
 ### Fixed: a scheduled task's timezone is honoured
 
@@ -359,14 +403,14 @@ throwing attempt may already have done its write. Design: `docs/design/schedulin
 `docs/design/tool/side-effect-axes.md` §8.2.
 
 - **`IdempotencyBehavior`** (new, `at.aimon.core.agent.tool`) and **`Tool.getIdempotencyBehavior()`** (default
-  `NON_IDEMPOTENT`). MCP tools read `idempotentHint` under `AnnotationTrust.TRUST` (`McpToolTraits.getIdempotencyBehavior()`).
-- A failure marked `ToolResult.notRetryable()` is no longer retried in a routine either. An attempt that failed before its
-  tool was found (runtime not registered, unknown tool) still keeps its retries.
+  `NON_IDEMPOTENT`). MCP tools read `idempotentHint` under `AnnotationTrust.TRUST`
+  (`McpToolTraits.getIdempotencyBehavior()`).
+- A failure marked `ToolResult.notRetryable()` is no longer retried in a routine either. An attempt that failed before
+  its tool was found (runtime not registered, unknown tool) still keeps its retries.
 - A step whose last attempt timed out reports `StepResult.isOutcomeUnknown()`.
 - `schedule_task` advertised `max_retries` with `"default": 0` while the executor used 3; the schema now says 3.
-- **Migration notes** — a writing tool whose scheduled steps relied on retries must declare
-  `getIdempotencyBehavior()` → `IDEMPOTENT`. Test doubles extending `AbstractTool` that exercise routine retries need the
-  same.
+- **Migration notes** — a writing tool whose scheduled steps relied on retries must declare `getIdempotencyBehavior()` →
+  `IDEMPOTENT`. Test doubles extending `AbstractTool` that exercise routine retries need the same.
 
 ### Added: scheduling host hardening — halt, fire slots, runtime checks, policy, reconcile, testkit
 
@@ -375,8 +419,9 @@ Seven gaps a host found while building scheduled execution on top of `Scheduling
 
 - **Halting a routine** — `ToolResult.haltingRoutine(reason)` / `getHaltReason()`: the call's work waits on something
   outside the run (a human approval, say). `RoutineExecutor` records the step as halted (`StepResult.isHalted()`), does
-  not retry it, starts no later step and ends the run with `RoutineResult.halted(...)` (`isHalted()`, `getHaltReason()`),
-  a `TaskHaltedEvent` and history status `HALTED`. Not a failure: no `TaskFailedEvent`. Inert outside routines.
+  not retry it, starts no later step and ends the run with `RoutineResult.halted(...)` (`isHalted()`,
+  `getHaltReason()`), a `TaskHaltedEvent` and history status `HALTED`. Not a failure: no `TaskFailedEvent`. Inert
+  outside routines.
 - **Fire slots for the guard** — `ScheduledFire` (new, `at.aimon.core.scheduling.scheduler`): task id, scheduled fire
   time, and the cron slot it folds back to (`UnixCronExpression.previousOrSameExecution`). Schedulers call
   `ScheduledTaskExecutor.execute(ScheduledFire)` (default bridges to the task-id method), the manager calls
@@ -391,9 +436,9 @@ Seven gaps a host found while building scheduled execution on top of `Scheduling
   stored task whose runtime is gone at fire time and publishes `TaskDisabledEvent`; the default `KEEP_SCHEDULED` keeps
   today's behaviour, because web hosts register runtimes lazily.
 - **Host policy** — `ScheduledTaskPolicy` (`SchedulingEngineBuilder.taskPolicy(...)`, read by the three scheduling tools
-  through `ScheduledTaskManager.getTaskPolicy()`): `resolveBoundRuntimeId`, `checkSchedule` (sees the task as it would be
-  stored), `checkAccess(LIST | CANCEL)` (narrows ownership only). A policy that throws refuses. The tools' javadoc now
-  says that routine steps run without hooks.
+  through `ScheduledTaskManager.getTaskPolicy()`): `resolveBoundRuntimeId`, `checkSchedule` (sees the task as it would
+  be stored), `checkAccess(LIST | CANCEL)` (narrows ownership only). A policy that throws refuses. The tools' javadoc
+  now says that routine steps run without hooks.
 - **Per-node trigger convergence** — `TaskScheduler.scheduledTaskIds()` (default: cannot list; implemented by the
   in-memory and Quartz schedulers) and `ScheduledTaskManager.reconcile()`. `SchedulingEngine` runs it every
   `reconcileInterval` (default 1 minute) only on `multiNode(true)` + per-node scheduler + supplied guard, the same
@@ -415,22 +460,23 @@ Seven gaps a host found while building scheduled execution on top of `Scheduling
   `AbstractScheduledTaskExecutionHistoryRepositoryContractTest` and `AbstractScheduledExecutionGuardContractTest`.
 - **Migration notes** — `ScheduledTaskExecutionHistory.Status` has a new constant `HALTED`; a store that maps it by name
   must accept it. `ScheduledTaskEventListener` gained `onTaskHalted` / `onTaskDisabled` (default no-ops). A call
-  `guard.tryBegin(null)` no longer compiles (two overloads); cast the argument. Tests or hosts that register tasks against
-  runtimes they never register need `validateBoundRuntime(false)` (`SchedulingSpec.withBoundRuntimeValidation(false)` on
-  an assembled stack). Mocks of `ScheduledTaskManager` used with the
-  scheduling tools must stub `getTaskPolicy()`.
+  `guard.tryBegin(null)` no longer compiles (two overloads); cast the argument. Tests or hosts that register tasks
+  against runtimes they never register need `validateBoundRuntime(false)`
+  (`SchedulingSpec.withBoundRuntimeValidation(false)` on an assembled stack). Mocks of `ScheduledTaskManager` used with
+  the scheduling tools must stub `getTaskPolicy()`.
 
 ### Added: per-call usage measurements — applied tier, prompt cache, timing
 
 `MeteringLlmClient` now records what a per-call price needs, taken from the response rather than the request. Guide:
 `docs/features/llm/llm-usage-metering.md` §4.
 
-- **`LlmUsageEvent`** (new, `at.aimon.core.llm.usage`) and the default method **`LlmUsageRecorder.record(LlmUsageEvent)`**
-  — provider, requested and served model, `TokenUsage`, applied `ServiceTier`, `startedAt` / `completedAt` / latency,
-  and an outcome (`COMPLETED`, or `ABORTED` with no usage for a stream that broke after it started answering or a call
-  cut by its cancellation token). The default forwards completed calls to the existing four-argument method with the
-  measured values as tags (`service_tier`, `cached_input_tokens`, `cache_write_tokens`); caller tags under those keys
-  are removed first. Existing recorders keep working, and still receive the requested model.
+- **`LlmUsageEvent`** (new, `at.aimon.core.llm.usage`) and the default method
+  **`LlmUsageRecorder.record(LlmUsageEvent)`** — provider, requested and served model, `TokenUsage`, applied
+  `ServiceTier`, `startedAt` / `completedAt` / latency, and an outcome (`COMPLETED`, or `ABORTED` with no usage for a
+  stream that broke after it started answering or a call cut by its cancellation token). The default forwards completed
+  calls to the existing four-argument method with the measured values as tags (`service_tier`, `cached_input_tokens`,
+  `cache_write_tokens`); caller tags under those keys are removed first. Existing recorders keep working, and still
+  receive the requested model.
 - **`TokenUsage` cache counters** — `withCacheTokens(Integer, Integer)`, `getCacheReadTokens()` /
   `getCacheWriteTokens()` (`OptionalInt`: unmeasured is distinct from a measured `0`). Both are subsets of the prompt.
 - **`ServiceTier`** (new, `at.aimon.core.llm`) — `standard` / `fast` / `flex` / `batch`, with unknown values preserved.
@@ -529,9 +575,9 @@ Design: `docs/design/session/routing.md` §11.3.
 - **A retry under a freed key is its own attempt**: a submission that queues its own message no longer adopts an earlier
   forward outstanding for its key (it would have queued under that attempt's turn id, and a late `PURGED` would have
   claimed "not run" for it), and a failure announced for another turn no longer reaches it by key.
-- **Waking idle sessions recovers its notifications** when a wake's turn did not run: they go back into the queue and the
-  session is tried again after the retry delay; the wake stays counted against the caps, so a refusal that repeats stops
-  there (open item W-3 of the idle-wake design).
+- **Waking idle sessions recovers its notifications** when a wake's turn did not run: they go back into the queue and
+  the session is tried again after the retry delay; the wake stays counted against the caps, so a refusal that repeats
+  stops there (open item W-3 of the idle-wake design).
 
 ### Added: line-by-line shell streaming
 
@@ -682,7 +728,8 @@ hooks, the execution environment and the tool context, but not the LLM call meta
 used it. A caller that set the principal on the request alone saw its turn's and its forks' calls metered with no
 principal (`LlmUsageKey`), and a fork's summary call booked differently from the main turn's.
 
-- **`LlmCallMetadata.withPrincipal(Principal)`** (new) — a copy with the principal replaced; `null` keeps the current one.
+- **`LlmCallMetadata.withPrincipal(Principal)`** (new) — a copy with the principal replaced; `null` keeps the current
+  one.
 - **Main turn** (`OrcaAgentExecutor`) — the request principal now wins over a `principal` on the caller's metadata for
   every call of the turn (the react-loop calls, sub-executions that read the tool context's metadata, compaction).
   With no request principal the metadata's principal stands, as before.

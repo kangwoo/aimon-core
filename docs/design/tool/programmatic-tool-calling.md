@@ -5,7 +5,8 @@
 > 공개 API 호환을 깨는 항목이 있다(§5). 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B), `ExecuteCode`·엔진 SPI·GraalJS
 > 엔진·모듈 개명·계약 스위트(조각 C), 셸 엔진의 코어 쪽 절반(조각 D1 — 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope`)이다.
 > 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 그 저장소에 있다(aimon-sandbox#49). §12.2 의 트레이스와
-> §6.2 의 언어 변경 알림은 [기능 마무리 설계](ptc-features-core.md)로 들어왔다. 구현이 본문과 다른 점은 §21.
+> §6.2 의 언어 변경 알림은 [기능 마무리 설계](ptc-features-core.md)로 들어왔고, 그 뒤의 비차단 지적과 오류 텍스트는
+> [남은 일 설계](ptc-leftovers-core.md)가 다뤘다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -275,6 +276,9 @@ CLAUDE.md 에 적는다(샌드박스 분리 때와 같은 형식). 개명이 닿
      셸 엔진은 호출당 고정 지연이 있다
    - 쓰기 도구는 스크립트당 도구별 20회까지라는 것, 승인이 필요한 도구는 직접 호출로 쓰라는 것
    - 도구 결과를 코드로 실행하지 말라는 것
+   - Python 에서는: 함수는 이미 정의된 전역이라 import 하지 않는다는 것, 최상위 `await` 를 쓰라는 것(최상위 `await` 가 없는
+     프로그램은 스스로 `asyncio.run(main())` 을 불러도 된다 — 런타임은 최상위 `await` 를 쓴 프로그램에만 이벤트 루프를 띄운다),
+     `asyncio` 와 `json` 은 이미 import 되어 있다는 것
 2. **함수 선언.** `ToolApiRenderer` 가 `inputSchema` 와 도구 설명에서 생성한다. 도구 이름 순으로 정렬해 결정론적으로 만든다.
 
 ```ts
@@ -295,7 +299,9 @@ async def Grep(args: dict) -> str:
     """
 ```
 
-이름이 식별자가 될 수 없으면(`mcp__server__tool` 의 하이픈 등) `tools["..."]` / `call_tool("...", args)` 로 부른다.
+이름이 식별자가 될 수 없으면(`mcp__server__tool` 의 하이픈 등) `tools["..."]` / `call_tool("...", args)` 로 부른다. Python 에서는
+런타임이 함수로 묶지 않는 이름 — 런타임 자신의 전역(`ToolError`, `call_tool`, `asyncio`, `json`; `ToolApiRenderer.PYTHON_RESERVED`),
+키워드, `__` 로 시작하는 이름 — 도 `call_tool` 꼴로 낸다. 내장 함수 이름(`print`, `len`)의 도구는 여전히 함수로 묶여 그 내장을 가린다.
 
 **토큰.** `programmatic-only` 에 든 도구는 직접 목록에서 빠지므로 스키마가 한 번만 실린다. 직접 목록에도 남는 도구는 코드 쪽에
 시그니처 한 줄과 "인자는 직접 도구 `Grep` 과 같다" 만 렌더한다. 설명 크기와 그에 따른 판정은 §18.
@@ -529,7 +535,11 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 출력한 같은 모양의 줄은 언제나 진짜 요약 **앞**에 있으므로 표지를 위조하지 못한다.
 
 상태가 `COMPLETED` 가 아니면 `ToolResult.error` 로 돌려준다. 메시지에는 상태, 스크립트 오류의 마지막 줄, 그때까지의 로그 꼬리,
-호출 요약을 싣는다. `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
+호출 요약을 싣는다. 오류 메시지의 마지막 줄이 캐럿 줄(`^`, `~` 와 공백)이고 세 줄 이상이면 — GraalJS 의 구문 오류처럼 "메시지 줄, 소스
+줄, 캐럿" 순이면 — 마지막 줄 대신 첫 줄(메시지 줄)을 싣고, 그 아래에 소스 줄과 캐럿을 두 칸 들여 캐럿이 가리키는 열을 지킨 채 붙인다.
+소스 줄이 200 자를 넘으면(압축된 코드) 메시지 줄만 싣는다. 규칙은 코어에 있고 엔진을 가리지 않는다. Python 런타임은 잡히지 않은 예외를
+프로그램 자신의 프레임만으로 로그에 남기므로([셸 엔진](programmatic-tool-calling-shell.md) §6), `[logs]` 에 런타임 프레임이나 호스트
+경로가 실리지 않는다. `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
 `notRetryable` 이다.
 
 `TIMED_OUT` · `LIMIT_EXCEEDED` 의 메시지는 멈추기 전까지 프로그램이 쓴 표준 출력도 `[output before the stop]` 아래에 싣는다 —
@@ -542,7 +552,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 
 | 대상 | 무엇이 남는가 |
 |---|---|
-| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)만. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` |
+| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` |
 | 훅 | 중첩 호출마다 PreTool/PostTool (경로 포함) |
 | UI | `ExecuteCode` 결과의 `renderPayload` 에 코드와 중첩 호출 목록(이름, 입력 요약, 결과 길이, 오류 여부). LLM 으로 직렬화되지 않는다 |
 | 트랜스크립트 | `ExecuteCode` 의 tool_use(코드 포함)와 §12.1 의 관찰 |
@@ -806,3 +816,13 @@ PTC 기능 마무리 PR 2([설계 기록](ptc-features-core.md) Part B — 포�
 | 실제 모델 E2E 를 `:aimon-core:llmTest` 로(TASK) | **B-DV3.** `:aimon-cli:llmTest`. 태그 없는 클래스에 `@EnabledIfSystemProperty(aimon.llmTest)` 를 달고 그 속성은 이 태스크만 넣는다 — `test`·`checkAll`·CI·릴리스 게이트 밖 | 코어 테스트 클래스패스는 LLM 클라이언트를 보지 못한다. 태그를 쓰면 `ReleaseGateMatchesCiGateTest` 가 게이트 태스크를 요구하는데, CI 에서 도는 것이 바로 피해야 할 일이다 |
 | `renderPayload` 의 키(§12.1) | `stdout`(관찰이 자르기 전의 표준 출력)과, 있으면 `returnValue` 를 더했다 | E2E 가 "프로그램이 출력한 것만 돌아왔다" 를 기계적으로 확인한다. 모델에게는 보내지 않는다 |
 | `ExecuteCode` 설명 지침(§6) | Python: 함수는 이미 정의된 전역이라 import 하지 않는다, 프로그램은 이미 이벤트 루프 안에서 돈다(최상위 `await`, `asyncio.run()` 금지), JSON 문자열은 `json.loads` 로 직접 파싱한다. 목록 머리말 "Functions (already defined; do not import them):". JavaScript: JSON 문자열은 `JSON.parse` 로 직접 파싱한다 | 실제 모델 E2E 에서 두 모델이 `from functions import …`·`asyncio.run(...)` 으로 시작했고, `gpt-4o-mini` 는 JSON 문자열 결과를 객체로 읽었다. §18 의 "실패 유형 → 렌더링을 바꾼다" 그대로이며, 같은 하네스로 전후를 쟀다([TC-27](../../backlog/tool-contract-open-items.md)) |
+
+PTC 남은 일 PR 1([설계 기록](ptc-leftovers-core.md) — 모델이 보는 오류 텍스트, Python 런타임의 이벤트 루프, 중첩 span 의 내용)이
+위의 표와 본문을 바꾼 점:
+
+| 본문·위의 표 | 구현 | 이유 |
+|---|---|---|
+| 중첩 호출 TOOL span 의 출력은 요약만(§12.2, 기능 마무리 PR 1) | 도구 문맥 키 `TRACE_PAYLOAD_POLICY` 를 `TRACER` 가 묶이는 모든 자리(메인 루프, 슬래시 명령, 포크, 루틴)에 실행기의 정책으로 묶고, 브리지가 그것으로 결과를 기록한다. 키가 없으면 요약만이다([TC-22](../../backlog/tool-contract-open-items.md)) | 내용 기록을 켠 운영자는 같은 도구의 결과를 직접 경로에서 이미 trace 에 받는다. 중첩 결과는 같은 도구의 결과이고 상한은 같은 `truncate` 다. 중첩 전용 정책은 요청한 이 없는 두 번째 설정이다 |
+| 스크립트 오류는 메시지의 마지막 줄(§12.1) | 마지막 줄이 캐럿이면 메시지 줄과, 정렬을 지킨 소스·캐럿 발췌(§12.1)([TC-28](../../backlog/tool-contract-open-items.md)) | GraalJS 구문 오류가 모델에게 `ExecuteCode script error:  ^` 로만 갔다. 엔진의 메시지는 이미 맞았고 코어가 고른 줄이 틀렸다 |
+| `[logs]` 는 프로그램의 stderr 꼬리(§12.1) | Python 런타임이 잡히지 않은 예외를 프로그램 자신의 프레임만으로 찍는다 — 메인 스레드, 스레드, `asyncio` 로거, unraisable, 경고([셸 엔진](programmatic-tool-calling-shell.md) §6)([TC-29](../../backlog/tool-contract-open-items.md)) | traceback 이 런타임 프레임과 실행 디렉터리·인터프리터의 호스트 경로를 모델에게 실었다. 호스트 쪽 경로 지우기는 기각 — `[logs]` 는 임의의 프로그램 출력이라 정규식이 데이터와 런타임 프레임을 가르지 못한다 |
+| Python 설명 지침 "최상위 `await`, `asyncio.run()` 금지"(위의 PR 2 표) | 런타임이 최상위 `await` 를 쓴 프로그램에만 이벤트 루프를 띄우고 `asyncio`·`json` 을 미리 import 한다. 지침은 "최상위 `await` 를 쓰라(없는 프로그램은 스스로 `asyncio.run(main())` 을 불러도 된다), `asyncio` 와 `json` 은 이미 import 되어 있다" 로 바뀌었다(§6.3) | 문구만으로는 `gpt-4o-mini` 가 프로그램 열하나 중 다섯에서 `asyncio.run` 이나 import 없는 `asyncio` 로 실패했다. 두 관용구를 다 받아들이면 실패 유형 자체가 사라진다. 바꾼 뒤 실제 모델 E2E 에서 `gpt-4o`·`gpt-4o-mini` 의 Python 이 각각 프로그램 하나로 통과했다 |

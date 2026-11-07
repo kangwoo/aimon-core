@@ -35,6 +35,7 @@ import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.hook.SkillHookActivator;
 import at.aimon.core.tracing.SpanAttributes;
+import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 
 /**
@@ -551,6 +552,24 @@ public final class ToolContextKeys {
      * Write-once, so a {@code ToolContextEnricher} cannot redirect the spans of the calls below it.
      */
     public static final ToolContextKey<Tracer> TRACER = ToolContextKey.writeOnce("tracer", Tracer.class);
+
+    /**
+     * Typed key for the {@link TracePayloadPolicy} of the run that makes this tool call — how much of a call's
+     * arguments and result its span records.
+     *
+     * <p>
+     * Bound wherever {@link #TRACER} is, with the policy of the executor that bound the tracer, so the {@code TOOL}
+     * spans of the calls a tool makes itself ({@code ExecuteCode}'s nested calls) record what the direct calls' spans
+     * record: content when the deployment turned content capture on, the summary otherwise. One knob for both paths —
+     * nested results are results of the same tools, bounded by the same {@link TracePayloadPolicy#truncate}. Absent
+     * means summary only, the behaviour before the key existed, so an embedder that binds only {@link #TRACER} sees no
+     * change ({@code docs/design/tool/programmatic-tool-calling.md} §12.2).
+     *
+     * <p>
+     * Write-once, for the same reason as {@link #TRACER}.
+     */
+    public static final ToolContextKey<TracePayloadPolicy> TRACE_PAYLOAD_POLICY = ToolContextKey
+            .writeOnce("tracePayloadPolicy", TracePayloadPolicy.class);
 
     /**
      * Typed key for the span of the tool call this context was handed to, as a view that can only add attributes.

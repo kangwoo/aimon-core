@@ -95,10 +95,9 @@ import at.aimon.core.tools.code.CodeOfferKeys;
  * {@link TruncatedResponses#TRUNCATION_MARKER} and whose {@link SkillExecutionResult#isTruncated()} is {@code true} — a
  * skill result has no completion reason, so the flag is the type signal a slash invocation's turn reads to end
  * {@code TRUNCATED}; a fork-mode skill whose fork was cut reports the same two things. Both log a WARN naming the
- * skill. The executors' stalled-iteration guard
- * ({@link StalledIterationGuard}) stops this loop too, so a streak of refused or failing calls fails the skill with the
- * guard's stop message instead of running to {@code max-iterations}; nothing else could stop it, because a slash
- * command cannot be interrupted.
+ * skill. The executors' stalled-iteration guard ({@link StalledIterationGuard}) stops this loop too, so a streak of
+ * refused or failing calls fails the skill with the guard's stop message instead of running to {@code max-iterations};
+ * nothing else could stop it, because a slash command cannot be interrupted.
  *
  * <p>
  * <b>How tool calls leave this loop.</b> Step 5 runs every call through the {@link ToolCallDispatcher} the caller
