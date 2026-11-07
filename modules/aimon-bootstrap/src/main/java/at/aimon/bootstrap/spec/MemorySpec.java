@@ -60,8 +60,8 @@ import at.aimon.core.memory.redaction.RedactionPolicy;
  * it is handed carries a session and an execution, but no principal. Registering them anyway would give the model
  * three tools that answer "no workspace in context" to every call. So per-caller mode requires the
  * {@link MemoryCapability#SNAPSHOT} capability — a {@link RepresentationStore}, or a backend that serves that tier:
- * with only an observation store it would wire nothing whatsoever while looking configured, and
- * {@link Builder#build()} rejects it.
+ * with only an observation store it would wire nothing whatsoever while looking configured, and {@link Builder#build()}
+ * rejects it.
  *
  * <h2>Read path only</h2>
  *

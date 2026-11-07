@@ -20,16 +20,14 @@ import at.aimon.core.base.Principal;
  * <p>
  * The record-side twin of {@link LateBoundFencedSegmentStore}, for the same ordering reason: the session store that
  * owns the fenced write view ({@code SessionStore.records(fence)}) is composed inside the router's build, and the
- * router
- * is built over the executor, which is built over the transcript manager. So the manager is handed this, and
+ * router is built over the executor, which is built over the transcript manager. So the manager is handed this, and
  * {@link #bind} points it at the router's view once the router exists. Reads go to the raw store from the start — a
  * read cannot corrupt history, and the reader of a sealed log reads sessions it does not hold.
  *
  * <p>
  * A mutation before {@link #bind} fails with an {@link IllegalStateException} rather than falling back to the raw
  * store: no turn can run before the router exists, so reaching it is a wiring bug, and an unfenced write is exactly
- * what
- * this class exists to prevent. {@link #clear()} goes to the fenced view, which refuses it.
+ * what this class exists to prevent. {@link #clear()} goes to the fenced view, which refuses it.
  *
  * <p>
  * Thread-safe.
