@@ -197,7 +197,7 @@ jline = "4.4.8"
 jansi = "2.4.3"
 
 # HTML Parsing
-jsoup = "1.23.2"
+jsoup = "1.24.1"
 
 # HTTP & Networking
 okhttp = "5.5.1"
