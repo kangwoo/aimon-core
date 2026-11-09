@@ -1036,7 +1036,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .toolContextEnrichers(launchContext.getToolContextEnrichers()).outputSink(outputSink)
                     .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
                     .executionEnvironmentProvider(launchContext.getExecutionEnvironmentProvider().orElse(null))
-                    .contextEngine(inheritedEngine).build();
+                    .contextEngine(inheritedEngine)
+                    .programmaticCeilingReason(
+                            programmaticCeilingReason(launchContext.getCallerProgrammatic(), resolved).orElse(null))
+                    .build();
 
             // Build execution request (what to execute). The parent's LLM call metadata is forwarded so the subagent
             // executor can merge it with subagent-derived defaults (component/feature) and emit attributed usage. The
@@ -1311,10 +1314,41 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         return SubagentToolScope.withProgrammatic(subagent, effective);
     }
 
+    /**
+     * Says why the caller's programmatic settings leave the subagent no {@code ExecuteCode} although its own definition
+     * opts in — what the fork's iteration spans carry as {@code ptc.unavailable_reason} (TC-30).
+     *
+     * @param callerProgrammatic
+     *            the caller's effective settings; {@link ProgrammaticToolSettings#none()} when it has none
+     * @param resolved
+     *            the subagent as resolved, before the caller's ceiling
+     * @return the reason, or empty when the subagent does not opt in or keeps some of its settings
+     */
+    static Optional<String> programmaticCeilingReason(ProgrammaticToolSettings callerProgrammatic, Subagent resolved) {
+        final ProgrammaticToolSettings own = resolved.getMetadata().getProgrammatic();
+        if (!own.isEnabled() || own.narrowedBy(callerProgrammatic).isEnabled()) {
+            return Optional.empty();
+        }
+        if (!callerProgrammatic.isEnabled()) {
+            return Optional.of("the subagent sets programmatic-tools " + own.getTools()
+                    + ", but its caller opens no tool to code, and a caller's programmatic settings are its ceiling");
+        }
+        if (isEngineConflict(own, callerProgrammatic)) {
+            return Optional.of("the subagent sets programmatic-engine " + own.getEngine().wireName()
+                    + ", but its caller uses " + callerProgrammatic.getEngine().wireName());
+        }
+        return Optional.of("the subagent sets programmatic-tools " + own.getTools() + ", but its caller allows none of "
+                + "them (caller allows " + callerProgrammatic.getTools() + ")");
+    }
+
+    private static boolean isEngineConflict(ProgrammaticToolSettings own, ProgrammaticToolSettings caller) {
+        return caller.isEnabled() && own.hasEngineConflict(caller)
+                && own.getTools().stream().anyMatch(caller.getTools()::contains);
+    }
+
     private static void warnProgrammaticCeiling(String name, ProgrammaticToolSettings own,
             ProgrammaticToolSettings caller) {
-        final boolean engineConflict = caller.isEnabled() && own.hasEngineConflict(caller)
-                && own.getTools().stream().anyMatch(caller.getTools()::contains);
+        final boolean engineConflict = isEngineConflict(own, caller);
         final String key = name + '\0' + (engineConflict ? "engine-conflict" : "caller-ceiling");
         if (WARNED_PROGRAMMATIC.size() >= MAX_PROGRAMMATIC_WARNINGS || !WARNED_PROGRAMMATIC.add(key)) {
             log.debug("Subagent '{}' is offered no ExecuteCode under its caller's programmatic settings", name);

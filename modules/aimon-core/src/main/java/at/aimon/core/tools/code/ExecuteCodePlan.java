@@ -77,8 +77,14 @@ final class ExecuteCodePlan {
         Objects.requireNonNull(toolScope, "toolScope cannot be null");
         Objects.requireNonNull(warned, "warned cannot be null");
         final ExecuteCodePlan computed = compute(offer, engines, selfName, toolScope, warned);
-        if (computed.isAvailable() || !offer.isOffering() || !offer.getProgrammatic().isEnabled()) {
+        if (computed.isAvailable() || !offer.isOffering()) {
             return computed;
+        }
+        if (!offer.getProgrammatic().isEnabled()) {
+            // A fork whose own definition opts in but whose caller allows none of it arrives with none(): told why on
+            // the span too (TC-30). The execution manager already logged it, once per subagent, so no WARN here.
+            return offer.getProgrammaticCeilingReason()
+                    .map(reason -> new ExecuteCodePlan(null, List.of(), Set.of(), reason, null, true)).orElse(computed);
         }
         // An agent that opens tools to code and does not get ExecuteCode is told why: in the log once per agent and
         // reason, and on every iteration's span through the descriptor (§12.2, §16).
@@ -216,8 +222,9 @@ final class ExecuteCodePlan {
 
     /**
      * Why it cannot, when the agent should be told: it opens tools to code and is offering, so the reason goes on the
-     * iteration's span ({@code ptc.unavailable_reason}). Empty for an agent without {@code programmatic-tools}, which
-     * would otherwise carry the attribute on every iteration.
+     * iteration's span ({@code ptc.unavailable_reason}). Also present for a fork whose own {@code programmatic-tools}
+     * its caller's ceiling emptied ({@link ToolOfferContext#getProgrammaticCeilingReason()}). Empty for an agent
+     * without {@code programmatic-tools}, which would otherwise carry the attribute on every iteration.
      */
     Optional<String> reportedReason() {
         return reported ? Optional.of(unavailableReason) : Optional.empty();

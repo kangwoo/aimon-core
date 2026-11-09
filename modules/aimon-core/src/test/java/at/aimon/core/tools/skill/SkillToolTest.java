@@ -318,6 +318,22 @@ class SkillToolTest {
     }
 
     @Test
+    void testExecute_InlineSkill_ListsTheNarrowedToolsBeforeOnlyTheseTools() {
+        // The list above "only these tools" is the skill's as the ceiling bounded it, not as the skill declared it.
+        mockRegistry.addSkill(restrictedSkill("reader", "Read Grep Glob", ProgrammaticToolSettings.none()));
+        final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(
+                List.of(AllowedTool.parse("Read"), AllowedTool.parse("Grep"), AllowedTool.parse("Bash")),
+                ProgrammaticToolSettings.none());
+        final ToolContext context = ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, ceiling).build();
+
+        final ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "reader")), context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).contains("Allowed Tools: Read, Grep\n")
+                .contains("For the rest of this turn only these tools are available.").doesNotContain("Glob");
+    }
+
+    @Test
     void testExecute_InlineSkill_DisjointFromTheCeiling_ErrorAndNoInstructions() {
         mockRegistry.addSkill(restrictedSkill("writer", "Write", ProgrammaticToolSettings.none()));
         final InlineSkillCeiling ceiling = InlineSkillCeiling.startingAt(List.of(AllowedTool.parse("Read")),
@@ -361,7 +377,9 @@ class SkillToolTest {
         final SkillTool asking = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(),
                 new NoOpSkillForkExecutor(), new at.aimon.core.skill.hook.NoOpSkillHookActivator(),
                 request -> at.aimon.core.skill.policy.SkillInvocationDecision.ASK);
-        final InlineSkillCeiling narrowed = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.none());
+        // A main-loop turn with an approval channel.
+        final InlineSkillCeiling narrowed = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.none(),
+                true);
         narrowed.narrow("a", List.of(AllowedTool.parse("Read"), AllowedTool.parse("Skill")),
                 ProgrammaticToolSettings.none());
 
@@ -372,6 +390,24 @@ class SkillToolTest {
         assertThat(inNarrowedTurn.isError()).isTrue();
         assertThat(inNarrowedTurn.getContent()).contains("ask for it again in a new turn");
         assertThat(elsewhere.getContent()).contains("no approval channel is available");
+    }
+
+    @Test
+    void testExecute_AskDecision_InANarrowedLoopWithoutApprovalChannel_DoesNotSayNewTurn() {
+        // A fork, a slash skill's loop or a headless turn: no turn of theirs can ask, so no "new turn" advice.
+        mockRegistry.addSkill(restrictedSkill("deploy", null, ProgrammaticToolSettings.none()));
+        final SkillTool asking = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(),
+                new NoOpSkillForkExecutor(), new at.aimon.core.skill.hook.NoOpSkillHookActivator(),
+                request -> at.aimon.core.skill.policy.SkillInvocationDecision.ASK);
+        final InlineSkillCeiling narrowed = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.none());
+        narrowed.narrow("a", List.of(AllowedTool.parse("Read"), AllowedTool.parse("Skill")),
+                ProgrammaticToolSettings.none());
+
+        final ToolResult result = asking.execute(ToolInput.of(Map.of("skill", "deploy")),
+                ToolContext.builder().put(ToolContextKeys.INLINE_SKILL_CEILING, narrowed).build());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("no approval channel is available").doesNotContain("new turn");
     }
 
     private static Skill restrictedSkill(String name, String allowedTools, ProgrammaticToolSettings programmatic) {

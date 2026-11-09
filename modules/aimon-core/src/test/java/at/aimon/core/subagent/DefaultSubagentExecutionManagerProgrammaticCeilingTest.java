@@ -167,6 +167,48 @@ class DefaultSubagentExecutionManagerProgrammaticCeilingTest {
         assertThat(capturedContext().getSubagent().getMetadata().getProgrammatic()).isEqualTo(ptc("Read"));
     }
 
+    @Test
+    @DisplayName("TC-30: the launch path hands the fork why the caller's ceiling emptied its settings")
+    void launchPathCarriesTheCeilingReason() {
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult());
+
+        new DefaultSubagentExecutionManager(reactExecutor, bgPool, null, new InMemorySubagentBehaviorRegistry())
+                .execute(baseEnv().callerProgrammatic(ptc("Glob")).build(), subagent("reader", ptc("Read")), "go");
+
+        assertThat(capturedContext().getProgrammaticCeilingReason()).hasValue(
+                "the subagent sets programmatic-tools [Read], but its caller allows none of them (caller allows [Glob])");
+    }
+
+    @Test
+    @DisplayName("TC-30: no ceiling reason when the fork keeps some of its settings, or never opted in")
+    void launchPathWithoutCeilingReason() {
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult());
+
+        new DefaultSubagentExecutionManager(reactExecutor, bgPool, null, new InMemorySubagentBehaviorRegistry())
+                .execute(baseEnv().callerProgrammatic(ptc("Read")).build(), subagent("reader", ptc("Read", "Grep")),
+                        "go");
+
+        assertThat(capturedContext().getProgrammaticCeilingReason()).isEmpty();
+        assertThat(DefaultSubagentExecutionManager.programmaticCeilingReason(ProgrammaticToolSettings.none(),
+                subagent("plain", ProgrammaticToolSettings.none()))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("TC-30: the ceiling reason names the case — caller opens nothing, engine conflict, nothing shared")
+    void ceilingReasonNamesTheCase() {
+        assertThat(DefaultSubagentExecutionManager.programmaticCeilingReason(ProgrammaticToolSettings.none(),
+                subagent("reader", ptc("Read")))).hasValueSatisfying(
+                        reason -> assertThat(reason).contains("[Read]").contains("its caller opens no tool to code"));
+        final Subagent python = subagent("py", ProgrammaticToolSettings.builder().tools(List.of("Read"))
+                .engine(ProgrammaticEngineChoice.PYTHON).build());
+        final ProgrammaticToolSettings jsCaller = ProgrammaticToolSettings.builder().tools(List.of("Read"))
+                .engine(ProgrammaticEngineChoice.JAVASCRIPT).build();
+        assertThat(DefaultSubagentExecutionManager.programmaticCeilingReason(jsCaller, python))
+                .hasValue("the subagent sets programmatic-engine python, but its caller uses javascript");
+        assertThat(DefaultSubagentExecutionManager.programmaticCeilingReason(ptc("Glob"), subagent("r", ptc("Read"))))
+                .hasValueSatisfying(reason -> assertThat(reason).contains("caller allows none of them"));
+    }
+
     private SubagentExecutionContext capturedContext() {
         final ArgumentCaptor<SubagentExecutionContext> captor = ArgumentCaptor.forClass(SubagentExecutionContext.class);
         verify(reactExecutor).execute(captor.capture(), any());

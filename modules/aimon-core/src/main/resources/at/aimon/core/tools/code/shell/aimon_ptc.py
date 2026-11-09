@@ -403,13 +403,16 @@ def _thread_excepthook(args):
 
 
 def _unraisable_hook(unraisable):
-    """sys.unraisablehook: an exception Python could not raise ("Exception ignored in: ...", a failing __del__)."""
+    """sys.unraisablehook: an exception Python could not raise ("Exception ignored in: ...", a failing __del__).
+
+    The header is CPython's own: "<err_msg>: <object>" when there is an object (up to 3.13), "<err_msg>:" when err_msg
+    already names it and object is None (3.14). A colon err_msg brings with it is not doubled."""
     try:
-        message = unraisable.err_msg or "Exception ignored in"
+        message = (unraisable.err_msg or "Exception ignored in").rstrip(":")
         if unraisable.object is not None:
             sys.stderr.write("%s: %r\n" % (message, unraisable.object))
         else:
-            sys.stderr.write("%s\n" % message)
+            sys.stderr.write("%s:\n" % message)
     except Exception:
         pass
     if unraisable.exc_value is not None:

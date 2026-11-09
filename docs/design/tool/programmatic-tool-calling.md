@@ -561,8 +561,10 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 줄, 캐럿" 순이면 — 마지막 줄 대신 첫 줄(메시지 줄)을 싣고, 그 아래에 소스 줄과 캐럿을 두 칸 들여 캐럿이 가리키는 열을 지킨 채 붙인다.
 소스 줄이 200 자를 넘으면(압축된 코드) 메시지 줄만 싣는다. 규칙은 코어에 있고 엔진을 가리지 않는다. Python 런타임은 잡히지 않은 예외를
 프로그램 자신의 프레임만으로 로그에 남기므로([셸 엔진](programmatic-tool-calling-shell.md) §6), `[logs]` 에 런타임 프레임이나 호스트
-경로가 실리지 않는다. 예외는 런타임이 `DONE` 을 보내기 전에 죽은 경우다 — 그때는 셸의 stderr 꼬리가 `[logs]` 가 되어, 출력기를 설치하기
-전에 난 traceback 의 호스트 경로가 실릴 수 있다([TC-31](../../backlog/tool-contract-open-items.md)). `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
+경로가 실리지 않는다. 런타임이 `DONE` 을 보내기 전에 죽어 보낸 로그도 없으면 셸 자신의 stderr 가 남는데, 그 꼬리 전체는 호스트 로그(WARN)에만
+남고 `[logs]` 에는 마지막 비어 있지 않은 줄만, 절대 경로를 `<host path>` 로 바꿔 싣는다 — 출력기를 설치하기 전에 난 traceback 은 런타임
+프레임뿐이고, 원인은 마지막 줄(예외 줄이나 `python3` 의 메시지)이 말한다([TC-31](../../backlog/tool-contract-open-items.md)).
+`TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
 `notRetryable` 이다.
 
 `TIMED_OUT` · `LIMIT_EXCEEDED` 의 메시지는 멈추기 전까지 프로그램이 쓴 표준 출력도 `[output before the stop]` 아래에 싣는다 —
@@ -575,7 +577,8 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 
 | 대상 | 무엇이 남는가 |
 |---|---|
-| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason`. 슬래시 스킬 루프도 COMMAND span 아래에 LLM 호출마다 ITERATION span(`invokerType=MAIN_AGENT`, `skill=<이름>`)과 호출마다 TOOL span 을 남기므로, 그 스킬의 `ExecuteCode` 중첩 호출은 그 호출의 TOOL span 아래에 붙는다 |
+| 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` — 자기 정의는
+`programmatic-tools` 를 두었는데 호출자의 설정이 그것을 "없음" 으로 좁힌 포크도 같은 속성에 그 이유를 싣는다. 슬래시 스킬 루프도 COMMAND span 아래에 LLM 호출마다 ITERATION span(`invokerType=MAIN_AGENT`, `skill=<이름>`)과 호출마다 TOOL span 을 남기므로, 그 스킬의 `ExecuteCode` 중첩 호출은 그 호출의 TOOL span 아래에 붙는다 |
 | 훅 | 중첩 호출마다 PreTool/PostTool (경로 포함) |
 | UI | `ExecuteCode` 결과의 `renderPayload` 에 코드와 중첩 호출 목록(이름, 입력 요약, 결과 길이, 오류 여부). LLM 으로 직렬화되지 않는다 |
 | 트랜스크립트 | `ExecuteCode` 의 tool_use(코드 포함)와 §12.1 의 관찰 |
@@ -859,3 +862,13 @@ PTC 남은 일 PR 2([설계 기록](ptc-leftovers-core.md) — 슬래시 스킬 
 | 모델이 부른 인라인 스킬은 천장을 바꾸지 않는다(B-DV1 의 예외) | 실행 단위 `InlineSkillCeiling` 을 `SkillTool` 이 좁히고 세 루프가 다음 iteration 에 적용한다. 좁혀진 턴은 승인 대기로 멈추지 않는다(§7.2)([TC-26](../../backlog/tool-contract-open-items.md)) | 한 스킬은 어느 경로로 불려도 같은 뜻이어야 한다. 디스패치 시점에 살아 있는 천장으로 거르면 같은 병렬 묶음이 좁히기와 경주하고, 모델이 본 제안과 거절이 어긋난다 |
 | (결정) 호출자에게 PTC 가 없을 때 서브에이전트가 스스로 PTC 를 여는 선언 | 두지 않는다([TC-24](../../backlog/tool-contract-open-items.md), 결정 "아니오") | 모든 천장은 "에이전트는 좁히기만" 위에 서 있다. 그 권한은 이미 루트의 `programmatic-tools` 로 있고, 사용자 계층의 정의 파일이 코드 경로의 데이터 범위를 여는 길이 된다 |
 | Python 설명 지침 "최상위 `await`, `asyncio.run()` 금지"(위의 PR 2 표) | 런타임이 최상위 `await` 를 쓴 프로그램에만 이벤트 루프를 띄우고 `asyncio`·`json` 을 미리 import 한다. 지침은 "최상위 `await` 를 쓰라(없는 프로그램은 스스로 `asyncio.run(main())` 을 불러도 된다), `asyncio` 와 `json` 은 이미 import 되어 있다" 로 바뀌었다(§6.3) | 문구만으로는 `gpt-4o-mini` 가 프로그램 열하나 중 다섯에서 `asyncio.run` 이나 import 없는 `asyncio` 로 실패했다. 두 관용구를 다 받아들이면 실패 유형 자체가 사라진다. 바꾼 뒤 실제 모델 E2E 에서 `gpt-4o`·`gpt-4o-mini` 의 Python 이 각각 프로그램 하나로 통과했다 |
+
+PTC 마무리([TC-30](../../backlog/tool-contract-open-items.md) · [TC-31](../../backlog/tool-contract-open-items.md) 과 남은 일 PR 2·3 의
+비차단 지적)가 위의 표와 본문을 바꾼 점:
+
+| 본문·위의 표 | 구현 | 이유 |
+|---|---|---|
+| 포크의 iteration span 은 제안 문맥이 코드에 도구를 열 때만 `ptc.unavailable_reason` 을 싣는다(남은 일 PR 1 §4.1) | 실행 관리자가 호출자 천장이 포크의 opt-in 을 "없음" 으로 비운 이유를 `SubagentExecutionContext.getProgrammaticCeilingReason()` 으로 넘기고, 포크의 제안 문맥(`ToolOfferContext.getProgrammaticCeilingReason()`)이 그것을 `ExecuteCode` 의 이유로 보고한다. WARN 은 관리자의 것 하나 그대로([TC-30](../../backlog/tool-contract-open-items.md)) | 포크의 설정은 이미 좁혀진 `none()` 으로 도착해 그것만으로는 opt-in 하지 않은 에이전트와 구별되지 않는다. 서브에이전트 이름마다 JVM 에 한 번인 WARN 으로는 trace 만 보는 사람이 이유를 찾지 못한다 |
+| `DONE` 없는 종료는 셸 stderr 꼬리를 `[logs]` 로 싣는다(§12.1) | 꼬리 전체는 호스트 WARN, 모델에게는 마지막 비어 있지 않은 줄의 절대 경로를 `<host path>` 로 바꿔서([TC-31](../../backlog/tool-contract-open-items.md)) | 이 텍스트는 프로그램 출력이 아니라 런타임이 시작하기 전(또는 주변)에 셸이 쓴 것이라, 다시 쓰여도 프로그램 데이터가 사라지지 않는다 — TC-29 가 `[logs]` 의 정규식 정리를 기각한 이유가 여기에는 해당하지 않는다. `python3` 이 없을 때의 원인(마지막 줄)은 그대로 간다 |
+| 인라인 스킬 결과의 "Allowed Tools:" 는 스킬이 선언한 목록 | 천장으로 좁힌 목록(`InlineSkillCeiling` 스냅숏). 천장이 묶이지 않은 곳은 선언 그대로 | "only these tools" 바로 위의 목록이 이미 거절될 도구를 보여 주면 모델이 그것을 부르고 거절을 겪는다 |
+| 좁혀진 턴의 승인 필요 스킬은 "ask for it again in a new turn"(§7.2) | 그 조언은 승인 채널이 있는 메인 루프 턴(SK-11.4 사전 검사기)에만. 포크·슬래시 스킬 루프·헤드리스 턴은 좁혀졌어도 "no approval channel is available" 그대로(`InlineSkillCeiling.isApprovalInNewTurn()`) | 그 루프들에는 어느 턴에도 승인 채널이 없다 — 다시 물으라는 조언은 오지 않을 승인을 쫓게 한다 |

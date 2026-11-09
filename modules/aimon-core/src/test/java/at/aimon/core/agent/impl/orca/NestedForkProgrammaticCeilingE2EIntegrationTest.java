@@ -194,8 +194,8 @@ class NestedForkProgrammaticCeilingE2EIntegrationTest {
     }
 
     @Test
-    @DisplayName("3: outer declares nothing — inner is not offered ExecuteCode; the caller-ceiling WARN says why, its"
-            + " iteration span does not (a departure from the design's premise)")
+    @DisplayName("3: outer declares nothing — inner is not offered ExecuteCode; its iteration spans carry"
+            + " ptc.unavailable_reason and the caller-ceiling WARN says why (TC-30)")
     void middleForkWithoutPtc() {
         registerForks(ProgrammaticToolSettings.none());
 
@@ -208,11 +208,12 @@ class NestedForkProgrammaticCeilingE2EIntegrationTest {
         final List<TraceSpan> innerIterations = spans.bySession(llmClient.sessionId).stream()
                 .filter(span -> span.getType() == SpanType.ITERATION)
                 .filter(span -> innerName.equals(span.getAttributes().get("subagent"))).toList();
-        // The design expected ptc.unavailable_reason here. It is not set: the inner fork's offer already carries the
-        // narrowed settings (none), and the offer reports a reason only for an agent that opens tools to code
-        // (ExecuteCodePlan#reportedReason). What tells the operator is the manager's caller-ceiling WARN.
-        assertThat(innerIterations).isNotEmpty().allSatisfy(
-                span -> assertThat(span.getAttributes()).doesNotContainKey(CodeSpanAttributes.UNAVAILABLE_REASON));
+        // The inner fork's offer carries the narrowed settings (none), and the manager's reason rides along with them,
+        // so each of its iterations says why it got no ExecuteCode (TC-30) — not only the once-per-name WARN.
+        assertThat(innerIterations).isNotEmpty()
+                .allSatisfy(span -> assertThat(span.getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
+                        .isEqualTo("the subagent sets programmatic-tools [Read, Grep], but its caller opens no tool "
+                                + "to code, and a caller's programmatic settings are its ceiling"));
         assertThat(warnings.list).filteredOn(event -> event.getLevel() == Level.WARN)
                 .extracting(ILoggingEvent::getFormattedMessage).anySatisfy(
                         message -> assertThat(message).contains("'" + innerName + "'").contains("caller allows none"));

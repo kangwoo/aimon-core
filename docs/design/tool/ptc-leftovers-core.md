@@ -26,7 +26,8 @@
 > ([`../README.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록)). The body's citations (`file:line`) are at
 > `318805f5`; its path shorthands (`core/`, `coreT/`, `rt`, `ptc.md`, `shell.md`, `features.md`, `register`) are defined
 > in the preamble. The review transcripts and the run's `TASK.md` are not in the repository. The open questions that
-> outlive PR 1 are TC-30 and TC-31 in the register; OQ-3, OQ-4 and OQ-8 are answered in §4.
+> outlive PR 1 are TC-30 and TC-31 in the register, both closed since by the PTC wrap-up (the last table of
+> [`programmatic-tool-calling.md`](programmatic-tool-calling.md) §21); OQ-3, OQ-4 and OQ-8 are answered in §4.
 >
 > It is in English, like its siblings in this directory written from an approved run; `docs/design/` is not a
 > translation target (`docs/project/documentation-guide.md` §5.1).

@@ -81,6 +81,7 @@ public final class SubagentExecutionContext {
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final ContextEngine contextEngine;
+    private final String programmaticCeilingReason;
 
     private SubagentExecutionContext(Builder builder) {
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -101,6 +102,7 @@ public final class SubagentExecutionContext {
         this.executionEnvironment = builder.executionEnvironment;
         this.executionEnvironmentProvider = builder.executionEnvironmentProvider;
         this.contextEngine = builder.contextEngine;
+        this.programmaticCeilingReason = builder.programmaticCeilingReason;
     }
 
     /**
@@ -253,6 +255,18 @@ public final class SubagentExecutionContext {
     }
 
     /**
+     * Returns why the caller's programmatic settings left this fork no {@code ExecuteCode} although its own definition
+     * opts in ({@code programmatic-tools}): the fork's offer reports it on each iteration's span as
+     * {@code ptc.unavailable_reason} (TC-30), since the fork's own settings arrive already narrowed to none and would
+     * not say so themselves.
+     *
+     * @return the reason, or empty when the caller's ceiling did not empty the fork's settings
+     */
+    public Optional<String> getProgrammaticCeilingReason() {
+        return Optional.ofNullable(programmaticCeilingReason);
+    }
+
+    /**
      * Gets the available tools from the tool handler's registry.
      *
      * @return An immutable list of available tools (never null)
@@ -276,6 +290,7 @@ public final class SubagentExecutionContext {
         private ContextEngine contextEngine;
         private ExecutionEnvironment executionEnvironment;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
+        private String programmaticCeilingReason;
 
         /** agentRuntimeId를 설정한다. */
         public Builder agentRuntimeId(AgentRuntimeId agentRuntimeId) {
@@ -413,6 +428,19 @@ public final class SubagentExecutionContext {
          */
         public Builder contextEngine(ContextEngine contextEngine) {
             this.contextEngine = contextEngine;
+            return this;
+        }
+
+        /**
+         * Sets why the caller's programmatic settings left the fork no {@code ExecuteCode} although its own definition
+         * opts in.
+         *
+         * @param programmaticCeilingReason
+         *            the reason, or null when the caller's ceiling did not empty the fork's settings
+         * @return this builder
+         */
+        public Builder programmaticCeilingReason(String programmaticCeilingReason) {
+            this.programmaticCeilingReason = programmaticCeilingReason;
             return this;
         }
 
