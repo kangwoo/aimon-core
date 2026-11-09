@@ -18,6 +18,7 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +94,15 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
     static final int MAX_REPLY_BYTES = 1024 * 1024;
 
     private static final Logger log = LoggerFactory.getLogger(ShellCodeExecutionEngine.class);
+
+    /** What an absolute path in the shell's stderr becomes in the model's {@code [logs]} (TC-31). */
+    static final String HOST_PATH = "<host path>";
+
+    /**
+     * An absolute POSIX path: {@code /} and a segment, any number of times. Not after a word character, {@code :},
+     * {@code /} or {@code .}, so a URL's {@code //host/p}, a relative {@code a/b} and a fraction stay as they are.
+     */
+    private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w:/.])(?:/[^\\s/'\"():,;]+)+/?");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String RUNTIME_RESOURCE = "aimon_ptc.py";
@@ -382,13 +392,45 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         }
         final int exit = result == null ? -1 : result.exitCode();
         final String stderr = (run.shellStderr() + "\n" + (result == null ? "" : result.stderr())).strip();
+        // TC-31: what the shell itself wrote — a traceback from before the runtime installed its printers, or
+        // python3's own complaint — names host paths and runtime frames. The host log keeps all of it; the model gets
+        // its last line with the paths taken out, which is the part that says what went wrong.
+        if (logs.isEmpty() && !stderr.isEmpty()) {
+            log.warn(
+                    "ExecuteCode: the shell engine's runtime ended without finishing (exit code {}); shell stderr:\n{}",
+                    exit, stderr);
+        }
+        final String modelLogs = logs.isEmpty() ? modelVisibleStderr(stderr) : logs;
         if (exit == 127) {
             probes.put(environment, EngineAvailability.unavailable("python3 is not installed"));
-            return outcome(CodeExecutionStatus.SCRIPT_ERROR, stdout, logs.isEmpty() ? stderr : logs,
+            return outcome(CodeExecutionStatus.SCRIPT_ERROR, stdout, modelLogs,
                     "python3 is not available in this environment");
         }
-        return outcome(CodeExecutionStatus.SCRIPT_ERROR, stdout, logs.isEmpty() ? stderr : logs,
+        return outcome(CodeExecutionStatus.SCRIPT_ERROR, stdout, modelLogs,
                 "the runtime ended without finishing (exit code " + exit + ")");
+    }
+
+    /**
+     * What the model sees of the shell's own stderr when the runtime ended without {@code DONE} and sent no logs
+     * (TC-31): the last non-blank line, with every absolute path replaced by {@value #HOST_PATH}.
+     *
+     * <p>
+     * Unlike the runtime's {@code ERR} lines, this text is not the program's output — the runtime had not started it,
+     * or died around it — so rewriting it loses no data the model wrote. The traceback above the last line is the
+     * runtime's own frames, of no use to the model; the last line is the exception or {@code python3}'s message.
+     *
+     * @param stderr
+     *            the shell's stderr tail (must not be null)
+     * @return the line to show, or {@code ""} when there is none
+     */
+    static String modelVisibleStderr(String stderr) {
+        final String[] lines = stderr.split("\\R");
+        for (int i = lines.length - 1; i >= 0; i--) {
+            if (!lines[i].isBlank()) {
+                return ABSOLUTE_PATH.matcher(lines[i].strip()).replaceAll(HOST_PATH);
+            }
+        }
+        return "";
     }
 
     /** How the shell call ended: a result, or one of its exceptions. */

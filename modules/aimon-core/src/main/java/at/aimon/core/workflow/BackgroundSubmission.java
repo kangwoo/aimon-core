@@ -20,7 +20,14 @@ import at.aimon.core.agent.tool.permission.AllowedTool;
  * The runner's base launch context carries the <em>agent's</em> ceiling, because the runner is agent-scoped. Without
  * the submitter's, a skill or a fork that launched a background run would escape its own ceiling: the run's subagents
  * would be bounded by the agent alone (register TC-25). The runner narrows its base by these values, so a run can only
- * do less than both. Every field is optional: absent means the base launch context's value.
+ * do less than both. Every field is optional: a field left unset means the base launch context's value alone.
+ *
+ * <p>
+ * A submission built from a tool call ({@code BackgroundSubmissions.of}) does not leave the ceiling unset, though: it
+ * always sets both fields, from the call's published ceiling. A tool context that publishes no programmatic settings
+ * gives {@link ProgrammaticToolSettings#none()}, so the run's subagents get no {@code ExecuteCode} rather than the
+ * agent's — the ceiling fails closed. (An absent allow-list gives the empty one, which means "unrestricted" and so
+ * leaves the base's.)
  *
  * <p>
  * {@link #ceilingDigest()} names the ceiling for the run id, so an identical request from a narrower caller does not

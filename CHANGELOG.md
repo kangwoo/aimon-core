@@ -7,6 +7,38 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: PTC wrap-up — fork span reason, no-`DONE` stderr, skill-result text
+
+Closes backlog TC-30 and TC-31 and the non-blocking findings left by the PTC leftovers PRs. No breaking change: the
+new methods are additions, and `InlineSkillCeiling.startingAt(List, ProgrammaticToolSettings)` keeps its meaning.
+
+- **Changed: a fork whose caller's ceiling empties its `programmatic-tools` says so on its trace.** Each of its
+  `ITERATION` spans now carries `ptc.unavailable_reason` (for example "the subagent sets programmatic-tools [Read,
+  Grep], but its caller opens no tool to code, …"), as a main-loop agent that opts in already did. New:
+  `SubagentExecutionContext.getProgrammaticCeilingReason()` and its builder setter,
+  `ToolOfferContext.getProgrammaticCeilingReason()` and `ToolOfferContext.Builder.programmaticCeilingReason(String)`
+  (backlog TC-30, closed).
+- **Changed (model-visible): a shell-engine run that ends without `DONE` no longer shows host paths in `[logs]`.** When
+  the runtime sent no logs, the shell's own stderr tail goes to the host log at WARN, and the model gets only its last
+  non-blank line, with every absolute path replaced by `<host path>` (backlog TC-31, closed).
+- **Changed (model-visible): an inline skill's result lists the tools that are left.** "Allowed Tools:", above "For
+  the rest of this turn only these tools are available.", is the skill's list as the execution's ceiling bounded it,
+  not as the skill declared it.
+- **Changed (model-visible): "ask for it again in a new turn" only where a new turn can ask.** An approval-requiring
+  skill in a narrowed turn gets that advice only in a main-loop turn with an approval channel (the SK-11.4 pre-flight
+  scanner). A fork, a slash skill's loop or a headless turn gets "… no approval channel is available in this
+  context.", as it did before it was narrowed. New: `InlineSkillCeiling.startingAt(List, ProgrammaticToolSettings,
+  boolean)` and `isApprovalInNewTurn()`.
+- **Changed: the Python runtime's unraisable header keeps CPython's colon.** On 3.14, where CPython passes an
+  `err_msg` that names the object and no object, the header now ends in `:` as CPython's own hook prints it; a colon
+  already in `err_msg` is not doubled.
+- **Docs:** the `BackgroundSubmission` and `BackgroundSubmissions.of` javadoc say that a submission built from a tool
+  call always sets the ceiling, so a context without programmatic settings narrows a background run to none (fail
+  closed) rather than inheriting the agent's.
+- **Build only:** `CommentReflowTest` fails on an `ALLOWED` entry no line matches any more, builds its keys with `/` on
+  every platform, and scans `MAINTAINERS.md`; the Python unraisable test accepts either CPython header shape and pins
+  both on any interpreter.
+
 ### Changed: PTC leftovers — the comment-reflow guard covers the whole repository
 
 `docs/design/tool/ptc-leftovers-core.md` (PR 3). No runtime or API change.
@@ -32,7 +64,9 @@ listed first; the behaviour changes follow it.
   fork or a turn an inline skill narrowed can no longer reach tools the agent allows but that loop does not. When the
   two allow-lists share no tool, the submission is refused (`BackgroundRunRefusedException`, a tool error that says
   so). The run id now includes a digest of the submitter's ceiling, so the same request from a narrower caller starts
-  its own run instead of joining one in flight under a wider ceiling (backlog TC-25).
+  its own run instead of joining one in flight under a wider ceiling (backlog TC-25). That includes runs submitted
+  before the upgrade: their ids have no digest, so the same request sent after it starts a new run rather than joining
+  one still in flight.
 - **Changed (model-visible): an inline skill the model invokes through `Skill` narrows the rest of the execution.** Its
   `allowed-tools` and programmatic keys now bound the turn, fork or slash skill that invoked it, from the next
   iteration until that execution ends: the offer, the environment facts (a patterned `Bash` turns the shell engine

@@ -20,6 +20,7 @@ import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.environment.exception.StagingException;
@@ -418,6 +419,9 @@ public class SkillTool extends AbstractTool {
                 // before its instructions are injected when the two allow-lists share no tool.
                 final Optional<InlineSkillCeiling> ceiling = context.get(ToolContextKeys.INLINE_SKILL_CEILING);
                 final String ceilingNote;
+                // What the model is told it may use: the skill's list as the ceiling bounded it, so "only these
+                // tools" names the tools that are left, not ones the caller had already taken away.
+                List<AllowedTool> shownAllowedTools = skill.getMetadata().getAllowedTools();
                 if (ceiling.isPresent()) {
                     final InlineSkillCeiling.Snapshot before = ceiling.get().snapshot();
                     final Optional<String> refusal = ceiling.get().narrow(skill.getName(),
@@ -426,7 +430,11 @@ public class SkillTool extends AbstractTool {
                         log.info("Inline skill refused: {}", refusal.get());
                         return ToolResult.error(refusal.get());
                     }
-                    ceilingNote = ceilingNote(skill, before, ceiling.get().snapshot());
+                    final InlineSkillCeiling.Snapshot after = ceiling.get().snapshot();
+                    ceilingNote = ceilingNote(skill, before, after);
+                    if (skill.hasToolRestrictions()) {
+                        shownAllowedTools = after.getAllowedTools();
+                    }
                 } else {
                     log.debug("Inline skill '{}' activated without an inline-skill ceiling bound: its allowed-tools "
                             + "and programmatic settings bound nothing", skill.getName());
@@ -435,7 +443,7 @@ public class SkillTool extends AbstractTool {
 
                 // Format result with skill information (inline mode)
                 final String formattedResult = formatSkillResult(skill, renderedInstructions,
-                        renderContext.getSkillBaseDir().orElse(null), ceilingNote);
+                        renderContext.getSkillBaseDir().orElse(null), shownAllowedTools, ceilingNote);
 
                 return ToolResult.success(formattedResult);
             }
@@ -456,9 +464,11 @@ public class SkillTool extends AbstractTool {
         return switch (decision) {
             case DENY -> String.format("Skill invocation denied by policy: '%s'.", skill.getName());
             // A turn an inline skill has narrowed never suspends for approval (the narrowing would not survive the
-            // resumption), so the approval is asked for in a new turn instead.
+            // resumption), so the approval is asked for in a new turn instead — where there is one to ask in: only a
+            // main-loop turn with an approval channel. A fork, a slash skill's loop and a headless turn get the
+            // plain no-channel message, narrowed or not.
             case ASK -> context.get(ToolContextKeys.INLINE_SKILL_CEILING)
-                    .filter(ceiling -> ceiling.snapshot().isNarrowed()).isPresent()
+                    .filter(ceiling -> ceiling.isApprovalInNewTurn() && ceiling.snapshot().isNarrowed()).isPresent()
                             ? String.format(
                                     "Skill '%s' requires user approval, which cannot be asked for in a turn an "
                                             + "inline skill has narrowed; ask for it again in a new turn.",
@@ -490,11 +500,15 @@ public class SkillTool extends AbstractTool {
      *            The instructions text produced by the renderer
      * @param stagedDir
      *            The directory the skill was staged to (its {@code ${AIMON_SKILL_DIR}}), or null when it was not staged
+     * @param allowedTools
+     *            the allow-list to show: the skill's own as the inline-skill ceiling bounded it, or as declared when no
+     *            ceiling is bound; read only when the skill declares one
      * @param ceilingNote
      *            what the activation narrowed for the rest of the execution ({@link #ceilingNote}), or empty
      * @return A formatted string representation
      */
-    private String formatSkillResult(Skill skill, String renderedInstructions, String stagedDir, String ceilingNote) {
+    private String formatSkillResult(Skill skill, String renderedInstructions, String stagedDir,
+            List<AllowedTool> allowedTools, String ceilingNote) {
         final StringBuilder output = new StringBuilder();
 
         output.append("=== Skill Activated ===").append(Constants.NEWLINE);
@@ -504,8 +518,7 @@ public class SkillTool extends AbstractTool {
         // Include allowed tools if specified
         if (skill.hasToolRestrictions()) {
             output.append("Allowed Tools: ");
-            output.append(skill.getMetadata().getAllowedTools().stream().map(Object::toString)
-                    .reduce((a, b) -> a + ", " + b).orElse("None"));
+            output.append(allowedTools.stream().map(Object::toString).reduce((a, b) -> a + ", " + b).orElse("None"));
             output.append(Constants.DOUBLE_NEWLINE);
         } else {
             output.append("Allowed Tools: No restrictions").append(Constants.DOUBLE_NEWLINE);

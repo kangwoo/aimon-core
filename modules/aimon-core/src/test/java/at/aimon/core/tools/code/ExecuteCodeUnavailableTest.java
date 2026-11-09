@@ -155,6 +155,25 @@ class ExecuteCodeUnavailableTest {
         assertThat(warnings).anySatisfy(w -> assertThat(w).contains("agent-sandboxed").contains("no python engine"));
     }
 
+    @Test
+    @DisplayName("TC-30: a ceiling that emptied the settings is reported as the unavailable reason, without a WARN")
+    void ceilingReasonIsReported() {
+        final DefaultToolRegistry registry = registry(List.of(ScriptedEngine.javascript()), true);
+        final List<String> warnings = captureWarnings(() -> {
+            final ToolOfferContext emptied = ToolOfferContext.builder().registry(registry)
+                    .programmatic(ProgrammaticToolSettings.none()).programmaticCeilingReason("caller allows none")
+                    .agentName("fork-emptied").build();
+            assertThat(offered(emptied)).containsExactly("Grep");
+            assertThat(emptied.getUnavailableReasons()).containsEntry(ExecuteCodeTool.TOOL_NAME, "caller allows none");
+            final ToolOfferContext plain = ToolOfferContext.builder().registry(registry)
+                    .programmatic(ProgrammaticToolSettings.none()).agentName("fork-plain").build();
+            plain.offer();
+            assertThat(plain.getUnavailableReasons()).isEmpty();
+            return null;
+        });
+        assertThat(warnings).noneSatisfy(w -> assertThat(w).contains("fork-"));
+    }
+
     private static List<String> captureWarnings(Supplier<Void> action) {
         final Logger logger = (Logger) LoggerFactory.getLogger(ExecuteCodePlan.class);
         final ListAppender<ILoggingEvent> appender = new ListAppender<>();

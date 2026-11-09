@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 31건 (열림 20 · 닫힘 11)
+# 도구 계약 — 등록 항목 31건 (열림 18 · 닫힘 13)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -487,7 +487,7 @@ event loop")으로 시작했다. 설명은 "Functions:" 아래에 `async def` �
 자신의 stderr 꼬리를 `[logs]` 로 싣는다 — TC-31. 검사: `ShellRuntimeProgramTest`(어느 로그에도 `aimon_ptc` 와 절대 `.py` 경로가 없다).
 실제 모델 E2E(2026-11-07, `gpt-4o`·`gpt-4o-mini` × JavaScript·Python)는 네 실행 모두 프로그램 하나로 통과해 오류 경로를 밟지 않았다.
 
-## TC-30 — 호출자 천장이 포크의 PTC 를 없앨 때 iteration span 이 이유를 싣지 않는다 · **열림**
+## TC-30 — 호출자 천장이 포크의 PTC 를 없앨 때 iteration span 이 이유를 싣지 않는다 · **닫힘** *(2026-11-10)*
 
 **무엇을.** 포크 자신의 정의는 `programmatic-tools` 로 opt-in 했는데 호출자의 실효 설정이 그것을 "아무것도 없음" 으로 좁혀
 `ExecuteCode` 가 제안되지 않을 때, 그 포크의 iteration span 에도 `ptc.unavailable_reason` 을 싣는다.
@@ -504,7 +504,16 @@ allows none") 하나뿐이고, 그것도 서브에이전트 이름마다 JVM 에
 
 **언제 다시 볼까.** 포크가 `ExecuteCode` 를 못 받은 이유를 trace 로 찾는 요청이 올 때 — 또는 TC-23(슬래시 스킬 루프의 span)과 함께.
 
-## TC-31 — `DONE` 없이 끝난 셸 엔진 실행의 `[logs]` 에 셸 stderr 가 실린다 · **열림**
+**어떻게 닫았나.** 이유를 만드는 곳은 천장을 적용하는 실행 관리자 하나다 — `DefaultSubagentExecutionManager.programmaticCeilingReason` 이
+세 경우(호출자가 코드에 도구를 열지 않음, 엔진 충돌, 겹치는 도구 없음)를 말로 만들고 `SubagentExecutionContext` 의 새 선택 필드
+`programmaticCeilingReason` 으로 포크에 넘긴다. 포크는 그것을 제안 문맥(`ToolOfferContext.Builder.programmaticCeilingReason`)에 싣고,
+`ExecuteCodePlan.of` 는 설정이 꺼져 있어도 그 이유가 있으면 보고한다(`reportedReason`) — `CodeSpanAttributes.annotateIteration` 이
+그대로 iteration span 에 붙인다. WARN 은 더하지 않았다: 관리자의 서브에이전트당 한 번 WARN 이 이미 있다. 포크의 설정에 "원래 값" 을
+되싣는 길은 기각했다 — 좁혀진 `Subagent` 가 디스패처와 제안의 단일 출처라는 성질(`SubagentToolScope.withProgrammatic`)이 깨진다. 검사:
+`NestedForkProgrammaticCeilingE2EIntegrationTest#middleForkWithoutPtc`(이제 속성이 있다), `DefaultSubagentExecutionManagerProgrammaticCeilingTest`
+의 TC-30 세 건, `ExecuteCodeUnavailableTest#ceilingReasonIsReported`.
+
+## TC-31 — `DONE` 없이 끝난 셸 엔진 실행의 `[logs]` 에 셸 stderr 가 실린다 · **닫힘** *(2026-11-10)*
 
 **무엇을.** 런타임이 `DONE` 없이 끝났을 때 셸 자신의 stderr 꼬리(`ShellProgramRun.shellStderr()`)를 모델이 보는 `[logs]` 로 싣는 대신
 호스트 로그에만 남길지 정한다.
@@ -519,3 +528,10 @@ allows none") 하나뿐이고, 그것도 서브에이전트 이름마다 JVM 에
 2026-11-07 확인.
 
 **언제 다시 볼까.** `DONE` 없는 종료가 운영에서 보일 때, 또는 TC-19 의 `aimon-sandbox` 쪽 후속과 함께.
+
+**어떻게 닫았나.** 둘 다 했다 — 호스트 로그에 남기고, 모델에게는 정리한 한 줄을 준다. `classify` 는 런타임이 보낸 로그가 없고 셸 stderr
+가 있으면 꼬리 전체를 WARN 으로 남기고, `[logs]` 에는 `modelVisibleStderr` 가 고른 마지막 비어 있지 않은 줄을 싣되 절대 경로를
+`<host path>` 로 바꾼다(URL·상대 경로·분수는 그대로). TC-29 가 `[logs]` 의 정규식 정리를 기각한 이유 — 임의의 프로그램 출력이라 데이터와
+런타임 프레임을 가르지 못한다 — 는 여기에 해당하지 않는다: 이 텍스트는 런타임이 프로그램을 시작하기 전(또는 그 주변)에 셸이 쓴 것이다.
+마지막 줄만 남겨도 원인은 남는다 — `ModuleNotFoundError: …`, `python3: can't open file '<host path>': …`, exit 127 의 `python3: not found`.
+검사: `ShellEngineProtocolTest#exitWithoutDoneScrubsHostPaths`, `#modelVisibleStderr`, `#exitWithoutDone`.

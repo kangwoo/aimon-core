@@ -888,6 +888,8 @@ public class OrcaAgentExecutor
      *            reads the session's sealed ranges, or {@code null} when the transcript manager seals nothing
      * @param toolCallDispatcher
      *            the turn's dispatcher, bound under the write-once {@link ToolContextKeys#TOOL_CALL_DISPATCHER}
+     * @param approvalChannel
+     *            whether the turn can suspend for skill approval (a pre-flight scanner is configured)
      * @return The tool context (never null)
      */
     // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
@@ -895,7 +897,7 @@ public class OrcaAgentExecutor
     private static ToolContext createToolContext(ExecutionScope scope, ToolRegistry sessionRegistry,
             CancellationSignal cancellationSignal, MessageQueueManager messageQueueManager,
             Consumer<AgentExecutionEvent> agentEventSink, SessionLogReader logReader,
-            ToolCallDispatcher toolCallDispatcher) {
+            ToolCallDispatcher toolCallDispatcher, boolean approvalChannel) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, scope.agentRuntime.getId());
         builder.put(ToolContextKeys.SESSION_ID, scope.transcriptBuffer.getSessionId());
@@ -960,9 +962,10 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, toolCallDispatcher);
         // The turn's tool ceiling, which a model-invoked inline skill narrows for the rest of the turn; the loop
         // applies it from the next iteration (programmatic-tool-calling design §7.2). Write-once and before the
-        // enrichers, like the dispatcher it narrows.
-        builder.put(ToolContextKeys.INLINE_SKILL_CEILING, InlineSkillCeiling
-                .startingAt(scope.getAgent().getAllowedTools(), scope.getAgent().getMetadata().getProgrammatic()));
+        // enrichers, like the dispatcher it narrows. With a pre-flight scanner, an approval a narrowed turn cannot ask
+        // for can be asked for in the next turn, and SkillTool says so; without one no turn can.
+        builder.put(ToolContextKeys.INLINE_SKILL_CEILING, InlineSkillCeiling.startingAt(
+                scope.getAgent().getAllowedTools(), scope.getAgent().getMetadata().getProgrammatic(), approvalChannel));
 
         applyEnrichers(builder, scope);
 
@@ -1711,7 +1714,7 @@ public class OrcaAgentExecutor
                 scope.getExecutionAttributes(), sessionRegistry, coordinator);
         final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
                 messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
-                transcriptManager.getLogReader().orElse(null), toolCallDispatcher);
+                transcriptManager.getLogReader().orElse(null), toolCallDispatcher, skillPreflightScanner != null);
         // Applies the turn's inline-skill ceiling at each iteration boundary: the turn's dispatcher until a
         // model-invoked inline skill narrows it, then that dispatcher narrowed to the skill (TC-26).
         final InlineSkillNarrowing inlineSkillNarrowing = new InlineSkillNarrowing(toolCallDispatcher,

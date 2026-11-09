@@ -36,9 +36,11 @@ import at.aimon.core.agent.tool.permission.AllowedTools;
 public final class InlineSkillCeiling {
 
     private Snapshot current;
+    private final boolean approvalInNewTurn;
 
-    private InlineSkillCeiling(Snapshot current) {
+    private InlineSkillCeiling(Snapshot current, boolean approvalInNewTurn) {
         this.current = current;
+        this.approvalInNewTurn = approvalInNewTurn;
     }
 
     /**
@@ -51,9 +53,43 @@ public final class InlineSkillCeiling {
      * @return a new ceiling (never null)
      */
     public static InlineSkillCeiling startingAt(List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic) {
+        return startingAt(allowedTools, programmatic, false);
+    }
+
+    /**
+     * Returns a ceiling that starts at the loop's own values and has not been narrowed, saying whether a skill call
+     * that needs approval could be approved in a later turn of the same session.
+     *
+     * <p>
+     * Only a main-loop turn with an approval channel (the SK-11.4 pre-flight scanner) can say yes: once an inline skill
+     * has narrowed that turn it no longer suspends for approval, but the user can approve the skill and the model can
+     * call it again in the next turn. A fork, a slash skill's loop or a headless turn has no approval channel in any
+     * turn, so telling its model to ask again would send it after an approval that cannot come.
+     *
+     * @param allowedTools
+     *            the loop's effective allow-list; empty means unrestricted (must not be null)
+     * @param programmatic
+     *            the loop's effective programmatic settings (must not be null)
+     * @param approvalInNewTurn
+     *            whether an approval this execution cannot ask for can be asked for in a new turn
+     * @return a new ceiling (never null)
+     */
+    public static InlineSkillCeiling startingAt(List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic,
+            boolean approvalInNewTurn) {
         Objects.requireNonNull(allowedTools, "allowedTools cannot be null");
         Objects.requireNonNull(programmatic, "programmatic cannot be null");
-        return new InlineSkillCeiling(new Snapshot(List.copyOf(allowedTools), programmatic, List.of(), 0));
+        return new InlineSkillCeiling(new Snapshot(List.copyOf(allowedTools), programmatic, List.of(), 0),
+                approvalInNewTurn);
+    }
+
+    /**
+     * Returns whether a skill call this execution cannot ask approval for could be approved in a new turn — set by the
+     * loop that bound the ceiling ({@link #startingAt(List, ProgrammaticToolSettings, boolean)}).
+     *
+     * @return {@code true} only for a main-loop turn with an approval channel
+     */
+    public boolean isApprovalInNewTurn() {
+        return approvalInNewTurn;
     }
 
     /**

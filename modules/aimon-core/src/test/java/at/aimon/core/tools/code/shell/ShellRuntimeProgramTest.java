@@ -37,6 +37,12 @@ class ShellRuntimeProgramTest {
 
     /** An absolute path to a Python file, as a traceback of the runtime or the stdlib would print it. */
     private static final Pattern ABSOLUTE_PY = Pattern.compile("(^|[\\s\"'])/[^\\s\"']+\\.py");
+    /**
+     * The header of the {@code Holder.__del__} unraisable in either CPython shape: {@code <err_msg>: <object>} (up to
+     * 3.13) or {@code <err_msg naming the object>:} (3.14) — exactly one colon, wherever CPython puts it.
+     */
+    private static final Pattern UNRAISABLE_HEADER = Pattern.compile("(?m)^Exception ignored [^:\\n]*(: <function "
+            + "Holder\\.__del__ at 0x[0-9a-f]+>|<function Holder\\.__del__ at 0x[0-9a-f]+>:)$");
 
     @TempDir
     Path tempDir;
@@ -149,13 +155,31 @@ class ShellRuntimeProgramTest {
         final CodeExecutionOutcome outcome = run(ScriptedToolCallBridge.succeedingWith("ok"), "class Holder:\n"
                 + "    def __del__(self):\n" + "        json.dumps(object())\n" + "h = Holder()\n" + "del h\n");
         assertThat(outcome.getStatus()).as(outcome.getLogs()).isEqualTo(CodeExecutionStatus.COMPLETED);
-        // The header is CPython's own err_msg, passed through: "Exception ignored in: <function Holder.__del__ ...>"
-        // up to 3.13, "Exception ignored while calling deallocator <function Holder.__del__ ...>" from 3.14. Only
-        // the common part is asserted.
-        assertThat(outcome.getLogs()).contains("Exception ignored ").contains("<function Holder.__del__ at ")
+        // The header is CPython's own err_msg, in CPython's own shape: "Exception ignored in: <function
+        // Holder.__del__ ...>" up to 3.13 (err_msg and object), "Exception ignored while calling deallocator
+        // <function Holder.__del__ ...>:" from 3.14 (err_msg naming the object, object None). Either shape is
+        // accepted; each is pinned on every interpreter by unraisableHeaderShapes.
+        assertThat(outcome.getLogs()).containsPattern(UNRAISABLE_HEADER)
                 .contains("File \"<program>\", line 3, in __del__")
                 .contains("TypeError: Object of type object is not JSON serializable").doesNotContain("encoder.py");
         assertProgramOnly(outcome.getLogs());
+    }
+
+    @Test
+    @DisplayName("the unraisable header keeps CPython's shape for both err_msg forms, with one colon, on any interpreter")
+    void unraisableHeaderShapes() throws IOException {
+        // Calls the installed hook directly, so the 3.14 form (object None) is exercised on an older interpreter too.
+        final CodeExecutionOutcome outcome = run(ScriptedToolCallBridge.succeedingWith("ok"),
+                "import sys, types\n" + "def u(msg, obj):\n"
+                        + "    return types.SimpleNamespace(err_msg=msg, object=obj, exc_type=None, exc_value=None,"
+                        + " exc_traceback=None)\n" + "sys.unraisablehook(u('Exception ignored in', 'OBJ'))\n"
+                        + "sys.unraisablehook(u('Exception ignored while calling deallocator <D>', None))\n"
+                        + "sys.unraisablehook(u('Exception ignored while finalizing <F>:', None))\n"
+                        + "sys.unraisablehook(u(None, None))\n");
+        assertThat(outcome.getStatus()).as(outcome.getLogs()).isEqualTo(CodeExecutionStatus.COMPLETED);
+        assertThat(outcome.getLogs().lines().filter(line -> line.startsWith("Exception ignored")).toList())
+                .containsExactly("Exception ignored in: 'OBJ'", "Exception ignored while calling deallocator <D>:",
+                        "Exception ignored while finalizing <F>:", "Exception ignored in:");
     }
 
     private static void assertProgramOnly(String logs) {

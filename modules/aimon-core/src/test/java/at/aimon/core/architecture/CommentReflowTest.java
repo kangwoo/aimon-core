@@ -40,9 +40,9 @@ import org.junit.jupiter.api.Test;
  * from the formatter, which runs on all of them, so no module is less exposed than another. There are no generated
  * sources under {@code src/} (annotation-processor output goes to {@code build/generated}), so nothing is excluded.
  * For Markdown, every {@code docs/**}{@code /*.md} file, translations included, and the repository-root documents
- * ({@code README}, {@code CONTRIBUTING}, {@code SECURITY}, {@code CODE_OF_CONDUCT}, {@code CHANGELOG} and their
- * {@code .ko.md}). Of a {@code CHANGELOG} only the {@code [Unreleased]} section is read: released sections are history
- * and stay as they were written.
+ * ({@code README}, {@code CONTRIBUTING}, {@code SECURITY}, {@code CODE_OF_CONDUCT}, {@code MAINTAINERS},
+ * {@code CHANGELOG} and their {@code .ko.md}). Of a {@code CHANGELOG} only the {@code [Unreleased]} section is read:
+ * released sections are history and stay as they were written.
  *
  * <h2>The orphan</h2>
  *
@@ -98,9 +98,14 @@ class CommentReflowTest {
 
     /** The repository-root documents, each scanned with its {@code .ko.md} translation when one exists. */
     private static final List<String> ROOT_DOCUMENTS = List.of("README", "CONTRIBUTING", "SECURITY", "CODE_OF_CONDUCT",
-            "CHANGELOG");
+            "MAINTAINERS", "CHANGELOG");
 
-    /** Accepted orphans, keyed by {@code <path>:<trimmed line text>}, each with its reason. */
+    /**
+     * Accepted orphans, keyed by {@code <path>:<trimmed line text>}, each with its reason. The path is relative to the
+     * repository root and separated by {@code /} on every platform ({@link #key}). Each entry must still be hit: the
+     * scan of its kind ({@code .java} or {@code .md}) fails on one that no longer matches a line, so a fixed or moved
+     * line does not leave an exemption behind for whatever comes to match it next.
+     */
     private static final Map<String, String> ALLOWED = Map.of("docs/design/README.md:옛 절 번호가 맞지 않는다.",
             "the deleted-records note starts each area (llm, session, tool) on a line of its own",
             "docs/design/README.md:`08c686e8` · `18fe9033` · `dabaafc3` · `2ba9ec61` 이다.",
@@ -122,16 +127,19 @@ class CommentReflowTest {
     void noOrphansInJava() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
         final List<String> orphans = new ArrayList<>();
+        final Set<String> allowedHit = new TreeSet<>();
         final List<Path> files = javaSources();
         for (Path file : files) {
             final List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             for (int i : javaOrphans(lines)) {
-                report(orphans, file, i, lines.get(i));
+                report(orphans, allowedHit, file, i, lines.get(i));
             }
         }
         assertThat(files).as("files scanned").hasSizeGreaterThan(1000);
         assertThat(orphans).as("comment lines stranded by a wrap — join each to the line after it and re-wrap, or add"
                 + " a reasoned entry to ALLOWED").isEmpty();
+        assertThat(allowedHit).as("ALLOWED .java entries still hit")
+                .containsExactlyInAnyOrderElementsOf(allowed(".java"));
     }
 
     @Test
@@ -155,6 +163,7 @@ class CommentReflowTest {
     void noOrphansInMarkdown() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
         final List<String> orphans = new ArrayList<>();
+        final Set<String> allowedHit = new TreeSet<>();
         final List<Path> files = markdownDocuments();
         for (Path file : files) {
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
@@ -162,13 +171,16 @@ class CommentReflowTest {
                 lines = unreleasedOnly(lines);
             }
             for (int i : markdownOrphans(lines)) {
-                report(orphans, file, i, lines.get(i));
+                report(orphans, allowedHit, file, i, lines.get(i));
             }
         }
-        assertThat(files).as("documents scanned").hasSizeGreaterThan(100)
-                .contains(REPOSITORY_ROOT.resolve("CHANGELOG.md"), REPOSITORY_ROOT.resolve("CONTRIBUTING.ko.md"));
+        assertThat(files).as("documents scanned").hasSizeGreaterThan(100).contains(
+                REPOSITORY_ROOT.resolve("CHANGELOG.md"), REPOSITORY_ROOT.resolve("CONTRIBUTING.ko.md"),
+                REPOSITORY_ROOT.resolve("MAINTAINERS.md"));
         assertThat(orphans).as("prose lines stranded by a wrap — join each to the line after it and re-wrap, or add a"
                 + " reasoned entry to ALLOWED").isEmpty();
+        assertThat(allowedHit).as("ALLOWED .md entries still hit — remove an entry whose line is gone or fixed")
+                .containsExactlyInAnyOrderElementsOf(allowed(".md"));
     }
 
     @Test
@@ -215,6 +227,8 @@ class CommentReflowTest {
         assertThat(javaOrphans(List.of(forced, full, " * nextword continues."))).isEmpty();
         assertThat(unit("({@link Foo#bar(int, long)}), then")).isEqualTo("({@link Foo#bar(int, long)}),");
         assertThat(unit("plain words")).isEqualTo("plain");
+        // The ALLOWED key joins path names with '/', so a Windows path builds the same key.
+        assertThat(key(Path.of("docs", "design", "README.md"), "  text  ")).isEqualTo("docs/design/README.md:text");
 
         final String wide = "가나다 ".repeat(15) + "and a few more words";
         assertThat(markdownOrphans(List.of(wide, "모델", "코드는 그 뒤에 이어진다."))).containsExactly(1);
@@ -223,8 +237,8 @@ class CommentReflowTest {
         assertThat(markdownOrphans(List.of(wide, "- item", "next"))).isEmpty();
         assertThat(markdownOrphans(List.of(wide, wide, wide))).isEmpty();
         assertThat(markdownOrphans(List.of("```", wide, "a b", "c", "```"))).isEmpty();
-        final String english = "When one document carries several spellings and they disagree with each other, the strictest"
-                + " one of them wins";
+        final String english = "When one document carries several spellings and they disagree with each other, the"
+                + " strictest one of them wins";
         assertThat(english.length()).isGreaterThanOrEqualTo(MARKDOWN_WIDE_LINE);
         assertThat(markdownOrphans(List.of(english, "the", "verdict, and the rest follows."))).containsExactly(1);
     }
@@ -458,11 +472,34 @@ class CommentReflowTest {
         return files;
     }
 
-    private static void report(List<String> orphans, Path file, int index, String line) {
-        final String relative = REPOSITORY_ROOT.relativize(file).toString();
-        if (!ALLOWED.containsKey(relative + ":" + line.strip())) {
-            orphans.add(relative + ":" + (index + 1) + ": " + line.strip());
+    private static void report(List<String> orphans, Set<String> allowedHit, Path file, int index, String line) {
+        final String key = key(REPOSITORY_ROOT.relativize(file), line);
+        if (ALLOWED.containsKey(key)) {
+            allowedHit.add(key);
+        } else {
+            orphans.add(key(REPOSITORY_ROOT.relativize(file), "") + (index + 1) + ": " + line.strip());
         }
+    }
+
+    /**
+     * The {@link #ALLOWED} key of a line: its repository-relative path with {@code /} between the names whatever the
+     * platform's separator, a colon, and the trimmed line.
+     */
+    static String key(Path relative, String line) {
+        final List<String> names = new ArrayList<>();
+        relative.forEach(name -> names.add(name.toString()));
+        return String.join("/", names) + ":" + line.strip();
+    }
+
+    /** The {@link #ALLOWED} keys whose path ends in {@code extension}. */
+    private static Set<String> allowed(String extension) {
+        final Set<String> keys = new TreeSet<>();
+        for (String key : ALLOWED.keySet()) {
+            if (key.substring(0, key.indexOf(':')).endsWith(extension)) {
+                keys.add(key);
+            }
+        }
+        return keys;
     }
 
     /**

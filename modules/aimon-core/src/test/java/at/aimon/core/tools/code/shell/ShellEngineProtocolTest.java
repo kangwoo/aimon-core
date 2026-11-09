@@ -227,6 +227,37 @@ class ShellEngineProtocolTest {
         assertThat(missing.outcome.getStatus()).isEqualTo(CodeExecutionStatus.SCRIPT_ERROR);
         assertThat(missing.outcome.getErrorMessage()).hasValueSatisfying(m -> assertThat(m).contains("python3"));
         assertThat(engine.probe(missing.environment).isAvailable()).isFalse();
+        assertThat(missing.outcome.getLogs()).isEqualTo("python3: not found");
+    }
+
+    @Test
+    @DisplayName("TC-31: without DONE, the model sees the shell stderr's last line with host paths taken out")
+    void exitWithoutDoneScrubsHostPaths() {
+        final Outcome crashed = run((runtime, listener) -> {
+            listener.onStderrLine("Traceback (most recent call last):");
+            listener.onStderrLine("  File \"/var/folders/xy/T/aimon-run-1/aimon_ptc.py\", line 12, in <module>");
+            listener.onStderrLine("    import missing_module");
+            listener.onStderrLine("ModuleNotFoundError: No module named 'missing_module'");
+            return new ShellCommandResult(1, "", "", Duration.ZERO);
+        });
+        assertThat(crashed.outcome.getLogs()).isEqualTo("ModuleNotFoundError: No module named 'missing_module'");
+
+        final Outcome unopened = run((runtime, listener) -> new ShellCommandResult(2, "",
+                "python3: can't open file '/private/tmp/aimon-run-2/aimon_ptc.py': [Errno 2] No such file or directory",
+                Duration.ZERO));
+        assertThat(unopened.outcome.getLogs())
+                .isEqualTo("python3: can't open file '<host path>': [Errno 2] No such file or directory")
+                .doesNotContain("aimon_ptc");
+    }
+
+    @Test
+    @DisplayName("TC-31: the scrub keeps URLs, relative paths and fractions, and replaces every absolute path")
+    void modelVisibleStderr() {
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("")).isEmpty();
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("a\n\n  \n")).isEqualTo("a");
+        assertThat(ShellCodeExecutionEngine
+                .modelVisibleStderr("OSError: see https://x.org/a/b and a/b, 1/2 from /usr/lib/x.so and /opt/y/"))
+                .isEqualTo("OSError: see https://x.org/a/b and a/b, 1/2 from <host path> and <host path>");
     }
 
     @Test

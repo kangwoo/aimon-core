@@ -86,6 +86,7 @@ public final class ToolOfferContext {
     private final Map<OfferKey<?>, Object> attributes;
     private final ProgrammaticToolSettings programmatic;
     private final String agentName;
+    private final String programmaticCeilingReason;
     /** Memo of {@link #codeHosted()}; the offer context is otherwise immutable. */
     private volatile Set<String> codeHosted;
     /** What the last {@link #offer()} recorded: tool name to why it is not offerable. */
@@ -99,6 +100,7 @@ public final class ToolOfferContext {
         this.attributes = new IdentityHashMap<>(builder.attributes);
         this.programmatic = builder.programmatic;
         this.agentName = builder.agentName;
+        this.programmaticCeilingReason = builder.programmaticCeilingReason;
     }
 
     /**
@@ -386,6 +388,18 @@ public final class ToolOfferContext {
     }
 
     /**
+     * Returns why a ceiling above the agent emptied its programmatic settings although its own definition opts in — a
+     * fork whose caller allows none of its {@code programmatic-tools} (TC-30). {@link #getProgrammatic()} is then
+     * {@link ProgrammaticToolSettings#none()}, which by itself reads as an agent that never opened tools to code, so
+     * {@code ExecuteCode} reports this reason instead of staying silent.
+     *
+     * @return the reason, empty when no ceiling emptied the settings
+     */
+    public Optional<String> getProgrammaticCeilingReason() {
+        return Optional.ofNullable(programmaticCeilingReason);
+    }
+
+    /**
      * Returns a typed attribute.
      *
      * @param key
@@ -417,8 +431,20 @@ public final class ToolOfferContext {
         private final Map<OfferKey<?>, Object> attributes = new IdentityHashMap<>();
         private ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.none();
         private String agentName;
+        private String programmaticCeilingReason;
 
         private Builder() {
+        }
+
+        /**
+         * @param programmaticCeilingReason
+         *            why a ceiling above the agent emptied the programmatic settings its own definition opts in to;
+         *            {@code null} when none did
+         * @return this builder
+         */
+        public Builder programmaticCeilingReason(String programmaticCeilingReason) {
+            this.programmaticCeilingReason = programmaticCeilingReason;
+            return this;
         }
 
         /**

@@ -1506,7 +1506,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * The fork's effective programmatic settings and the environment's static facts let {@code ExecuteCode} describe
      * itself for this offer, as the main turn's does. The settings are the definition's opt-in narrowed by the
-     * caller's, and the {@code Bash} fact reads the fork's effective (caller-narrowed) allow-list.
+     * caller's, and the {@code Bash} fact reads the fork's effective (caller-narrowed) allow-list. When the caller's
+     * settings left nothing of an opt-in, the manager's reason rides along so the span can say so (TC-30).
      *
      * <p>
      * Once a model-invoked inline skill has narrowed the fork, all three — the admission, the programmatic settings
@@ -1523,6 +1524,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                                 .ceiling(toolExecutionManager.getMaxSideEffectLevel())
                                 .programmatic(InlineSkillNarrowing
                                         .programmatic(subagent.getMetadata().getProgrammatic(), ceiling))
+                                .programmaticCeilingReason(lc.context.getProgrammaticCeilingReason().orElse(null))
                                 .agentName(subagent.getName()),
                         lc.toolContext, InlineSkillNarrowing.factsAllowList(subagent.getAllowedTools(), ceiling))
                 .build();

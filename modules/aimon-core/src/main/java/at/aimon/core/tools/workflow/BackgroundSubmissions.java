@@ -30,6 +30,12 @@ public final class BackgroundSubmissions {
     /**
      * Returns the submission for a background run started by a tool call made with {@code context}.
      *
+     * <p>
+     * Both ceiling fields are always set, never left to the base launch context. A context without
+     * {@code CALLER_PROGRAMMATIC} gives {@code none()}, which narrows the run's programmatic settings to none instead
+     * of inheriting the agent's — it fails closed. A context without {@code CALLER_ALLOWED_TOOLS} gives the empty
+     * allow-list, which is unrestricted and leaves the agent's in place.
+     *
      * @param context
      *            the tool call's context (must not be null)
      * @return the submission (never null)
