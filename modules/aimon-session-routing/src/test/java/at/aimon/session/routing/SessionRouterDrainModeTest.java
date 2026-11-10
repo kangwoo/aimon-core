@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -384,6 +385,96 @@ class SessionRouterDrainModeTest {
     }
 
     @Test
+    @DisplayName("a drain that begins inside an inbox pass's admission check finds that pass already counted")
+    void drainBeginningInsideAnInboxPassIsCounted() throws Exception {
+        final AtomicReference<SessionRouter> router = new AtomicReference<>();
+        final List<AtomicInteger> releases = new CopyOnWriteArrayList<>();
+        // The INBOX twin of drainBetweenAdmissionAndCountDefers: the doorbell counted this pass before the task read
+        // draining, and admitHere's read has already missed it, so the pass runs — and must be counted while it does.
+        final TurnAdmission drainingGate = (sessionId, path) -> {
+            if (path == TurnAdmission.Path.INBOX) {
+                router.get().beginDrain();
+            }
+            final AtomicInteger released = new AtomicInteger();
+            releases.add(released);
+            return Optional.of(released::incrementAndGet);
+        };
+        final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .turnAdmission(drainingGate).build();
+        nodes.add(node);
+        router.set(node.manager());
+        final SessionId id = SessionId.of("c-inbox-race");
+        node.manager().events(id);
+
+        inbox.deliver(queued(id, "queued", TurnId.generate()));
+        bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.MESSAGE_ENQUEUED)
+                .originNodeId("node-Z").build());
+
+        final TestLiveSession session = awaitSession(node, id);
+        assertThat(session.awaitTurnInFlight()).isTrue();
+        final DrainHandle handle = node.manager().beginDrain();
+        assertThat(handle.snapshot().getInFlightTurns()).as("the pass that raced the flag is counted").isEqualTo(1);
+        assertThat(handle.awaitIdle(Duration.ofMillis(100))).isFalse();
+
+        completeWhenReady(session, TestLiveSession.ok("queued-done"));
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(session.submittedInputs()).containsExactly("queued");
+        assertThat(releases).as("admitted exactly once").hasSize(1);
+        assertThat(releases.get(0).get()).as("the permit is released exactly once").isEqualTo(1);
+        assertThat(leaseStore.findHolder(id)).as("the lease goes back when the pass ends").isEmpty();
+        assertThat(session.isClosed()).as("handed over, not kept for a next turn").isTrue();
+    }
+
+    @Test
+    @DisplayName("a relay whose publish failed is retried by the router itself while the host polls with short waits")
+    void failedRelayIsRetriedWithoutTheHost() throws Exception {
+        final AtomicBoolean failing = new AtomicBoolean(true);
+        final AtomicInteger refused = new AtomicInteger();
+        final TestManagerHarness departing = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
+                .signalBus(new RelayFailingBus(bus, "node-A", failing, refused)).inbox(inbox).repository(repository)
+                .idempotencyStore(idempotency).build();
+        nodes.add(departing);
+        final TestManagerHarness successor = node("node-B");
+        final SessionId id = SessionId.of("c-relay-retry");
+
+        final SubmitDisposition running = departing.manager().submit(RequestFixtures.submit(id, "alpha", "running"));
+        final TestLiveSession first = awaitSession(departing, id);
+        assertThat(first.awaitTurnInFlight()).isTrue();
+        successor.manager().events(id);
+        // Heard by node-A as holder while its turn runs: node-A owes the relay once it stops holding the session.
+        final TurnId queuedTurn = TurnId.generate();
+        inbox.deliver(queued(id, "queued", queuedTurn));
+        bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.MESSAGE_ENQUEUED)
+                .originNodeId("node-Z").build());
+
+        final DrainHandle handle = departing.manager().beginDrain();
+        awaitTrue(() -> handle.snapshot().getOwedDoorbellRelays() == 1, "node-A owes the relay");
+        completeWhenReady(first, TestLiveSession.ok("running-done"));
+        running.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        awaitTrue(() -> {
+            final DrainSnapshot s = handle.snapshot();
+            return refused.get() >= 1 && s.getHeldLeases() == 0 && s.getQueuedHandOvers() == 0
+                    && s.getInFlightTurns() == 0 && s.getOwedDoorbellRelays() == 1;
+        }, "the relay failed and is still owed");
+        assertThat(successor.session(id)).as("nobody heard the failed relay").isNull();
+
+        failing.set(false);
+        // A host's progress loop: many short waits, none long enough to have done anything on its own.
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        boolean idle = false;
+        while (!idle && System.nanoTime() - deadline < 0) {
+            idle = handle.awaitIdle(Duration.ofMillis(50));
+        }
+        assertThat(idle).as(String.valueOf(handle.snapshot())).isTrue();
+
+        final TestLiveSession taken = awaitSession(successor, id);
+        completeWhenReady(taken, TestLiveSession.ok("queued-done"));
+        assertThat(taken.submittedTurnIds()).containsExactly(queuedTurn);
+        assertThat(first.submittedInputs()).as("node-A ran nothing new").containsExactly("running");
+    }
+
+    @Test
     @DisplayName("awaitIdle with a timeout too long for nanoseconds waits rather than throwing")
     void hugeTimeoutDoesNotOverflow() throws Exception {
         final TestManagerHarness node = node("node-A");
@@ -394,6 +485,43 @@ class SessionRouterDrainModeTest {
     // -------------------------------------------------------------------------------------------------------------
     // Fixtures
     // -------------------------------------------------------------------------------------------------------------
+
+    /** Refuses one node's {@code MESSAGE_ENQUEUED} publishes while {@code failing} is set: a relay the bus drops. */
+    private static final class RelayFailingBus implements SessionSignalBus {
+        private final SessionSignalBus delegate;
+        private final String failingNode;
+        private final AtomicBoolean failing;
+        private final AtomicInteger refused;
+
+        RelayFailingBus(SessionSignalBus delegate, String failingNode, AtomicBoolean failing, AtomicInteger refused) {
+            this.delegate = delegate;
+            this.failingNode = failingNode;
+            this.failing = failing;
+            this.refused = refused;
+        }
+
+        @Override
+        public Subscription subscribe(SessionId id, Consumer<SessionSignal> handler) {
+            return delegate.subscribe(id, handler);
+        }
+
+        @Override
+        public void publish(SessionSignal signal) {
+            if (failing.get() && signal.getKind() == SessionSignal.SignalKind.MESSAGE_ENQUEUED
+                    && failingNode.equals(signal.getOriginNodeId())) {
+                refused.incrementAndGet();
+                throw new IllegalStateException("bus unavailable");
+            }
+            delegate.publish(signal);
+        }
+
+        @Override
+        public void publishAll(List<SessionSignal> signals) {
+            for (SessionSignal signal : signals) {
+                publish(signal);
+            }
+        }
+    }
 
     private TestManagerHarness node(String nodeId) {
         final TestManagerHarness harness = TestManagerHarness.builder().nodeId(nodeId).leaseStore(leaseStore)

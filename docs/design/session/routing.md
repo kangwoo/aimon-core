@@ -2,7 +2,7 @@
 
 **Status**: IMPLEMENTED — `aimon-session-routing`. 공개 표면은 `SessionRouter` · `SubmitRequest` · `SubmitDisposition` ·
 `LiveSessionCache` · `LiveSessionOpener` · `ClusterSessionStatus` · `DeploymentMode` · `SessionRouterBuilder` · `SessionMetrics` ·
-`DrainHandle` · `DrainSnapshot` · `admission.TurnAdmission` 이고, 나머지는 `at.aimon.session.routing.internal` 에 있다. 라우터가 쓰는 SPI 는 `aimon-core` 에 있다([`session-store.md`](session-store.md) §1).
+`DrainHandle` · `DrainSnapshot` · `admission.TurnAdmission` · `admission.TurnAdmissionPermit` · `exception.NodeDrainingException` 이고, 나머지는 `at.aimon.session.routing.internal` 에 있다. 라우터가 쓰는 SPI 는 `aimon-core` 에 있다([`session-store.md`](session-store.md) §1).
 남은 것은 [마지막 절](#남은-것).
 
 이 문서는 라우터 자체를 다룬다. 라우터가 기대는 두 계약 — 크로스 노드 우편함과 멱등 원장 — 은 각자 문서가 있다:
@@ -430,28 +430,40 @@ API 서버와 에이전트 워커를 나누어 워커를 굴리거나 줄이려�
 살려 둔다" 가 필요하다. `closeGracefully` 는 이것을 못 한다 — 시한이 지나면 남은 턴을 끊고 닫는다(§8.2 C). 드레인은 그 앞 단계를
 떼어 낸 것이고, 노드 턴 승인은 같은 경계에 호스트가 꽂는 용량 게이트다.
 
+이 절에서 "드레인"은 노드 드레인(`beginDrain()`)만 뜻한다. 세션의 큐 메시지를 collect 해 도는 패스(§7.2 의 홀더 쪽 드레인)는
+**인박스 패스**라 부른다 — `TurnAdmission.Path.INBOX` 와 같은 이름이다.
+
 **경계는 하나다.** 이 노드에서 턴을 시작하는 입구는 둘뿐이다 — 로컬에서 돌 `submit`(사용자 턴, 콜드 오픈, idle-wake 는 모두
-`submit` 을 거친다)과 초인종·전달 재울림이 여는 인박스 드레인 패스. 둘 다 턴 게이트를 쥔 직후, **리스를 얻기 전이고 인박스를
+`submit` 을 거친다)과 초인종·전달 재울림이 여는 인박스 패스. 둘 다 턴 게이트를 쥔 직후, **리스를 얻기 전이고 인박스를
 collect 하기 전**에 `admitHere` 한 곳에서 묻는다: 드레인 중인가, 그다음 `TurnAdmission.tryAdmit` 이 허락하는가. 어느 쪽이든 아니면
 연기(defer)다. collect 뒤에 묻지 않으므로 연기는 메시지를 지우지도, 확인하지도, 잃지도 않는다. 인박스 SPI 는 바뀌지 않는다 —
 `collect` 는 여전히 원자적 제거(at-most-once)다.
 
-**연기하면 넘긴다.** 연기된 `submit` 은 인박스로 배달되고(`FORWARDED`) 초인종을 울린다. 연기된 드레인 패스는 인박스를 그대로 두고
-세션을 넘긴다. 넘기는 길은 §7.3 의 hand-off 와 같다 — `yieldSession` 이 캐시에서 내리고 리스를 반납하며(인박스·승인·구독자 보존,
+**연기하면 넘긴다 (`DISTRIBUTED`).** 연기된 `submit` 은 인박스로 배달되고(`FORWARDED`) 초인종을 울린다. 연기된 인박스 패스는
+인박스를 그대로 두고 세션을 넘긴다. 넘기는 길은 §7.3 의 hand-off 와 같다 — `yieldSession` 이 캐시에서 내리고 리스를 반납하며(인박스·승인·구독자 보존,
 `EVICT` 없음, 전달 future 그대로), 이 노드가 홀더로서 들은 초인종만 한 번 다시 울린다(`doorbellRelayOwed`). 홀더가 아니었던 노드는
 아무것도 울리지 않으므로 드레인·연기 중인 두 노드가 초인종을 주고받지 않는다. 신호 버스 스레드나 `submit` 스레드에서 들은 초인종도
 넘기기는 작업 스레드에서 한다 — 넘기기는 세션을 닫고(종료 훅) 저장소를 왕복하기 때문이다.
 
-그 순간 받아 줄 피어가 없으면 전달을 기다리는 노드(전달의 출발 노드)가 폴 주기마다 다시 확인한다. 메시지가 아직 인박스에 있으면
+`SINGLE_NODE` 에는 넘길 피어가 없으므로 승인 연기는 아무것도 넘기지도 다시 울리지도 않는다. 세션은 캐시에 따뜻하게 남고 초인종 표시도
+그대로 선다 — 넘기면 종료 훅만 돌고 아무도 듣지 않는 공지를 낼 뿐이다.
+
+**허가가 반납되면 다시 울린다.** 라우터는 게이트가 연기한(또는 게이트가 던진) 세션을 노드 로컬 집합(`admissionDeferred`)에 적어 두고,
+허가를 반납할 때마다 그중 하나의 초인종을 이 노드에서 울린다. 두 모드 모두 그렇다. 그래서 이 노드에서 생긴 용량은 다음 전달 폴(기본
+15초)을 기다리지 않고 기다리던 일로 바로 간다. 반납하는 패스 자신의 세션은 건너뛴다 — 그 게이트는 아직 반납하는 스레드가 쥐고 있다.
+집합의 항목은 다시 울릴 때, 그 세션의 인박스를 collect 할 때, 초인종 표시를 잊을 때 빠진다.
+
+그 순간 어느 노드에도 용량이 생기지 않으면 전달을 기다리는 노드(전달의 출발 노드)가 폴 주기마다 다시 확인한다. 메시지가 아직 인박스에 있으면
 자기 게이트에 다시 묻고, 여전히 연기되거나 드레인 중이면 **클러스터에 초인종을 다시 발행한다.** 그래서 첫 공지 뒤에 용량이 생긴
 피어가 전달 TTL 이 아니라 폴 주기 안에 메시지를 가져간다. 폴하는 것은 출발 노드뿐이고, 그 공지를 들은 피어가 연기하면 홀더로서 진
 빚만 넘기므로 주고받기가 생기지 않는다. 연기는 거절이 아니라 back-pressure 다. 다만 `submit` 을 거치지 않고 인박스에 들어온 메시지는
-기다리는 출발 노드가 없으므로 다음 초인종을 기다린다.
+기다리는 출발 노드가 없으므로 다음 초인종이나, 그 세션을 연기한 노드의 허가 반납을 기다린다.
 
-**연기의 비용 — 홀더의 세션 이탈.** 세션을 유휴로 쥔 노드가 그 세션의 메시지가 도착한 순간 게이트가 차 있으면 세션을 내놓는다 —
+**연기의 비용 — 홀더의 세션 이탈 (`DISTRIBUTED`).** 세션을 유휴로 쥔 노드가 그 세션의 메시지가 도착한 순간 게이트가 차 있으면 세션을 내놓는다 —
 캐시의 라이브 세션이 내려가고(종료 훅 실행) 리스가 반납되어 용량 있는 피어가 가져갈 수 있다. 의도한 동작이다: 세션을 쥐고 있으면
 돌릴 수 없는 노드에 메시지가 묶인다. 대가는 순간적으로만 찬 게이트가 따뜻한 세션을 다음 노드의 콜드 오픈으로 바꾼다는 것이다.
-홀더가 좀처럼 차지 않게 게이트 크기를 잡거나, 그 이탈을 back-pressure 의 값으로 받아들인다.
+홀더가 좀처럼 차지 않게 게이트 크기를 잡거나, 그 이탈을 back-pressure 의 값으로 받아들인다. `SINGLE_NODE` 에서 연기의 비용은 지연뿐이다
+— 세션은 따뜻하게 남고, 메시지는 허가가 반납될 때(늦어도 전달의 다음 폴에) 이 노드에서 돈다.
 
 **드레인 — `beginDrain()`.** 멱등이고 되돌릴 수 없다. 플래그를 세우는 순간 승인이 멈춘다.
 
@@ -462,7 +474,7 @@ collect 하기 전**에 `admitHere` 한 곳에서 묻는다: 드레인 중인가
 | 유휴로 쥔 세션 | 즉시 넘긴다(작업 스레드에서). 인박스가 비어 있지 않으면 초인종을 다시 울린다 |
 | 턴이 도는 세션 | 그 턴이 끝날 때 넘긴다 — 패스의 `finally` 가 리스 결정 전에 캐시에서 내리므로 리스가 반납된다 |
 | 새 `submit` (`DISTRIBUTED`) | 인박스로 배달, `FORWARDED`. 드레인 중이 아닌 피어가 collect 한다 |
-| 새 `submit` (`SINGLE_NODE`) | `NodeDrainingException`. 아무것도 예약·배달하지 않았으므로 호출자가 다른 노드로 재시도할 수 있다 |
+| 새 `submit` (`SINGLE_NODE`) | `NodeDrainingException`. 아무것도 배달하지 않고, 승인 뒤에 드레인이 시작되어 이미 멱등 키를 예약했으면 그 예약을 먼저 되돌린다. 그래서 호출자가 같은 키로 다른 노드에 재시도할 수 있다 |
 | 이미 큐에 있던 메시지 (`SINGLE_NODE`) | 이 노드가 끝까지 돌린다(`inFlightTurns` 에 셈). 받아 줄 피어가 없으므로 재-collect 도, 연기됐던 메시지의 폴 재울림도 평소대로다 |
 | 이후 `close()` / `closeGracefully()` | 지금과 똑같다 |
 
@@ -472,16 +484,26 @@ collect 하기 전**에 `admitHere` 한 곳에서 묻는다: 드레인 중인가
 어떤 스냅숏이든 그 패스를 센다. 그래서 `beginDrain` 이 돌아온 뒤 세지지 않은 채 시작하는 턴은 없다. `submit` 은 승인 검사를 카운트 전에 하므로 카운트 직후 플래그를 한 번 더 읽고, 그때 드레인이면 방금 얻은 리스를 내려놓고
 연기한다.
 
+턴이 되지 않는 `submit` 도 센다. 입력을 인박스로 넘기러 가는 `submit` 은 턴 게이트도 쥐지 않고 아직 전달도 등록하지 않았으므로, 따로
+세지 않으면 그 스레드가 배달 중인데도 정지로 읽힐 수 있다. 그래서 `submit` 은 들어오자마자 — 닫힘·드레인 플래그를 읽기 전에 —
+`inFlightSubmits` 를 올리고 돌아갈 때 내린다. 또 전달을 등록한 직후 닫힘 플래그를 다시 읽어, 이미 닫히는 중이면(또는 폴 예약이
+거절되면) 그 전달을 바로 실패시킨다. `closeGracefully` 는 플래그를 내린 **뒤에** 등록된 전달을 실패시키므로, 플래그를 아직 true 로
+읽은 등록은 그 루프가 찾고, false 로 읽은 등록은 스스로 답한다 — 폴도 시한도 없이 영원히 기다리는 전달이 남지 않는다.
+
 리스 반납은 펜스가 걸려 있다. `SessionLeaseStore.release` 는 토큰이 다르면 조용히 무시하므로, 리스가 만료되어 피어가 다시 얻은 뒤에
 늦게 도착한 반납은 피어의 리스를 풀지 못한다.
 
-**`DrainHandle`.** `awaitIdle(timeout)` 은 기다리기만 한다 — 시한이 지나면 `false` 를 돌려줄 뿐 아무것도 끊거나 닫지 않는다.
+**`DrainHandle`.** `awaitIdle(timeout)` 과 `snapshot()` 은 지켜보기만 한다 — 아무것도 끊거나 닫지 않고, 리스를 반납하거나 신호를
+발행하지도 않으며, 호스트가 얼마나 자주 부르든 드레인의 진행은 달라지지 않는다. 시한이 지나면 `false` 를 돌려줄 뿐이다.
 스케줄링 쪽 `SchedulingEngine.awaitIdle(Duration)` 과 모양이 같고, 기다리는 스레드가 인터럽트되면 `InterruptedException` 을 던진다.
-나노초로 셀 수 없을 만큼 긴 시한은 무한정 기다림으로 취급한다. `snapshot()` 은 in-flight 턴, 쥔 턴 게이트, 쥔 리스, 아직 넘기지 못한
-초인종(`pendingHandOvers`), 작업 스레드에 맡겨 놓고 아직 끝나지 않은 드레인 넘기기(`queuedHandOvers`), 기다리는 전달
-(`pendingForwards`)을 센다. 정지(quiescent)는 앞의 다섯이 모두 0 인 상태다. `DISTRIBUTED` 에서 전달은 다른 노드가 도는 턴을 기다리는
+나노초로 셀 수 없을 만큼 긴 시한은 무한정 기다림으로 취급한다. `snapshot()` 은 진행 중인 `submit`(`inFlightSubmits`), in-flight
+턴(`inFlightTurns`), 쥔 턴 게이트(`heldTurnGates`), 쥔 리스(`heldLeases`), 아직 넘기지 못한 초인종(`owedDoorbellRelays`), 작업
+스레드에 맡겨 놓고 아직 끝나지 않은 드레인 넘기기(`queuedHandOvers`), 기다리는 전달(`pendingForwards`)을 센다. 정지(quiescent)는 앞의
+여섯이 모두 0 인 상태다. `DISTRIBUTED` 에서 전달은 다른 노드가 도는 턴을 기다리는
 호출자이므로 세기만 하고 정지를 막지 않는다 — 닫으면 지금처럼 실패한다. `SINGLE_NODE` 에서는 전달이 이 노드만 돌릴 수 있는 큐 메시지라
-정지를 막는다(`isForwardsRunHere()`). 재울림 publish 가 실패해 남은 빚은 기다리는 동안 약 1초마다 다시 시도한다.
+정지를 막는다(`isForwardsRunHere()`). 재울림 publish 가 실패해 남은 빚은 `beginDrain` 이 라우터 자신의 스케줄러에 거는 주기 작업이
+약 1초마다 다시 시도한다 — 핸들이 아니라 라우터가 하므로, 짧은 `awaitIdle` 을 거듭 부르거나 `snapshot()` 만 보는 호스트도 같은 시점에
+정지에 이른다.
 
 정지가 아닌 채로 `closeGracefully` 를 부르면, 그것은 `inFlightTurns` 만 기다리고 실행기를 내리므로 아직 큐에 있거나 도는 드레인
 넘기기가 초인종을 다시 울리기 전에 끊길 수 있다. 그 메시지는 전달의 폴이나 세션의 다음 제출을 기다린다. 리스는 그래도 돌아간다 —
@@ -513,6 +535,10 @@ schedulingEngine.close();
 
 `pauseFires()` 를 되돌리려면 `resumeFires()`, 상태는 `isAcceptingFires()` 다. 라우터의 드레인은 되돌릴 수 없다 — 드레인한 노드는 닫는다.
 
+주의: 엔진이 소유한 Quartz 스케줄러는 기본값 `waitForJobsOnShutdown(true)` 라서 3 단계의 `schedulingEngine.close()` 가 남은 루틴을
+끊지 않고 끝날 때까지 **막힌다**. 시한 뒤에 `SYSTEM_SHUTDOWN` 으로 끊으려면 `waitForJobsOnShutdown(false)` 로 짓는다
+([`llm-scheduling-agent.md`](../scheduling/llm-scheduling-agent.md) §7.6).
+
 **노드 턴 승인 — `TurnAdmission`.** `SessionRouterBuilder.turnAdmission(...)` 으로 꽂는 선택 SPI 이고 기본값
 `TurnAdmission.alwaysAdmit()` 는 모두 허락한다(이전 동작 그대로). `tryAdmit(sessionId, path)` 는 블록하면 안 되고, 던지면 연기로
 취급한다 — 고장 난 게이트는 이 노드의 일을 잃게 할 뿐 메시지를 잃게 하지 않는다.
@@ -521,7 +547,8 @@ schedulingEngine.close();
 제출된 턴과, 패스가 끝나기 전에 collect 한 큐 메시지. 패스는 한 번에 턴 하나만 돌리므로 허가 N 개는 동시 실행 턴 N 개의 상한이다.
 메시지마다 묻지 않는 까닭은 이미 collect 한 메시지는 연기할 수 없기 때문이다 — 인박스 밖으로 나온 메시지를 거절하면 아무도 다시 돌릴 수
 없다. 라우터는 받은 허가를 정확히 한 번 반납한다: 패스가 끝날 때(초인종 재울림 **전** 이라서 게이트가 다음 질문을 받기 전에 용량이 돌아온다),
-실패할 때, 턴을 시작하기 전에 포기할 때(리스가 피어 것, agent 바인딩 충돌, 그 사이 드레인 시작). 반납은 `OncePermit` 가 한 번으로 묶는다.
+실패할 때, 턴을 시작하기 전에 포기할 때(리스가 피어 것, agent 바인딩 충돌, 그 사이 드레인 시작). 반납은 `OncePermit` 가 한 번으로 묶고,
+반납 직후 게이트가 연기했던 세션 하나를 다시 울린다(위 "허가가 반납되면 다시 울린다").
 
 ---
 

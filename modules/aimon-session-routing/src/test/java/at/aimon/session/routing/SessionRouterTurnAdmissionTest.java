@@ -3,16 +3,24 @@ package at.aimon.session.routing;
 import static at.aimon.session.routing.SessionRouterDrainModeTest.awaitSession;
 import static at.aimon.session.routing.SessionRouterDrainModeTest.completeWhenReady;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.AfterEach;
@@ -35,6 +43,7 @@ import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.LeaseHolder;
+import at.aimon.core.agent.session.store.SessionLease;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.base.Principal;
@@ -43,6 +52,7 @@ import at.aimon.session.routing.admission.TurnAdmissionPermit;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
+import at.aimon.session.routing.internal.DefaultSessionRouter;
 
 /**
  * Node turn admission (routing.md §8.4): the gate is asked before anything is claimed or collected, a deferral loses
@@ -258,6 +268,166 @@ class SessionRouterTurnAdmissionTest {
         gate.assertEveryPermitReleasedOnce();
     }
 
+    @Test
+    @DisplayName("a permit is released exactly once when the lease claim throws after admission")
+    void permitReleasedWhenTheClaimThrows() throws Exception {
+        final RecordingAdmission gate = new RecordingAdmission();
+        final AcquireFailingLeaseStore failingStore = new AcquireFailingLeaseStore(leaseStore);
+        final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(failingStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency).turnAdmission(gate)
+                .build();
+        nodes.add(node);
+        final SessionId id = SessionId.of("c-permit-claim-throws");
+        failingStore.failFor(id);
+
+        assertThatThrownBy(() -> node.manager().submit(RequestFixtures.submit(id, "alpha", "hi")))
+                .hasMessageContaining("lease store down");
+
+        assertThat(gate.granted).as("admitted before the claim").hasSize(1);
+        gate.assertEveryPermitReleasedOnce();
+        assertThat(node.session(id)).isNull();
+    }
+
+    @Test
+    @DisplayName("a permit is released exactly once when the turn executor rejects the turn")
+    void permitReleasedWhenTheExecutorRejects() throws Exception {
+        final RecordingAdmission gate = new RecordingAdmission();
+        final TestManagerHarness node = node("node-A", gate);
+        final SessionId id = SessionId.of("c-permit-rejected");
+        turnExecutorOf(node.manager()).shutdown();
+
+        assertThatThrownBy(() -> node.manager().submit(RequestFixtures.submit(id, "alpha", "hi")))
+                .isInstanceOf(RejectedExecutionException.class);
+
+        assertThat(gate.granted).hasSize(1);
+        gate.assertEveryPermitReleasedOnce();
+        assertThat(leaseStore.findHolder(id)).as("the lease claimed for the rejected turn went back").isEmpty();
+    }
+
+    @Test
+    @DisplayName("a permit is released exactly once when the router starts closing between admission and the count")
+    void permitReleasedWhenClosingBeginsAfterAdmission() throws Exception {
+        final AtomicReference<SessionRouter> router = new AtomicReference<>();
+        final AtomicBoolean closeOnAdmit = new AtomicBoolean();
+        final List<AtomicInteger> releases = new CopyOnWriteArrayList<>();
+        final TurnAdmission closingGate = (sessionId, path) -> {
+            if (closeOnAdmit.get()) {
+                // On this thread, so the flag has flipped before submit goes on: the closing-gate re-read must see it.
+                router.get().closeGracefully(Duration.ofMillis(1));
+            }
+            final AtomicInteger released = new AtomicInteger();
+            releases.add(released);
+            return Optional.of(released::incrementAndGet);
+        };
+        final TestManagerHarness node = node("node-A", closingGate);
+        router.set(node.manager());
+        final SessionId id = SessionId.of("c-permit-closing");
+        // A warm session first, so the second submit reuses the held lease instead of claiming one on a closed router.
+        final SubmitDisposition first = node.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        completeWhenReady(awaitSession(node, id), TestLiveSession.ok("first-done"));
+        first.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        awaitTrue(() -> releases.size() == 1 && releases.get(0).get() == 1, "the first pass released its permit");
+
+        closeOnAdmit.set(true);
+        assertThatThrownBy(() -> node.manager().submit(RequestFixtures.submit(id, "alpha", "second")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("shutting down");
+
+        assertThat(releases).hasSize(2);
+        assertThat(releases.get(1).get()).as("the abandoned pass's permit is released exactly once").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a permit is released exactly once when an inbox pass's lease acquire throws")
+    void permitReleasedWhenTheInboxPassAcquireThrows() throws Exception {
+        final RecordingAdmission gate = new RecordingAdmission();
+        final AcquireFailingLeaseStore failingStore = new AcquireFailingLeaseStore(leaseStore);
+        final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(failingStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency).turnAdmission(gate)
+                .build();
+        nodes.add(node);
+        final SessionId id = SessionId.of("c-permit-acquire-throws");
+        failingStore.failFor(id);
+        node.manager().events(id);
+
+        inbox.deliver(InboundMessage.builder().sessionId(id).agentRef("alpha").userInput("q").turnId(TurnId.generate())
+                .priority(QueuedInputPriority.LATER).initiator(Principal.user("tester")).deliveredAt(Instant.now())
+                .build());
+        bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.MESSAGE_ENQUEUED)
+                .originNodeId("node-Z").build());
+
+        awaitTrue(() -> failingStore.failures.get() >= 1, "the inbox pass tried to acquire the lease");
+        awaitTrue(() -> gate.outstanding() == 0, "the permit is released");
+        assertThat(gate.paths).containsExactly(TurnAdmission.Path.INBOX);
+        gate.assertEveryPermitReleasedOnce();
+        assertThat(inbox.isEmpty(id)).as("nothing was collected").isFalse();
+    }
+
+    @Test
+    @DisplayName("on a single node a deferral keeps the warm session, and the next released permit runs the message")
+    void singleNodeDeferralKeepsTheSessionAndRunsOnRelease() throws Exception {
+        final CapacityAdmission gate = new CapacityAdmission(1);
+        final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .forwardSubmitsWhileDraining(false).turnAdmission(gate).build();
+        nodes.add(node);
+        final SessionId warm = SessionId.of("c-single-warm");
+        final SessionId busy = SessionId.of("c-single-busy");
+
+        final SubmitDisposition first = node.manager().submit(RequestFixtures.submit(warm, "alpha", "first"));
+        final TestLiveSession warmSession = awaitSession(node, warm);
+        completeWhenReady(warmSession, TestLiveSession.ok("first-done"));
+        first.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        awaitTrue(() -> gate.available() == 1, "the first pass gave its capacity back");
+
+        final SubmitDisposition occupying = node.manager().submit(RequestFixtures.submit(busy, "alpha", "busy"));
+        final TestLiveSession busySession = awaitSession(node, busy);
+        assertThat(busySession.awaitTurnInFlight()).isTrue();
+
+        final SubmitDisposition deferred = node.manager().submit(RequestFixtures.submit(warm, "alpha", "second"));
+        assertThat(deferred.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        Thread.sleep(200L);
+        assertThat(warmSession.isClosed()).as("no peer to hand to, so the warm session is kept").isFalse();
+        assertThat(leaseStore.findHolder(warm).map(LeaseHolder::getHolderId)).contains("node-A");
+
+        final long freedAt = System.nanoTime();
+        completeWhenReady(busySession, TestLiveSession.ok("busy-done"));
+        occupying.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        assertThat(warmSession.awaitTurnCount(2)).as("the released permit re-rings the deferred session").isTrue();
+        completeWhenReady(warmSession, TestLiveSession.ok("second-done"));
+        assertThat(deferred.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("second-done");
+        assertThat(Duration.ofNanos(System.nanoTime() - freedAt)).as("run on the release, not on the 15s forward poll")
+                .isLessThan(Duration.ofSeconds(5));
+        assertThat(node.session(warm)).as("the same warm session ran it").isSameAs(warmSession);
+        assertThat(warmSession.submittedInputs()).containsExactly("first", "second");
+    }
+
+    @Test
+    @DisplayName("on a distributed node with no peer free, the next released permit runs a deferred message here")
+    void distributedDeferralRunsOnRelease() throws Exception {
+        final CapacityAdmission gate = new CapacityAdmission(1);
+        final TestManagerHarness node = node("node-A", gate);
+        final SessionId busy = SessionId.of("c-dist-busy");
+        final SessionId waiting = SessionId.of("c-dist-waiting");
+
+        final SubmitDisposition occupying = node.manager().submit(RequestFixtures.submit(busy, "alpha", "busy"));
+        final TestLiveSession busySession = awaitSession(node, busy);
+        assertThat(busySession.awaitTurnInFlight()).isTrue();
+
+        final SubmitDisposition deferred = node.manager().submit(RequestFixtures.submit(waiting, "alpha", "waiting"));
+        assertThat(deferred.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        assertThat(node.session(waiting)).isNull();
+
+        final long freedAt = System.nanoTime();
+        completeWhenReady(busySession, TestLiveSession.ok("busy-done"));
+        occupying.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        completeWhenReady(awaitSession(node, waiting), TestLiveSession.ok("waiting-done"));
+        assertThat(deferred.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("waiting-done");
+        assertThat(Duration.ofNanos(System.nanoTime() - freedAt)).as("run on the release, not on the 15s forward poll")
+                .isLessThan(Duration.ofSeconds(5));
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Fixtures
     // -------------------------------------------------------------------------------------------------------------
@@ -286,6 +456,70 @@ class SessionRouterTurnAdmissionTest {
             Thread.sleep(10L);
         }
         assertThat(condition.getAsBoolean()).as(what).isTrue();
+    }
+
+    /** The router's private turn executor, so a test can make it reject the way a closed router's would. */
+    private static ExecutorService turnExecutorOf(SessionRouter router) throws ReflectiveOperationException {
+        final Field field = DefaultSessionRouter.class.getDeclaredField("turnExecutor");
+        field.setAccessible(true);
+        return (ExecutorService) field.get(router);
+    }
+
+    /** A gate with a fixed number of concurrent passes, like a host bounding the turns one node runs. */
+    private static final class CapacityAdmission implements TurnAdmission {
+        private final Semaphore slots;
+
+        CapacityAdmission(int capacity) {
+            this.slots = new Semaphore(capacity);
+        }
+
+        @Override
+        public Optional<TurnAdmissionPermit> tryAdmit(SessionId sessionId, Path path) {
+            return slots.tryAcquire() ? Optional.of(slots::release) : Optional.empty();
+        }
+
+        int available() {
+            return slots.availablePermits();
+        }
+    }
+
+    /** Throws from {@code tryAcquire} for the sessions it is told to fail, standing in for a lease store outage. */
+    private static final class AcquireFailingLeaseStore implements SessionLeaseStore {
+        private final SessionLeaseStore delegate;
+        private final Set<SessionId> failing = ConcurrentHashMap.newKeySet();
+        final AtomicInteger failures = new AtomicInteger();
+
+        AcquireFailingLeaseStore(SessionLeaseStore delegate) {
+            this.delegate = delegate;
+        }
+
+        void failFor(SessionId id) {
+            failing.add(id);
+        }
+
+        @Override
+        public Optional<SessionLease> tryAcquire(SessionId id, String holderId, Duration lease) {
+            if (failing.contains(id)) {
+                failures.incrementAndGet();
+                throw new IllegalStateException("lease store down");
+            }
+            return delegate.tryAcquire(id, holderId, lease);
+        }
+
+        @Override
+        public Optional<LeaseHolder> findHolder(SessionId id) {
+            return delegate.findHolder(id);
+        }
+
+        @Override
+        public boolean extend(SessionLease lease, Duration duration) {
+            return delegate.extend(lease, duration);
+        }
+
+        @Override
+        public void release(SessionLease lease) {
+            delegate.release(lease);
+        }
     }
 
     /** A gate that can be switched off and counts how often each permit it granted was released. */

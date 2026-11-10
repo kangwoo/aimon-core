@@ -14,38 +14,46 @@ what splitting API servers from agent workers and rolling or shrinking the worke
 `closeGracefully(timeout)`, which interrupts every surviving turn and closes the router when the timeout runs out. Both
 additions are in `aimon-session-routing` and change nothing unless used. Design: `docs/design/session/routing.md` §8.4.
 
-- **`SessionRouter.beginDrain()` → `DrainHandle`.** Idempotent. New turns stop at once — every turn that starts after it
-  returns was already counted: a pass counts itself before its last read of the drain flag, and `beginDrain` only sets
-  the flag, so any later snapshot sees the counter. Running turns keep running, renewing their leases and persisting
-  results. Sessions held while idle hand their lease back right away (on a worker thread) and turns hand over when they
-  end: the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and the doorbell is re-rung when the
-  inbox still has work, so a node that is not draining collects it. `DrainHandle.awaitIdle(timeout)` only waits — on
-  timeout it returns `false` and interrupts nothing; it throws `InterruptedException` if the waiting thread is
-  interrupted (the same shape as `SchedulingEngine.awaitIdle`), and a timeout too long for nanoseconds waits instead of
-  overflowing. `snapshot()` counts in-flight turns, held turn gates, held leases, owed hand-overs, queued drain
-  hand-overs and pending forwards. `close()` and `closeGracefully()` behave exactly as before, drained or not — a
-  `closeGracefully` before the drain is idle may cut off a queued hand-over's doorbell relay (leases still go back via
-  `closeAll`). `docs/design/session/routing.md` §8.4 has a worker-drain recipe that sequences this with
+- **`SessionRouter.beginDrain()` → `DrainHandle`.** Idempotent. No new submit runs here once it returns — every turn
+  that starts after it was already counted: a pass counts itself before its last read of the drain flag, a submit
+  counts itself before its first, and `beginDrain` only sets the flag, so any later snapshot sees the counter. On a
+  `DISTRIBUTED` router no inbox pass (the pass that collects a session's queued messages) starts here either. "Drain"
+  means only this node drain throughout. Running turns keep running, renewing their leases and persisting results.
+  Sessions held while idle hand their lease back right away (on a worker thread) and turns hand over when they end:
+  the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and the doorbell is re-rung when the inbox
+  still has work, so a node that is not draining collects it. A doorbell relay whose publish fails is retried by the
+  router itself, about once a second on its own scheduler. `DrainHandle.awaitIdle(timeout)` and `snapshot()` only
+  watch — neither interrupts, returns a lease, publishes or closes anything, and how often a host calls them changes
+  nothing. On timeout `awaitIdle` returns `false`; it throws `InterruptedException` if the waiting thread is
+  interrupted (the same shape as `SchedulingEngine.awaitIdle`), and a timeout too long for nanoseconds waits instead
+  of overflowing. `DrainSnapshot` counts submits in progress (`getInFlightSubmits`), in-flight turns, held turn gates
+  (`getHeldTurnGates`), held leases, owed doorbell relays (`getOwedDoorbellRelays`), queued drain hand-overs
+  (`getQueuedHandOvers`) and pending forwards. `close()` and `closeGracefully()` behave exactly as before, drained or
+  not — a `closeGracefully` before the drain is idle may cut off a queued hand-over's doorbell relay (leases still go
+  back via `closeAll`), and a forward registered after closing began now fails at once instead of waiting forever.
+  `docs/design/session/routing.md` §8.4 has a worker-drain recipe that sequences this with
   `SchedulingEngine.pauseFires()` / `awaitIdle`.
 - **A submit that reaches a draining node does not run there.** A `DISTRIBUTED` router delivers it to the shared inbox
   (`FORWARDED`); a `SINGLE_NODE` router throws the new `exception.NodeDrainingException` (an `IllegalStateException`)
-  before reserving or queuing anything, so the caller can retry elsewhere. A draining `SINGLE_NODE` router still runs
-  every message already queued in its inbox (behind a running turn, or deferred by its admission gate), and its
+  before queuing anything — and when the drain began after the submit had already reserved its idempotency key, the
+  reservation is reset first — so the caller can retry the same key elsewhere. A draining `SINGLE_NODE` router still
+  runs every message already queued in its inbox (behind a running turn, or deferred by its admission gate), and its
   forwards count toward idleness (`DrainSnapshot.isForwardsRunHere()`), since no peer could run them.
 - **Quiescence covers only what the router sees.** Background subagent tasks, workflows, monitors and other
   `AgentRuntime`-owned work that outlives a turn, and `LiveSession`s driven outside the router, are not counted; a host
   running them must combine its own in-flight state before stopping the process.
 - **`admission.TurnAdmission` (new SPI) via `SessionRouterBuilder.turnAdmission(...)`.** A node-local gate asked before a
-  pass would start here — on a local submit and on an inbox drain pass — always before the inbox is collected and
-  before a lease is claimed, at the same boundary as the drain flag. A deferral loses nothing: a deferred submit goes to
-  the inbox and the session is handed over, a deferred drain pass leaves the inbox untouched. A permit covers one pass
-  (the serial turns one session runs while it holds the turn gate) and is released exactly once, including on failure
-  and on abandonment before the first turn. A gate that throws counts as a deferral. The default `alwaysAdmit()` keeps
-  today's behaviour. When every node defers at the moment a message is announced, the node waiting on it (the forward's
-  origin) re-asks its gate once per forward poll interval and, if it still defers or is draining, re-announces the
-  message to the cluster, so a peer that frees capacity runs it well before the forward TTL. Trade-off: a holder whose
-  gate is momentarily full gives its idle session up (evicted, lease returned) so a peer can run it — warm sessions can
-  turn into cold opens; size the gate accordingly.
+  pass would start here — on a local submit and on an inbox pass — always before the inbox is collected and before a
+  lease is claimed, at the same boundary as the drain flag. A deferral loses nothing: a deferred submit goes to the
+  inbox, a deferred inbox pass leaves the inbox untouched. A permit covers one pass (the serial turns one session runs
+  while it holds the turn gate) and is released exactly once, including on failure and on abandonment before the first
+  turn. A gate that throws counts as a deferral. The default `alwaysAdmit()` keeps today's behaviour. Each time a permit
+  is released the router re-rings one session its gate deferred, so capacity freed on a node goes to waiting work at
+  once. When every node defers at the moment a message is announced, the node waiting on it (the forward's origin) also
+  re-asks its gate once per forward poll interval and, if it still defers or is draining, re-announces the message to
+  the cluster. Trade-off on `DISTRIBUTED`: a holder whose gate is momentarily full gives its idle session up (evicted,
+  lease returned) so a peer can run it — warm sessions can turn into cold opens; size the gate accordingly. On
+  `SINGLE_NODE` there is no peer, so a deferral keeps the session cached and costs only latency.
 - **Migration note:** `SessionRouter.beginDrain()` is a default method that throws `UnsupportedOperationException`, and
   `isDraining()` defaults to `false`. A decorator or delegating `SessionRouter` must forward both explicitly, or the
   delegate's drain is unreachable through it.

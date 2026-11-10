@@ -126,21 +126,21 @@ public interface SessionMetrics {
     /**
      * Called each time a node waiting on a forwarded turn rings that session's doorbell again — once per forward poll
      * interval, for as long as the forward is unresolved <em>and</em> its message is still uncollected. The ring is
-     * node-local: it schedules a drain pass here, rather than announcing anything to peers.
+     * node-local: it schedules an inbox pass here, rather than announcing anything to peers.
      *
      * <p>
      * Counts <em>retries, not recoveries</em>. A message a healthy holder has not reached yet increments this too, so
      * a low rate is ordinary queueing. What it does say is that somebody is waiting on a message no node has taken out
      * of the inbox — and the counter is its own success signal, because a retry that gets the session collects the
      * message and the ringing stops. A rate that does not fall is the shape to alert on. Nothing else reports the
-     * takeover: the drain pass acquires its lease outside {@link #onLockAcquireSucceeded(Duration)}, which only the
+     * takeover: the inbox pass acquires its lease outside {@link #onLockAcquireSucceeded(Duration)}, which only the
      * submit path fires.
      */
     default void onForwardDoorbellRerung() {
     }
 
     /**
-     * Called when a drain pass runs a collected message whose reservation the store <em>refused</em> to hand over —
+     * Called when an inbox pass runs a collected message whose reservation the store <em>refused</em> to hand over —
      * once per such message, on the node running it.
      *
      * <p>

@@ -173,7 +173,7 @@ public final class SubmitRequest {
      *
      * <p>
      * Consumed only when the session's record is provisioned — by the claim that wins the session for this node, or,
-     * for a forwarded request, by a doorbell drain pass that picks it up while no turn is running on the holder — and
+     * for a forwarded request, by a doorbell inbox pass that picks it up while no turn is running on the holder — and
      * ignored on a session that already has an owner: the first provisioning that carries one wins and nothing
      * overwrites it. A submit to a session this node already holds does not provision, and neither does a running
      * turn's post-turn re-collect of a forwarded request, so neither records anything. Set it on the <em>first</em>

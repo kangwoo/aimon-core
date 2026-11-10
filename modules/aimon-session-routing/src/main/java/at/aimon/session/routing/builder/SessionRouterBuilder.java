@@ -550,11 +550,13 @@ public final class SessionRouterBuilder {
 
     /**
      * Sets the node-local gate the router consults immediately before it would start a pass on this node — on a submit
-     * that would run locally and on an inbox drain pass, always before the inbox is collected (routing.md §8.4).
+     * that would run locally and on an inbox pass, always before the inbox is collected (routing.md §8.4).
      *
      * <p>
-     * A deferral never loses a message: a deferred submit is delivered to the inbox and the session is handed over, so
-     * a node with capacity collects it. The default {@link TurnAdmission#alwaysAdmit()} admits everything.
+     * A deferral never loses a message: a deferred submit is delivered to the inbox. In {@code DISTRIBUTED} mode a
+     * holder hands the session over so a node with capacity collects it; in {@code SINGLE_NODE} mode the session stays
+     * cached here. Either way the next permit released on this node re-rings a deferred session. The default
+     * {@link TurnAdmission#alwaysAdmit()} admits everything.
      *
      * @param v
      *            the gate (must not be null)

@@ -245,12 +245,14 @@ public interface SessionRouter extends AutoCloseable {
      *
      * <p>
      * Admission stops atomically: once this returns, every turn that starts on this node was already counted by the
-     * returned handle, and no submit, inbox drain pass, cold open or idle-wake turn starts here afterwards. Turns
-     * already running keep running to completion — renewing their leases, persisting their results, and honouring
-     * interrupts and approvals as usual. Sessions this node holds while idle hand their lease back right away (queued
-     * inbox messages, approvals and event subscribers are kept; no {@code EVICT} is sent) and their doorbell is re-rung
-     * when their inbox is not empty, so a node that is not draining collects them. A session with a running turn hands
-     * over the same way when that turn ends.
+     * returned handle, and no new submit — a user's turn, a cold open or an idle-wake — runs here afterwards. On a
+     * {@code DISTRIBUTED} router no inbox pass (the pass that collects a session's queued messages) starts here either;
+     * a {@code SINGLE_NODE} router keeps running the queued work described below. Turns already running keep running to
+     * completion — renewing their leases, persisting their results, and honouring interrupts and approvals as usual.
+     * Sessions this node holds while idle hand their lease back right away (queued inbox messages, approvals and event
+     * subscribers are kept; no {@code EVICT} is sent) and their doorbell is re-rung when their inbox is not empty, so a
+     * node that is not draining collects them. A session with a running turn hands over the same way when that turn
+     * ends.
      *
      * <p>
      * A submit that reaches a draining node does not run here. A {@code DISTRIBUTED} router delivers it to the shared

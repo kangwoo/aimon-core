@@ -7,24 +7,30 @@ package at.aimon.session.routing;
  * Counts are read one after another without a common lock, so a snapshot taken while work is finishing may be
  * momentarily inconsistent (a turn already uncounted whose lease is not yet returned). {@link #isQuiescent()} is
  * {@code true} only when every blocking count reads zero.
+ *
+ * <p>
+ * "Drain" here always means the node drain begun by {@link SessionRouter#beginDrain()}. The pass that collects and runs
+ * a session's queued inbox messages is an <em>inbox pass</em>.
  */
 public final class DrainSnapshot {
 
     private final boolean draining;
+    private final int inFlightSubmits;
     private final int inFlightTurns;
-    private final int activeSessions;
+    private final int heldTurnGates;
     private final int heldLeases;
-    private final int pendingHandOvers;
+    private final int owedDoorbellRelays;
     private final int queuedHandOvers;
     private final int pendingForwards;
     private final boolean forwardsRunHere;
 
     private DrainSnapshot(Builder builder) {
         this.draining = builder.draining;
+        this.inFlightSubmits = builder.inFlightSubmits;
         this.inFlightTurns = builder.inFlightTurns;
-        this.activeSessions = builder.activeSessions;
+        this.heldTurnGates = builder.heldTurnGates;
         this.heldLeases = builder.heldLeases;
-        this.pendingHandOvers = builder.pendingHandOvers;
+        this.owedDoorbellRelays = builder.owedDoorbellRelays;
         this.queuedHandOvers = builder.queuedHandOvers;
         this.pendingForwards = builder.pendingForwards;
         this.forwardsRunHere = builder.forwardsRunHere;
@@ -45,18 +51,26 @@ public final class DrainSnapshot {
     }
 
     /**
-     * @return turns and drain passes counted in flight on this node (the counter {@code closeGracefully} waits on)
+     * @return {@link SessionRouter#submit} calls still in progress on this node — each one may yet start a turn here,
+     *         queue its input or register a forward
+     */
+    public int getInFlightSubmits() {
+        return inFlightSubmits;
+    }
+
+    /**
+     * @return turns and inbox passes counted in flight on this node (the counter {@code closeGracefully} waits on)
      */
     public int getInFlightTurns() {
         return inFlightTurns;
     }
 
     /**
-     * @return sessions whose node-local turn gate is held — a turn, a drain pass, a delete or a lease hand-over in
+     * @return sessions whose node-local turn gate is held — a turn, an inbox pass, a delete or a lease hand-over in
      *         progress
      */
-    public int getActiveSessions() {
-        return activeSessions;
+    public int getHeldTurnGates() {
+        return heldTurnGates;
     }
 
     /**
@@ -67,10 +81,11 @@ public final class DrainSnapshot {
     }
 
     /**
-     * @return sessions whose doorbell this node took on as holder and has not yet relayed to a peer
+     * @return sessions whose doorbell this node took on as holder and has not yet relayed to a peer; a relay whose
+     *         publish failed stays counted here until the router's periodic retry succeeds
      */
-    public int getPendingHandOvers() {
-        return pendingHandOvers;
+    public int getOwedDoorbellRelays() {
+        return owedDoorbellRelays;
     }
 
     /**
@@ -102,29 +117,30 @@ public final class DrainSnapshot {
     }
 
     /**
-     * @return {@code true} when draining and no turn, gate, lease, owed or queued hand-over — nor, when
-     *         {@link #isForwardsRunHere()}, forward — remains
+     * @return {@code true} when draining and no submit, turn, held gate, lease, owed relay or queued hand-over — nor,
+     *         when {@link #isForwardsRunHere()}, forward — remains
      */
     public boolean isQuiescent() {
-        return draining && inFlightTurns == 0 && activeSessions == 0 && heldLeases == 0 && pendingHandOvers == 0
-                && queuedHandOvers == 0 && (!forwardsRunHere || pendingForwards == 0);
+        return draining && inFlightSubmits == 0 && inFlightTurns == 0 && heldTurnGates == 0 && heldLeases == 0
+                && owedDoorbellRelays == 0 && queuedHandOvers == 0 && (!forwardsRunHere || pendingForwards == 0);
     }
 
     @Override
     public String toString() {
-        return "DrainSnapshot{draining=" + draining + ", inFlightTurns=" + inFlightTurns + ", activeSessions="
-                + activeSessions + ", heldLeases=" + heldLeases + ", pendingHandOvers=" + pendingHandOvers
-                + ", queuedHandOvers=" + queuedHandOvers + ", pendingForwards=" + pendingForwards + ", forwardsRunHere="
-                + forwardsRunHere + '}';
+        return "DrainSnapshot{draining=" + draining + ", inFlightSubmits=" + inFlightSubmits + ", inFlightTurns="
+                + inFlightTurns + ", heldTurnGates=" + heldTurnGates + ", heldLeases=" + heldLeases
+                + ", owedDoorbellRelays=" + owedDoorbellRelays + ", queuedHandOvers=" + queuedHandOvers
+                + ", pendingForwards=" + pendingForwards + ", forwardsRunHere=" + forwardsRunHere + '}';
     }
 
     /** Builder for {@link DrainSnapshot}. */
     public static final class Builder {
         private boolean draining;
+        private int inFlightSubmits;
         private int inFlightTurns;
-        private int activeSessions;
+        private int heldTurnGates;
         private int heldLeases;
-        private int pendingHandOvers;
+        private int owedDoorbellRelays;
         private int queuedHandOvers;
         private int pendingForwards;
         private boolean forwardsRunHere;
@@ -144,7 +160,17 @@ public final class DrainSnapshot {
 
         /**
          * @param v
-         *            turns and drain passes counted in flight
+         *            submit calls still in progress
+         * @return this builder
+         */
+        public Builder inFlightSubmits(int v) {
+            this.inFlightSubmits = v;
+            return this;
+        }
+
+        /**
+         * @param v
+         *            turns and inbox passes counted in flight
          * @return this builder
          */
         public Builder inFlightTurns(int v) {
@@ -157,8 +183,8 @@ public final class DrainSnapshot {
          *            sessions whose turn gate is held
          * @return this builder
          */
-        public Builder activeSessions(int v) {
-            this.activeSessions = v;
+        public Builder heldTurnGates(int v) {
+            this.heldTurnGates = v;
             return this;
         }
 
@@ -177,8 +203,8 @@ public final class DrainSnapshot {
          *            doorbell relays still owed
          * @return this builder
          */
-        public Builder pendingHandOvers(int v) {
-            this.pendingHandOvers = v;
+        public Builder owedDoorbellRelays(int v) {
+            this.owedDoorbellRelays = v;
             return this;
         }
 
