@@ -235,6 +235,9 @@ final class AnthropicStreamingMapper {
         }
         try {
             this.servedModel = AnthropicUsages.model(event.message());
+            // The message object is where the server puts the list (measured on claude-opus-5-5, 2026-11-10; backlog
+            // L-36); the event's own properties and message_delta's two places are read in case another model or a
+            // later version moves it.
             reportInputTransformations(event.message()._additionalProperties());
             reportInputTransformations(event._additionalProperties());
         } catch (RuntimeException e) {

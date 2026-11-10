@@ -83,8 +83,7 @@ public class PathSkillRepository implements SkillRepository {
     private final Path skillsBasePath;
 
     // The staging source (execution-environment-staging design §9): a read-only filesystem over the skills directory.
-    // Built
-    // once and without I/O, so a missing or read-only skills directory behaves exactly as it did before.
+    // Built once and without I/O, so a missing or read-only skills directory behaves exactly as it did before.
     private final VirtualFileSystem sourceFileSystem;
 
     /**

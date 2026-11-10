@@ -85,8 +85,8 @@ public final class ScopedSessionSnapshotStore implements SessionSnapshotStore {
     public Optional<ResumableSession> load(String taskId) {
         Objects.requireNonNull(taskId, "taskId cannot be null");
         // Authorize the resume: surface the transcript only when it was recorded by this same context. A
-        // foreign-context
-        // or untagged (unverifiable) transcript is hidden as an unknown id, so a caller can never read or continue it.
+        // foreign-context or untagged (unverifiable) transcript is hidden as an unknown id, so a caller can never read
+        // or continue it.
         return delegate.load(taskId).filter(this::ownedByScope);
     }
 

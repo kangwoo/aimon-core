@@ -208,9 +208,8 @@ class SkillPreflightScannerTest {
     @Test
     void approvalChannelSkippedWhenRuntimeIdNull() {
         // System/scheduled callers pass a null agentRuntimeId. The channel contract requires a non-null agentRuntimeId
-        // (it scopes
-        // AgentApprovalStore writes), so the scanner must skip the channel entirely and use the suspend path — the
-        // SK-11.4 flow generates its own PendingTurnId and does not need the agentRuntimeId.
+        // (it scopes AgentApprovalStore writes), so the scanner must skip the channel entirely and use the suspend path
+        // — the SK-11.4 flow generates its own PendingTurnId and does not need the agentRuntimeId.
         final RecordingApprovalChannel channel = new RecordingApprovalChannel();
         final SkillPreflightScanner scanner = SkillPreflightScanner.builder()
                 .policy(new MapBackedPolicy(Map.of("commit", SkillInvocationDecision.ASK)))

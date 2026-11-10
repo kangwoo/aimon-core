@@ -56,9 +56,8 @@ final class OpenAIStreamingMapper {
     private TokenUsage lastUsage;
 
     // Streaming-tool overlap (design §4.1): OpenAI streams tool_calls sequentially by index, so a slot is complete
-    // once
-    // a strictly-higher index appears. highestToolCallIndex tracks the max index seen; emittedToolUseUpTo tracks the
-    // highest index already surfaced as TOOL_USE_READY. The final (highest) slot is flushed at emitStreamEnd().
+    // once a strictly-higher index appears. highestToolCallIndex tracks the max index seen; emittedToolUseUpTo tracks
+    // the highest index already surfaced as TOOL_USE_READY. The final (highest) slot is flushed at emitStreamEnd().
     private int highestToolCallIndex = -1;
     private int emittedToolUseUpTo = -1;
 

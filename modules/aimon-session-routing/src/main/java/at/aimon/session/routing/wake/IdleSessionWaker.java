@@ -340,8 +340,7 @@ public final class IdleSessionWaker implements AutoCloseable {
                 ? stored.getTurnCountAfterWake().getAsInt()
                 : null;
         // A wake's turn starts inside the hour its wake is counted in; with none left in the window, an outstanding
-        // count is
-        // a node that died before its turn settled, and it must not keep the streak from ever resetting.
+        // count is a node that died before its turn settled, and it must not keep the streak from ever resetting.
         final int outstanding = recent.isEmpty() ? 0 : stored.getOutstanding();
         if (outstanding == 0 && after != null && turnCount > after) {
             consecutive = 0;

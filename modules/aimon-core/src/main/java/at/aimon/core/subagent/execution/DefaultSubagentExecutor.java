@@ -1321,8 +1321,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, executionId.value());
 
         // PAR-05 / execution-environment-files §5: inject a thread-safe, execution-scoped map of read stamps (parity
-        // with
-        // the main-agent executor). A fresh map, not the parent's: a fork does not inherit its parent's reads.
+        // with the main-agent executor). A fresh map, not the parent's: a fork does not inherit its parent's reads.
         builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 
         // Publish the execution-scoped signal so cooperative subagent tools can poll it through
@@ -1779,12 +1778,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             int iterationCount) {
         // PAR-04: delegate to the dispatcher. The start/completed callbacks serialize per-tool progress into the output
         // sink (a no-op for foreground; a TaskOutputStore append for background tasks). onCompleted may fire on a
-        // shared
-        // worker thread under the parallel path, so the sink must be thread-safe — the store's append is. The gate uses
-        // the per-session registry (the same source executeSingleTool reads interrupt behaviour from). With the
-        // default sequential dispatcher this is 1:1 equivalent to the previous for-loop. The fork's depth goes along so
-        // a dedicated-thread dispatcher can decide whether a fork this deep may fan out; any other dispatcher ignores
-        // it.
+        // shared worker thread under the parallel path, so the sink must be thread-safe — the store's append is. The
+        // gate uses the per-session registry (the same source executeSingleTool reads interrupt behaviour from). With
+        // the default sequential dispatcher this is 1:1 equivalent to the previous for-loop. The fork's depth goes
+        // along so a dedicated-thread dispatcher can decide whether a fork this deep may fan out; any other dispatcher
+        // ignores it.
         final List<ToolUseResult> results = parallelToolDispatcher.dispatch(toolUses, lc.sessionRegistry,
                 DispatchOptions.builder().forkDepth(lc.forkDepth).build(),
                 toolUse -> executeSingleTool(lc, toolContext, toolUse, iterationCount),

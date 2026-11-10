@@ -200,15 +200,17 @@ OPENAI_KEY_FILE=<path to a file holding the key> ANTHROPIC_KEY_FILE=<path> ./gra
   gate compile them and skip them, even with a key exported. The task always re-runs; no `--rerun` needed.
 - **Keys.** `OPENAI_KEY` wins when set; otherwise `OPENAI_KEY_FILE` names a file read in place and trimmed — never copied
   or printed. Anthropic is the same with `ANTHROPIC_KEY` (then `ANTHROPIC_API_KEY`) and `ANTHROPIC_KEY_FILE`. A set but
-  missing, unreadable or empty key file **fails** the run, naming the variable and path, rather than skipping it. A provider with no key is skipped; with no key at all every test is skipped and the task exits 0.
+  missing, unreadable or empty key file **fails** the run, naming the variable and path, rather than skipping it. A
+  provider with no key is skipped; with no key at all every test is skipped and the task exits 0.
 - **What it asserts.** The agent can reach two host tools only through `ExecuteCode` (`programmatic-only`). The model must
   write **one** program whose nested calls — at least two, dispatched and answered without error — cover both tools, with
   TOOL spans (`tool.path=code`) under that program's `ExecuteCode` span; two programs calling one tool each do not add
   up to a pass; no host tool may be called directly; each result's summary line must name the engine's language;
-  and every raw-output marker in a result must be one the program printed. The answer must be right too: a program must
-  have printed exactly the expected hosts, or the final answer must name exactly them. The prompt asks the program to
-  print them, and a model that does often ends with "the names have been printed" — judging the final answer alone
-  reported correct JavaScript runs as wrong.
+  and every raw-output marker in a result must be one the program printed. The answer must be right too: a program that
+  ended `COMPLETED` must have printed exactly the expected hosts, or the final answer must name exactly them. The prompt
+  asks the program to print them, and a model that does often ends with "the names have been printed" — judging the
+  final answer alone reported correct JavaScript runs as wrong. A program that printed them and then hit `SCRIPT_ERROR`
+  does not count.
 - **The result line.** Every run prints one line per provider and engine, pass or fail:
   `LIVE-E2E provider=openai model=gpt-4o-mini engine=javascript result=PASS executeCodeCalls=1 nestedCallsBestProgram=10 nestedCallsAllPrograms=10 perProgram=[10] inputTokens=… outputTokens=… completion=COMPLETED answer=CORRECT programPrinted=[[h2, h3, h5]] finalAnswerMatches=false`,
   with each program's own numbers (`LIVE-E2E program #n … dispatched= succeeded= tools=[…] status=…`) printed above it.

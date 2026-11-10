@@ -20,6 +20,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
  * per reason, and only the prefix reason gets a cause hint.
  *
  * <p>
+ * The prefix reason is recognised by the substring {@code prefix}, and that rule rests on one measurement: the vendor's
+ * documentation names no reason values, and the live probe ({@code AnthropicThinkingBindingLiveTest}, 2026-11-10)
+ * returned {@code prefix_binding_mismatch} on {@code claude-sonnet-5-5} and {@code claude-haiku-5-5} for a block
+ * replayed after a system-prompt edit. Matching the substring rather than that exact string keeps the hint on a renamed
+ * or more specific prefix reason; a reason that does not mention the prefix ({@code organization_binding_mismatch})
+ * gets no hint, because a re-rendered system prompt is not its cause.
+ *
+ * <p>
  * Reporting must never fail a request: an absent, empty or unparseable value says nothing.
  *
  * <p>
@@ -76,6 +84,7 @@ final class AnthropicInputTransformations {
         }
     }
 
+    /** The cause hint for a reason naming the prompt prefix ({@code prefix_binding_mismatch}, measured), else none. */
     private static String causeHint(String reason) {
         if (reason.contains("prefix")) {
             return " The prompt prefix changed since the blocks were produced: a system prompt re-rendered on a new "

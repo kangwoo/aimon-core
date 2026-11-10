@@ -496,17 +496,13 @@ public final class DefaultSessionRouter implements SessionRouter {
         precheckAgentBinding(convId, requestedAgent);
 
         // Names this submission attempt, and only this attempt. It is deliberately NOT the lease holder id: the lease
-        // is
-        // claimed as the bare nodeId below. The two identities were one string until Stage 3b, and the split is what
-        // lets
-        // each side have the lifetime it needs — the lease a node-wide one it can outlive a turn with and answer "am I
-        // the holder?" from, the reservation a per-attempt one. Shrinking the reservation to nodeId would open an ABA
-        // on
-        // a single key within one node: attempt 1 reserves K and stalls, the sweeper resets K after the secondary TTL,
-        // a
-        // retry re-reserves K as attempt 2 here, and attempt 1's late compareAndReset(K, nodeId) then erases attempt
-        // 2's
-        // live reservation, after which the next retry executes twice. The suffix is what makes that CAS fail.
+        // is claimed as the bare nodeId below. The two identities were one string until Stage 3b, and the split is what
+        // lets each side have the lifetime it needs — the lease a node-wide one it can outlive a turn with and answer
+        // "am I the holder?" from, the reservation a per-attempt one. Shrinking the reservation to nodeId would open an
+        // ABA on a single key within one node: attempt 1 reserves K and stalls, the sweeper resets K after the
+        // secondary TTL, a retry re-reserves K as attempt 2 here, and attempt 1's late compareAndReset(K, nodeId) then
+        // erases attempt 2's live reservation, after which the next retry executes twice. The suffix is what makes that
+        // CAS fail.
         final String reserverId = nodeId + "/" + Thread.currentThread().getName() + "/" + turnSeq.incrementAndGet();
         // Issued before any disposition branches so the caller gets a name for what it submitted whether the turn runs
         // here, waits in the inbox, or replays from the idempotency cache. The id travels with the work: into the inbox
@@ -625,13 +621,10 @@ public final class DefaultSessionRouter implements SessionRouter {
         final ClaimResult claimed;
         try {
             // The bare nodeId, not the per-attempt reserverId: exclusion comes from the fencing token, which the
-            // backend
-            // mints fresh per acquisition, so a node-wide holder id costs nothing there —
-            // InMemorySessionLeaseStore
-            // and both SQL backends admit a second acquire from the same node exactly as they would a different node's,
-            // on expiry alone. What it buys is that a turn, a drain pass and a delete on this node are
-            // indistinguishable
-            // by holder id, which is the premise "am I the holder?" needs.
+            // backend mints fresh per acquisition, so a node-wide holder id costs nothing there —
+            // InMemorySessionLeaseStore and both SQL backends admit a second acquire from the same node exactly as they
+            // would a different node's, on expiry alone. What it buys is that a turn, a drain pass and a delete on this
+            // node are indistinguishable by holder id, which is the premise "am I the holder?" needs.
             claimed = store.claim(convId, requestedAgent, owner, nodeId, lockLease);
         } catch (RuntimeException e) {
             if (idem.acquiredKey != null) {
@@ -973,8 +966,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
         // Value-based removal: a newer lease for the same session has to survive this. It cannot exist yet on any
         // path that holds the gate, but the lease-lost path does not hold it, and a map that forgot the live lease
-        // would
-        // leave it renewed by nobody and the session held by a node that no longer knows it.
+        // would leave it renewed by nobody and the session held by a node that no longer knows it.
         heldLeases.remove(sessionId, held);
         try {
             store.release(held.getLease());
@@ -1163,13 +1155,11 @@ public final class DefaultSessionRouter implements SessionRouter {
 
             // Bound for this turn and cleared at the end of it. The renewal schedule belongs to the lease, which now
             // outlives the turn, so a schedule that captured the key would go on refreshing a finished reservation
-            // while
-            // the reservation of the turn actually running went stale under the holder-loss sweeper.
+            // while the reservation of the turn actually running went stale under the holder-loss sweeper.
             held.getTouchSlot().bind(idem.acquiredKey, idem.reserverId);
 
             // No binding work here: the claim that produced this lease already validated the requested agent against
-            // the
-            // record and wrote it when the session was unbound, while holding the lease. This used to be a
+            // the record and wrote it when the session was unbound, while holding the lease. This used to be a
             // validate-then-record pair at this point, which was the wrong place for it — the validation had already
             // happened once in submit, before the election, and the record could be written by a node that had not yet
             // earned the right to.
@@ -1818,8 +1808,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
         if (held == null) {
             // A peer is holding the session, and its post-turn re-collect will pick this up. If the message
-            // arrived
-            // too late for that, the doorbell outlives their pass and they re-ring on release.
+            // arrived too late for that, the doorbell outlives their pass and they re-ring on release.
             endTurnAndSettleLeaseReturn(sessionId);
             return;
         }
@@ -2896,8 +2885,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                     // Through the fenced view, not the raw repository: the lease acquired above is what authorises the
                     // delete, and routing it here makes the store prove the lease is still current at the moment of the
                     // write. A delete that lost its lease to a peer mid-way now fails instead of erasing history the
-                    // new
-                    // holder is actively appending to.
+                    // new holder is actively appending to.
                     store.records().delete(sessionId);
                 } catch (Exception e) {
                     log.error("Repository delete failed for session {}: {}", sessionId, e.toString(), e);

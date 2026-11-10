@@ -64,6 +64,16 @@ import org.junit.jupiter.api.Test;
  * could have filled. Hand-wrapped prose, broken by the author at 110–116 columns, fails the forced-break condition.
  *
  * <p>
+ * A {@code //} line comment ({@link #lineCommentOrphans}) is held to form A only: a run of {@code //} lines at one
+ * indentation whose line of at most two tokens could have taken the next line's first token. Form B is left out there
+ * because {@code //} runs are often broken by hand at a sentence — one sentence a line — which form B cannot tell
+ * from a forced remainder (a throwaway scan at {@code 994ae5c0} found 27 such lines, most of them laid out on purpose).
+ * Three shapes are not prose and pass: a line next to a rule ({@code // -----}) is a section banner; a line that
+ * starts with {@code .}, {@code -}, {@code *}, {@code |}, {@code <} or {@code @} is code or a list; and a line that
+ * ends a sentence ({@code .}, {@code :}, {@code )}), or is a single capitalised word ({@code // Act}), before a line
+ * that starts with a capital, is a label or a sentence of its own.
+ *
+ * <p>
  * In Markdown, a prose line of at most two tokens, or at most 60 display columns wide, between two prose lines, the
  * previous one at least 100 columns wide (Hangul counted as two), is the same artefact — the second form is
  * {@code programmatic-tool-calling-shell.md}'s stranded {@code 모델}, which ended a short line rather than standing
@@ -114,6 +124,9 @@ class CommentReflowTest {
             "the dash introduces the enumerated (a) / (b) constructors, each starting its own line");
 
     private static final Pattern CONTINUATION = Pattern.compile("^\\s*\\*\\s(.*)$");
+    private static final Pattern LINE_COMMENT = Pattern.compile("^(\\s*)// (.*)$");
+    private static final Pattern RULE = Pattern.compile("^[-=*/]{3,}");
+    private static final Pattern LABEL = Pattern.compile("^\\p{Lu}\\p{L}*$");
     private static final Pattern BLOCK_START = Pattern
             .compile("^(@|<p>|<li>|</|<pre>|<ul>|<ol>|<h\\d|<table|<blockquote|<dl>|<dt>|<dd>)");
     private static final Pattern MARKDOWN_NOT_PROSE = Pattern.compile("^\\s*([-*+]\\s|\\d+[.)]\\s|\\||#|>|```|<)");
@@ -132,6 +145,9 @@ class CommentReflowTest {
         for (Path file : files) {
             final List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             for (int i : javaOrphans(lines)) {
+                report(orphans, allowedHit, file, i, lines.get(i));
+            }
+            for (int i : lineCommentOrphans(lines)) {
                 report(orphans, allowedHit, file, i, lines.get(i));
             }
         }
@@ -226,6 +242,23 @@ class CommentReflowTest {
         assertThat(full.length()).isGreaterThan(110);
         assertThat(javaOrphans(List.of(forced, full, " * nextword continues."))).isEmpty();
         assertThat(unit("({@link Foo#bar(int, long)}), then")).isEqualTo("({@link Foo#bar(int, long)}),");
+
+        // Line comments: form A only — the ExecuteCodePlan shape, a word left alone by the formatter.
+        final String lineForced = "            // A fork whose own definition opts in but whose caller allows none of"
+                + " it arrives with none(), and so does";
+        assertThat(lineCommentOrphans(List.of(lineForced, "            // an",
+                "            // execution an inline skill emptied: told why on the span too."))).containsExactly(1);
+        // A banner, a label, a sentence end before a capital, commented-out code, another indentation, a long token.
+        assertThat(lineCommentOrphans(List.of("    // ------", "    // Builder", "    // ------"))).isEmpty();
+        assertThat(lineCommentOrphans(List.of("        // Act", "        // Thread 1: iterate"))).isEmpty();
+        assertThat(lineCommentOrphans(List.of("        // the end.", "        // Next sentence."))).isEmpty();
+        assertThat(lineCommentOrphans(List.of("        // .isInstanceOf(Foo.class)", "        // .hasMessage(x)")))
+                .isEmpty();
+        assertThat(lineCommentOrphans(List.of("        // an", "    // other indentation"))).isEmpty();
+        assertThat(lineCommentOrphans(List.of("        // see", "        // " + "x".repeat(110)))).isEmpty();
+        // Form B is not applied to line comments: a medium remainder of a sentence of its own passes.
+        assertThat(lineCommentOrphans(List.of(lineForced, "            // a medium-length remainder of the line.",
+                "            // next sentence."))).isEmpty();
         assertThat(unit("plain words")).isEqualTo("plain");
         // The ALLOWED key joins path names with '/', so a Windows path builds the same key.
         assertThat(key(Path.of("docs", "design", "README.md"), "  text  ")).isEqualTo("docs/design/README.md:text");
@@ -314,6 +347,36 @@ class CommentReflowTest {
             if (formA || formB) {
                 orphans.add(i);
             }
+        }
+        return orphans;
+    }
+
+    /**
+     * The indexes of orphan {@code //} line-comment lines in a Java source: form A in a run of {@code //} lines at one
+     * indentation, minus banners, code, lists, labels and sentence ends (class documentation).
+     */
+    static List<Integer> lineCommentOrphans(List<String> lines) {
+        final List<Integer> orphans = new ArrayList<>();
+        for (int i = 0; i + 1 < lines.size(); i++) {
+            final Matcher line = LINE_COMMENT.matcher(lines.get(i));
+            final Matcher next = LINE_COMMENT.matcher(lines.get(i + 1));
+            if (!line.matches() || !next.matches() || !line.group(1).equals(next.group(1))) {
+                continue;
+            }
+            final String text = line.group(2).strip();
+            final String nextText = next.group(2).strip();
+            if (text.isEmpty() || nextText.isEmpty() || RULE.matcher(text).find() || RULE.matcher(nextText).find()
+                    || ".-*|<@".indexOf(text.charAt(0)) >= 0 || tokens(text).length > 2) {
+                continue;
+            }
+            if (lines.get(i).length() + 1 + tokens(nextText)[0].length() > LINE_LENGTH) {
+                continue;
+            }
+            final boolean capitalNext = Character.isUpperCase(nextText.codePointAt(0));
+            if (capitalNext && (SENTENCE_END.matcher(text).find() || LABEL.matcher(text).matches())) {
+                continue;
+            }
+            orphans.add(i);
         }
         return orphans;
     }

@@ -125,8 +125,7 @@ final class StructuredOutputSupport {
         if (properties instanceof Map<?, ?> props) {
             for (final Map.Entry<?, ?> entry : props.entrySet()) {
                 // Validate a property whenever it is PRESENT (even if its value is JSON null) so a null value is
-                // checked
-                // against its declared type rather than silently accepted.
+                // checked against its declared type rather than silently accepted.
                 if (value.containsKey(entry.getKey()) && entry.getValue() instanceof Map<?, ?> propSchema
                         && !validate(value.get(entry.getKey()), (Map<String, Object>) propSchema)) {
                     return false;

@@ -536,11 +536,10 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
         }
         // Unlike the position, the input describes something optional. The position addresses the log that arrived
         // with it, so a mismatch means the document is inconsistent and refusing is the only honest answer. An input
-        // this
-        // reader cannot decode — written under an older field name, or tagged with a type a later build added — costs
-        // exactly one turn's retry, while throwing would cost the whole record: every backend turns a decode failure
-        // into a SessionRecordStoreException, so the session could not be opened at all. "Nothing to retry" is both
-        // the smaller answer and the true one.
+        // this reader cannot decode — written under an older field name, or tagged with a type a later build added —
+        // costs exactly one turn's retry, while throwing would cost the whole record: every backend turns a decode
+        // failure into a SessionRecordStoreException, so the session could not be opened at all. "Nothing to retry" is
+        // both the smaller answer and the true one.
         final JsonNode userInput = node.get(FIELD_USER_INPUT);
         if (userInput == null || !userInput.isObject()) {
             log.debug("Rewind point carries no readable user input; treating the turn as not retryable");

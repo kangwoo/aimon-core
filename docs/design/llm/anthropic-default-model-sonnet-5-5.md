@@ -214,6 +214,15 @@ streaming) and every Spring app at a 60s total. **Decision:**
    sentences.
 5. CHANGELOG (§4.6): Anthropic default timeout 60s → 600s, and the CLI and Spring no longer pin 60s for both providers.
    Anyone who wants the old ceiling sets `llm.timeout: 60` / `aimon.llm.timeout=60s`.
+6. **Per attempt, not per call (follow-up after #352).** The SDK's `RetryingHttpClient` retries any `IOException`,
+   a timed-out attempt included, and `ClientOptions.maxRetries` defaults to 2 (`ClientOptions.kt:223`). So a call
+   whose server stalls waits about (1 + retries) × timeout plus backoff before it fails: about 30 minutes at the
+   new 600s default, up from 3 minutes at 60s. This is documented, not bounded. An overall deadline would need a
+   second abort lever on the blocking path, which today has none (the lever in `AnthropicAbortableHttpClient` serves
+   streaming cancellation only), and a per-attempt read timeout does not help a non-streaming call, whose response
+   arrives only when the whole answer is ready. The knobs, stated in `AnthropicConfig#getTimeout()`, the CLI's
+   `default-config.yaml`, `AimonProperties.Llm.timeout` and the CHANGELOG: `maxRetries(0)` makes the timeout the
+   whole call's ceiling (library only); a lower `timeout` shortens every attempt (all three surfaces).
 
 This is a **breaking default change** and goes in the CHANGELOG. It does not affect anyone who sets `maxTokens`, and
 that includes the CLI bundles (40000) and every Spring property user who sets it. Verify, without assuming, that no
@@ -788,9 +797,9 @@ F1 is therefore closed for the two models measured. `AnthropicThinkingLiveTest` 
 | Q | Outcome |
 |---|---|
 | Q1 | Decided as designed; the two visible changes (beta header on every request to the three models; the OFF carrier) are in the CHANGELOG for the user to veto |
-| Q1b | Not measured live (the live test uses the blocking path) → backlog [L-36](../../backlog/llm-config-surface-open-items.md) |
+| Q1b | Not measured live (the live test uses the blocking path) → backlog [L-36](../../backlog/llm-config-surface-open-items.md); measured after #352: inside `message_start`'s `message` object, nothing on `message_delta` — the first place the mapper reads, so no code change (L-36 closed) |
 | Q2 | → backlog [L-31](../../backlog/llm-config-surface-open-items.md) |
 | Q3 · Q3b · Q7 | Decided as designed (16000; 600s and unpinned; retired names kept in the WARN table) |
 | Q4 | → backlog [L-32](../../backlog/llm-config-surface-open-items.md) |
-| Q5 | → backlog [L-33](../../backlog/llm-config-surface-open-items.md) |
+| Q5 | → backlog [L-33](../../backlog/llm-config-surface-open-items.md); measured after #352: adaptive + binding 200, a changed-system-prompt replay dropped (`prefix_binding_mismatch`), budgeted 400 — the row stands (L-33 closed) |
 | Q6 | Split: the block binding for Fable 5.1 / Mythos 5.1 → [L-34](../../backlog/llm-config-surface-open-items.md); the price and context-window gaps → [L-35](../../backlog/llm-config-surface-open-items.md) |

@@ -440,8 +440,8 @@ public final class LocalShell implements VirtualShell {
             Files.deleteIfExists(file);
         } catch (IOException e) {
             // On Windows a file still open by a surviving child cannot be deleted; register a JVM-exit backstop so it
-            // is
-            // not leaked. This path is rare (Unix deletes succeed), so deleteOnExit does not accumulate in normal use.
+            // is not leaked. This path is rare (Unix deletes succeed), so deleteOnExit does not accumulate in normal
+            // use.
             log.debug("Failed to delete temp capture file {} ({}); scheduling deleteOnExit backstop", file,
                     e.toString());
             file.toFile().deleteOnExit();

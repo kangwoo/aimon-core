@@ -194,8 +194,7 @@ class OrcaAgentExecutorStalledIterationTest {
             // Once the signal is tripped, every not-yet-started tool_use is short-circuited to an error result, so an
             // interrupted iteration is indistinguishable from a stalled one to isStalledIteration. Counting it here
             // would make the loop report a cancellation the user asked for as a death spiral the agent fell into — the
-            // wrong
-            // reason, the wrong error message, and a misleading transcript. The guard must read the signal first.
+            // wrong reason, the wrong error message, and a misleading transcript. The guard must read the signal first.
             assertThat(result.getCompletionReason())
                     .as("a cancelled iteration is a cancellation, not the third strike of the death-spiral guard")
                     .isEqualTo(CompletionReason.INTERRUPTED);

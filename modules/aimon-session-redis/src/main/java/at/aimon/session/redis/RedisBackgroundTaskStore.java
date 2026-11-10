@@ -72,8 +72,7 @@ public final class RedisBackgroundTaskStore implements BackgroundTaskStore {
 
     // Compare-and-set write: overwrite the snapshot only while it is still non-terminal AND byte-identical to the value
     // the caller read (ARGV[2]). Returns the new value on success, a Lua false (decoded by Lettuce as null) when the
-    // key
-    // is gone or already terminal, and ARGV[3] (the retry sentinel) when the stored value changed under the caller.
+    // key is gone or already terminal, and ARGV[3] (the retry sentinel) when the stored value changed under the caller.
     private static final String CAS_TRANSITION_SCRIPT = "local v = redis.call('GET', KEYS[1]); "
             + "if not v then return false end; " + "if string.find(v, '\"state\":\"COMPLETED\"', 1, true) "
             + "   or string.find(v, '\"state\":\"FAILED\"', 1, true) "

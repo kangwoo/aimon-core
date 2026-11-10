@@ -49,7 +49,9 @@ llm:
 # Total per-call ceiling in seconds, streaming included (the vendor SDKs apply it as the whole HTTP call's timeout,
 # and retry -- billed -- when it is hit). A value set here applies to BOTH providers. Left unset, each provider
 # client's own default applies: Anthropic 600, OpenAI 60. Anthropic's is long because its default model thinks by
-# default and a long streamed answer must not be cut off.
+# default and a long streamed answer must not be cut off. The ceiling holds per attempt and the SDKs retry a
+# timed-out attempt (twice by default), so a stalled call can wait about three times this value before it fails --
+# about 30 minutes at Anthropic's 600. Lower it to shorten every attempt.
 #  timeout: 60
 # How hard the model should think. Read by BOTH providers -- the name is the framework's own neutral
 # type and the question means the same thing to either vendor, which is why it is here and not under

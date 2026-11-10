@@ -256,8 +256,7 @@ public final class SingleToolInvoker {
                 feedback.addAll(HookFeedback.collectAdvisory(preToolResults));
 
                 // PreTool hooks may have rewritten the input (e.g. redacting secrets). Use the accumulated input for
-                // the
-                // actual dispatch so the tool sees the post-hook view, while keeping toolUse.getId() stable.
+                // the actual dispatch so the tool sees the post-hook view, while keeping toolUse.getId() stable.
                 final ToolUse effectiveToolUse = hookExecutionManager.finalUpdatedInput(preToolResults)
                         .map(updated -> ToolUse.of(toolUse.getId(), toolUse.getName(), updated.toMap()))
                         .orElse(toolUse);

@@ -229,8 +229,7 @@ class SessionRouterForwardedTurnResultTest {
         // Node B resolves the session from its own repository, standing in for the window where A has won the lock
         // but B has not yet seen the binding A recorded. Without that window B's own resolveAndValidate would throw
         // ConflictingAgentException up front and the message would never reach the inbox — which is a different,
-        // already
-        // covered path. The one under test is the holder refusing a message that did get queued.
+        // already covered path. The one under test is the holder refusing a message that did get queued.
         final TestManagerHarness peer = node("node-B", b -> b.repository(new InMemorySessionRecordStore()));
         final SessionId id = SessionId.of("c-fwd-5");
         final List<Map<String, Object>> announced = tapTurnResults(id);

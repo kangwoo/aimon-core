@@ -17,18 +17,24 @@ import java.util.Optional;
  * Prefixes, lower-cased, so a dated snapshot ({@code claude-sonnet-4-5-20250929}) matches its alias. Each prefix was
  * checked not to reach an active model: {@code claude-sonnet-4-2025} / {@code claude-opus-4-2025} match only the
  * retired {@code -20250514} snapshots and not {@code claude-opus-4-5}, and {@code claude-3-} is safe because the whole
- * 3.x line is retired. {@code claude-haiku-4-5} and {@code claude-opus-4-5} are active in the vendor catalog and are
- * not listed.
+ * 3.x line is retired, and {@code claude-mythos-preview} reaches neither {@code claude-mythos-5} nor
+ * {@code claude-mythos-5-1}. {@code claude-haiku-4-5} and {@code claude-opus-4-5} are active in the vendor catalog and
+ * are not listed.
  *
  * <p>
  * Stateless and immutable.
  */
 final class AnthropicModelLifecycle {
 
-    /** Deprecated, still served until the stated date. */
-    private static final List<Entry> DEPRECATED = List
-            .of(new Entry("claude-sonnet-4-5", "is deprecated and retires on 2026-11-30, after which requests to it "
-                    + "fail with 404 not_found_error; move to claude-sonnet-5-5, the current default"));
+    /** Deprecated, still served until the stated date — or, where the vendor has not announced one, for now. */
+    private static final List<Entry> DEPRECATED = List.of(
+            new Entry("claude-sonnet-4-5",
+                    "is deprecated and retires on 2026-11-30, after which requests to it fail with 404 "
+                            + "not_found_error; move to claude-sonnet-5-5, the current default"),
+            new Entry("claude-mythos-preview",
+                    "is deprecated; its retirement date has not been announced, and requests to it will fail with "
+                            + "404 not_found_error once it retires. Move to claude-mythos-5-1 (Project Glasswing "
+                            + "only) or claude-fable-5-1"));
 
     /** Retired: the vendor answers 404. */
     private static final List<String> RETIRED = List.of("claude-sonnet-4-2025", "claude-opus-4-2025",

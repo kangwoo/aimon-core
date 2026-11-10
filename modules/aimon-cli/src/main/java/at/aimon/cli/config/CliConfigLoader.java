@@ -51,14 +51,13 @@ public class CliConfigLoader {
         // cli.sessionLogWriteFormat, so `v2` binds as the starter's aimon.session.log-write-format=v2 does. Three
         // other fields look like they would reach this feature and none does. Two
         // are not enums at all: MemoryDreamerConfig.ScorerConfig.type is a
-        // String routed
-        // through ScorerType.fromString (which already folds case itself), and McpServerEntry.transportType is a String
-        // parsed by hand; a MapperFeature reaches neither. The third, AnthropicProviderConfig.thinkingMode, does bind
-        // an
-        // enum and still does not reach this feature: it carries @JsonDeserialize, which replaces the EnumDeserializer
-        // this MapperFeature is consumed by, so that field folds case itself with equalsIgnoreCase. Measured -- with
-        // this feature disabled, `thinkingMode: auto` still binds. It needs its own deserializer for a different
-        // reason: `off` is a YAML 1.1 boolean and never arrives as a string at all.
+        // String routed through ScorerType.fromString (which already folds case itself), and
+        // McpServerEntry.transportType is a String parsed by hand; a MapperFeature reaches neither. The third,
+        // AnthropicProviderConfig.thinkingMode, does bind an enum and still does not reach this feature: it carries
+        // @JsonDeserialize, which replaces the EnumDeserializer this MapperFeature is consumed by, so that field folds
+        // case itself with equalsIgnoreCase. Measured -- with this feature disabled, `thinkingMode: auto` still binds.
+        // It needs its own deserializer for a different reason: `off` is a YAML 1.1 boolean and never arrives as a
+        // string at all.
         this.yamlMapper = JsonMapper.builder(new YAMLFactory()).enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
                 .build();
         this.envVarResolver = envVarResolver;

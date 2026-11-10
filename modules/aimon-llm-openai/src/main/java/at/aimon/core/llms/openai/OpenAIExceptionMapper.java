@@ -139,10 +139,10 @@ final class OpenAIExceptionMapper {
             // A mid-stream error event arrives on an already-opened SSE stream, so the SDK stamps this exception with
             // the stream-open status (HTTP 200) rather than the failure's real status. Routing it through the generic
             // OpenAIServiceException branch below would classify it by that 200 and fall through to a non-retryable
-            // base
-            // LlmClientException — diverging from the blocking chat().completions().create() path, which surfaces the
-            // same server-side failure as a 5xx -> retryable LlmOverloadedException. Classify from the error payload
-            // instead so a cancellable (streaming-re-routed) call keeps the same retry budget as the blocking one.
+            // base LlmClientException — diverging from the blocking chat().completions().create() path, which surfaces
+            // the same server-side failure as a 5xx -> retryable LlmOverloadedException. Classify from the error
+            // payload instead so a cancellable (streaming-re-routed) call keeps the same retry budget as the blocking
+            // one.
             return mapMidStreamError(sse.type().orElse(null), sse.code().orElse(null), safeMessage(sse),
                     parseRetryAfterFromHeaders(sse.headers()), messagePrefix, sdkError);
         }

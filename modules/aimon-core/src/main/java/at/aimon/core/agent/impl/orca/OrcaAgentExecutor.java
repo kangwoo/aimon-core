@@ -919,8 +919,7 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.CONTEXT_ENGINE, scope.agentRuntime.getContextEngine());
 
         // PAR-05 / execution-environment-files §5: inject a thread-safe, execution-scoped map of read stamps. It backs
-        // the
-        // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
+        // the stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
         // CONCURRENT_SAFE Read tools can record stamps without racing. It is created once per execution
         // (createToolContext is called once before the iteration loop), so reads persist across iterations but not
         // across turns — a file read in an earlier turn must be read again before it is modified.
@@ -1667,8 +1666,7 @@ public class OrcaAgentExecutor
 
         // Return command execution result as failure or success based on command result. A command whose final answer
         // was cut at max_tokens — a slash skill, inline or fork-mode — ends the turn as the agent's own cut answer
-        // does:
-        // a success carrying the flagged partial text, with TRUNCATED as its reason (createTruncatedResult).
+        // does: a success carrying the flagged partial text, with TRUNCATED as its reason (createTruncatedResult).
         if (commandExecutionResult.isSuccess()) {
             return OrcaAgentExecutionResult.success(commandExecutionResult.getResponse(),
                     scope.transcriptBuffer.toSnapshot(), metadata, scope.artifactCollector.getArtifacts(),
@@ -1763,8 +1761,7 @@ public class OrcaAgentExecutor
                 // Consult the budget tracker BEFORE starting a new iteration so exhausted budgets do not incur
                 // another LLM call. The agent-metadata maxIterations bound in the while-condition remains in place;
                 // when hit, the loop finalises via handleMaxIterations — a normal
-                // CompletionReason.MAX_ITERATIONS
-                // return, no longer a thrown MaxIterationsExceededException.
+                // CompletionReason.MAX_ITERATIONS return, no longer a thrown MaxIterationsExceededException.
                 final BudgetDecision decision = scope.budgetTracker.check();
                 if (decision == BudgetDecision.STOP) {
                     return handleBudgetStop(scope, iterationCount, accumulatedTokens);
@@ -1940,11 +1937,10 @@ public class OrcaAgentExecutor
 
                     // When a cost estimator is wired (opt-in), price this call and fold the cost into the
                     // per-model summary + the opt-in cost budget axis. With the default CostEstimator.NOOP the
-                    // whole
-                    // block is skipped so the exposed CostSummary stays empty (isEmpty()==true) — cost tracking is
-                    // entirely opt-in and adds no per-model bookkeeping when unused. The budget axis is USD-only by
-                    // contract, so a non-USD estimate (advanced misconfiguration) still accumulates in the summary
-                    // but is not enforced as a STOP.
+                    // whole block is skipped so the exposed CostSummary stays empty (isEmpty()==true) — cost tracking
+                    // is entirely opt-in and adds no per-model bookkeeping when unused. The budget axis is USD-only by
+                    // contract, so a non-USD estimate (advanced misconfiguration) still accumulates in the summary but
+                    // is not enforced as a STOP.
                     Money callCost = null;
                     if (costTrackingEnabled) {
                         callCost = costEstimator.estimate(costModelName, response.getTokenUsage());
@@ -1958,8 +1954,7 @@ public class OrcaAgentExecutor
 
                     // STREAM-03: publish assistant-message-received for intermediate (tool-calling) responses only.
                     // The terminal response (no tool uses) is surfaced through AgentExecutionResult#getFinalAnswer
-                    // and
-                    // rendered by the REPL's displayResult; emitting it here would duplicate the final answer line.
+                    // and rendered by the REPL's displayResult; emitting it here would duplicate the final answer line.
                     if (response.hasToolUses()) {
                         scope.eventDispatcher.emitAssistantMessageReceived(iterationCount, response);
                     }
@@ -1972,9 +1967,7 @@ public class OrcaAgentExecutor
 
                     // SK-11.4: pre-flight scan of Skill tool_uses. If any need user approval, suspend the turn
                     // atomically — no assistant message and no tool_result are committed to TranscriptBuffer, so
-                    // a
-                    // subsequent resume can re-issue the LLM call from the same memory state and the cached
-                    // approvals
+                    // a subsequent resume can re-issue the LLM call from the same memory state and the cached approvals
                     // (populated by the approval channel before resume) flip the policy to ALLOW. Skipped when the
                     // scanner is unconfigured (headless context) so the legacy fail-closed path through SkillTool
                     // continues to apply. Also skipped for a cut response: its calls are refused below, and nobody
@@ -2077,18 +2070,14 @@ public class OrcaAgentExecutor
                     }
 
                     // CQ-03: iteration-tail mid-turn injection. After tool results are committed to memory and
-                    // BEFORE
-                    // the next sendMessage call, drain queued user inputs scoped to this agent runtime and
-                    // append
-                    // them as <system-reminder>-wrapped user messages. When no queue manager is configured this is
-                    // a
-                    // no-op, preserving legacy behavior. The drained count is carried into the next iteration
-                    // so its LoopTransition can be tagged QUEUED_INPUT.
+                    // BEFORE the next sendMessage call, drain queued user inputs scoped to this agent runtime and
+                    // append them as <system-reminder>-wrapped user messages. When no queue manager is configured this
+                    // is a no-op, preserving legacy behavior. The drained count is carried into the next iteration so
+                    // its LoopTransition can be tagged QUEUED_INPUT.
                     injectedLastTail = injectQueuedMessages(scope, scope.receivedTaskIdsAwaitingRead);
 
                     // Iteration-tail trip check. A tool may have cooperatively tripped the signal during
-                    // this
-                    // iteration, or an external caller may have landed a trip between tool return and the next LLM
+                    // this iteration, or an external caller may have landed a trip between tool return and the next LLM
                     // call. Exit cleanly as INTERRUPTED rather than launching another sendMessage.
                     if (isInterrupted(coordinator)) {
                         scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
@@ -2414,10 +2403,9 @@ public class OrcaAgentExecutor
                 commandContextBuilder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
             }
             // The read stamps an inline skill's Read records and its Edit checks (execution-environment-files §5),
-            // published
-            // by hand like the keys above (EE-31). Without the map Edit answered "not read" to every call, read or
-            // not. Fresh per command, as createToolContext's is fresh per execution: a file read by an earlier turn or
-            // an earlier slash command must be read again before this one modifies it.
+            // published by hand like the keys above (EE-31). Without the map Edit answered "not read" to every call,
+            // read or not. Fresh per command, as createToolContext's is fresh per execution: a file read by an earlier
+            // turn or an earlier slash command must be read again before this one modifies it.
             commandContextBuilder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
             // The turn's quota guard, by hand like the keys above: a `/my-skill` fork charges the session that typed
             // it, as a Skill tool call's fork does.
@@ -2543,8 +2531,7 @@ public class OrcaAgentExecutor
         // instead of re-dispatching. Lifecycle events still fire in input order at harvest, so the observable event
         // stream and the results are byte-identical to the non-overlap path — only wall-clock is reduced. When no eager
         // work exists (overlap off, batch poisoned at tool 0, or a retry disabled it) this falls through to the
-        // ordinary
-        // batch-dispatch path unchanged.
+        // ordinary batch-dispatch path unchanged.
         final StreamingToolScheduler scheduler = scope.streamingToolScheduler;
         if (scheduler != null && scheduler.hasAnyEager()) {
             return harvestEagerToolUses(scope, iterationCount, toolUses, runner, scheduler, sessionRegistry, deliver);
@@ -3710,9 +3697,8 @@ public class OrcaAgentExecutor
         } catch (LlmCallCancelledException e) {
             // LLM-CANCEL: the provider actively aborted the HTTP stream because the turn signal tripped (distinct from
             // the sink-checkpoint CancelledExecutionException path above — this fires when close() wins the race).
-            // Treat
-            // it identically: drop eager tool work, preserve the streamed prefix, emit an interrupted completion, then
-            // translate to CancelledExecutionException so the ReAct loop routes into handleInterrupted.
+            // Treat it identically: drop eager tool work, preserve the streamed prefix, emit an interrupted completion,
+            // then translate to CancelledExecutionException so the ReAct loop routes into handleInterrupted.
             if (scheduler != null) {
                 scheduler.cancelAll();
             }
@@ -3870,9 +3856,8 @@ public class OrcaAgentExecutor
         void onRetry(int previousAttemptIndex, int nextAttemptIndex, String reason) {
             // Streaming-tool overlap: the previous attempt is being discarded — cancel and drop its eager tool
             // work so nothing from it is harvested, and keep eager off for the remainder of this streaming call (a
-            // fresh
-            // invokeGatewayOnce re-arms via resetForNewAttempt). The retried attempt's tools then run on the ordinary
-            // harvest path. Safe because eager tools are side-effect-free.
+            // fresh invokeGatewayOnce re-arms via resetForNewAttempt). The retried attempt's tools then run on the
+            // ordinary harvest path. Safe because eager tools are side-effect-free.
             if (streamingToolScheduler != null) {
                 streamingToolScheduler.disableForRetry();
             }

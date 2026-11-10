@@ -75,9 +75,9 @@ public class TaskStopTool extends AbstractTool {
             final String taskId = input.getRequiredString("taskId");
 
             // Confine stop/status to the calling agent's runtime: a task owned by another
-            // concurrently-running
-            // agent is treated as not found, so one agent can never cancel another's background task through a shared
-            // BackgroundTaskStore. Non-Orca call paths without the context id fall back to the unscoped controller.
+            // concurrently-running agent is treated as not found, so one agent can never cancel another's background
+            // task through a shared BackgroundTaskStore. Non-Orca call paths without the context id fall back to the
+            // unscoped controller.
             final SubagentTaskController scoped = ScopedSubagentTaskController.scopeOrPassThrough(taskController,
                     context.get(ToolContextKeys.AGENT_RUNTIME_ID));
 

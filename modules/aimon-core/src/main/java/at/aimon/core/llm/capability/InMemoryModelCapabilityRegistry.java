@@ -386,8 +386,10 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         // claude-sonnet-5 / claude-opus-5 / claude-fable-5 / claude-mythos prefixes stay without it -- Sonnet 5 runs
         // no check, and the Fable and Mythos prefixes also cover 5.0 models the guides give no binding evidence for.
         //
-        // Documentation-derived, like claude-mythos: the live tests (AnthropicThinkingBindingLiveTest) confirm Sonnet
-        // 5.5 and Haiku 5.5 on the adaptive path with the binding; Opus 5.5 is the catalog's word alone. What the rows
+        // Measured on all three: the live tests (AnthropicThinkingBindingLiveTest) confirm Sonnet 5.5 and Haiku 5.5 on
+        // the adaptive path with the binding, and three raw requests on 2026-11-10 confirmed Opus 5.5 -- adaptive with
+        // the binding 200, a replay under a changed system prompt dropped (prefix_binding_mismatch), budget_tokens 400
+        // (docs/backlog/llm-config-surface-open-items.md L-33). What the rows
         // deliberately do NOT state, same rule as the blocks below: the forced tool_choice refusal (no client sends
         // one), between_tools (no client sends it), and the server's default effort (high on Sonnet, medium on Haiku
         // and Opus -- a server default, not a request-surface fact). The OpenAI-shaped flags stay fail-open.
