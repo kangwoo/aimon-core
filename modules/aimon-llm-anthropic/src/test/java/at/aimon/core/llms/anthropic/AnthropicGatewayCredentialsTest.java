@@ -154,6 +154,21 @@ class AnthropicGatewayCredentialsTest {
     }
 
     @Test
+    @DisplayName("behind a gateway, a 'bound to a different conversation' 400 also names the binding remedies")
+    void aBindingRejectionBehindAGatewayNamesBothRemedies() throws Exception {
+        final String bound = "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+                + "\"message\":\"Invalid `signature` in `thinking` block. The block is bound to a different "
+                + "conversation.\"}}";
+        try (AnthropicLlmClient client = new AnthropicLlmClient(config(serving(400, bound)).build())) {
+            assertThatThrownBy(() -> send(client)).isInstanceOf(LlmInvalidRequestException.class);
+        }
+
+        // Not gated on baseUrl like the gateway hint beside it: both are said.
+        assertThat(warnings()).hasSize(2).anyMatch(w -> w.contains("supportsThinkingBlockBinding"))
+                .anyMatch(w -> w.contains("anthropic-version: 2026-10-21"));
+    }
+
+    @Test
     @DisplayName("the request carries the API version the hint names")
     void theHintMatchesTheWire() throws Exception {
         try (AnthropicLlmClient client = new AnthropicLlmClient(config(serving(200, SUCCESS)).build())) {

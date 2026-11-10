@@ -27,12 +27,14 @@ class AnthropicConfigTest {
 
         // Then: Should use defaults for other fields
         assertThat(config.getApiKey()).isEqualTo(apiKey);
-        assertThat(config.getModel()).isEqualTo("claude-sonnet-4-5");
+        assertThat(config.getModel()).isEqualTo("claude-sonnet-5-5");
         // Unset, not 0.0. A manufactured default would be sent on every request, and 0.0 is the one value the
         // current Claude generation refuses -- see docs/design/llm/request-parameters.md section 2.2.
         assertThat(config.getTemperature()).isEmpty();
-        assertThat(config.getMaxTokens()).isEqualTo(4096);
-        assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(60));
+        // 16000 so the default model's own thinking (adaptive, on by default) does not consume the reply, and a
+        // 600s total ceiling so a response that long is not cut off and retried.
+        assertThat(config.getMaxTokens()).isEqualTo(16000);
+        assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(600));
         assertThat(config.getBaseUrl()).isNull();
     }
 
@@ -372,14 +374,19 @@ class AnthropicConfigTest {
     @Test
     @DisplayName("the default model is a name the shipped capability table describes")
     void theDefaultModelIsDescribedByTheShippedTable() {
-        // #116: the default before this one, claude-sonnet-4-20250514, had no row, and the Messages API answered it
-        // with 404 on 2026-09-11. Tying the default to a measured row makes the next change of it face the table.
+        // #116: an earlier default, claude-sonnet-4-20250514, had no row, and the Messages API answered it with 404 on
+        // 2026-09-11. Tying the default to a row makes the next change of it face the table. The default is now
+        // claude-sonnet-5-5, described by the exact row the 2026-11 catalog transcription added.
         AnthropicConfig shipped = AnthropicConfig.builder().apiKey("test-key").build();
 
         assertThat(shipped.getModelCapabilityRegistry().resolve(shipped.getModel()).thinkingDialect())
-                .as("the default model %s is meant to be a name the built-in table describes: its row was measured "
-                        + "2026-09-10, and the Messages API served it on 2026-09-11 (#116)", shipped.getModel())
-                .isEqualTo(ThinkingDialect.BUDGETED);
+                .as("the default model %s is meant to be a name the built-in table describes", shipped.getModel())
+                .isEqualTo(ThinkingDialect.ADAPTIVE);
+        assertThat(shipped.getModelCapabilityRegistry().resolve(shipped.getModel()).supportsThinkingBlockBinding())
+                .as("the default model runs the preserved-thinking check, so its row states the block binding")
+                .isTrue();
+        assertThat(AnthropicModelLifecycle.warningFor(shipped.getModel())).as("the default is not deprecated")
+                .isEmpty();
     }
 
     @Test

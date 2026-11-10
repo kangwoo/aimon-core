@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 5eb24cf0
+source_commit: 3ff37d9e
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -288,12 +288,12 @@ This is the configuration switched to Anthropic:
 llm:
   provider: anthropic
   apiKey: "${ANTHROPIC_KEY}"
-  model: claude-sonnet-4-5
+  model: claude-sonnet-5-5
 agent:
   name: default-anthropic
 ```
 
-The bundles' `explore` subagents name no model and run on their main agent's — `claude-sonnet-4-5` in
+The bundles' `explore` subagents name no model and run on their main agent's — `claude-sonnet-5-5` in
 `default-anthropic` (the only `explore` that names one is `default`'s, and it names `gpt-5.1`). A subagent that
 names no model runs on what the main agent runs on, and when the main agent's definition names none either, on the
 client's default model: `llm.model` when it is set, and when it is not — which only anthropic allows — the
@@ -393,6 +393,7 @@ and filling that box in anyway turns the 400 into a 404 on a gateway that has no
 | `lowestReasoningEffort` | where this model's effort ladder starts (`none`…`high`) — meaning it takes that rung and every one above it | `minimal` through `high` |
 | `acceptedReasoningEfforts` | **every** rung it takes, as a list — the general form, for a ladder with a gap in it (`[none, low, medium, high]`). An empty element (`~`, or a bare `-`) is not skipped: it **fails startup naming the position** | same as the row above |
 | `supportsReasoningSummary` | whether this model accepts a reasoning-summary request (`reasoning.summary`). **Read on the OpenAI Responses path only** — a name reaches that path only when `supportsReasoningTraceRoundTrip: true`, so this is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary` | `true` — what the caller asked for is not taken away |
+| `supportsThinkingBlockBinding` | whether this model accepts `thinking.block_binding`. **Read by the anthropic branch only, and only on the adaptive dialect.** When `true` and thinking blocks are replayed (`llm.anthropic.replayThinkingBlocks`, default `true`), requests carry `prefix_mismatch_behavior: drop_block` and its beta header, so a stale block whose prefix changed — a re-rendered system prompt, compaction — is dropped instead of failing the request. The built-in table states `true` for `claude-sonnet-5-5` · `claude-opus-5-5` · `claude-haiku-5-5` | `false` — the request body is what it was before this key existed |
 | `thinkingDialect` | which shape this model's thinking request takes — `unknown` · `either` · `budgeted` · `adaptive`. **Read by the anthropic branch only.** This is the value `llm.anthropic.thinkingMode: auto` below goes and asks for | `unknown` — the table cannot answer, and the client leaves whatever was configured as it was |
 
 A declaration **extends the built-in table rather than replacing it.** It is registered as an exact entry, so
@@ -485,15 +486,16 @@ The four values of `thinkingMode`. Case does not matter.
 | `adaptive` | `thinking: {"type": "adaptive"}` plus `output_config.effort` — the current generation's dialect |
 | `auto` | Whichever dialect the capability table says this model speaks. The value that lets one setting serve a deployment running several Claude models |
 
-On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` ·
-`claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the call's `ReasoningEffort`** —
-the middle rung, 4096, when none is set. That budget meets the same ceiling as `thinkingBudgetTokens` below. When
-the agent definition sets no `model.maxTokens`, `max_tokens` is `AnthropicConfig`'s default of 4096, so the budget
-is clamped to 4095 with one WARN, **leaving one token for the visible answer.** Every agent definition bundled
-with the CLI sets `maxTokens: 40000`, so none of them meets this. There are two remedies — raise the agent
-definition's `model.maxTokens`, or lower `llm.reasoningEffort` above to `low` (2048) or `minimal` (1024) (or the
-agent definition's `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a
-decision, not an oversight; the reasons and the alternatives refused are in
+On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` (deprecated, retires
+2026-11-30) · `claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the call's
+`ReasoningEffort`** — the middle rung, 4096, when none is set. That budget meets the same ceiling as
+`thinkingBudgetTokens` below. When the agent definition sets no `model.maxTokens`, `max_tokens` is `AnthropicConfig`'s
+default of 16000, so 4096 goes out as is. On an agent that sets `model.maxTokens` to 4096 or less the budget is clamped
+to `maxTokens - 1` with one WARN — at 4096, **leaving one token for the visible answer.** Every agent definition bundled
+with the CLI sets `maxTokens: 40000`, so none of them meets this. There are two remedies — raise the agent definition's
+`model.maxTokens`, or lower `llm.reasoningEffort` above to `low` (2048) or `minimal` (1024) (or the agent definition's
+`model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a decision, not an oversight;
+the reasons and the alternatives refused are in
 [`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다).
 
 **The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
@@ -529,8 +531,8 @@ The value itself has a floor and a ceiling.
 - **A floor of 1024.** The API rejects a smaller budget on every request, so it is rejected at startup instead.
 - **A ceiling below `max_tokens`.** Thinking tokens count against `max_tokens`, so the client clamps to
   `max_tokens - 1` and says so at WARN. **That `max_tokens` is the agent definition's `model.maxTokens`, and
-  `AnthropicConfig`'s default of 4096 when it sets none — so on such an agent `thinkingBudgetTokens: 8000` goes
-  out as 4095.** Every agent definition bundled with the CLI sets `maxTokens: 40000`, so on those the budget
+  `AnthropicConfig`'s default of 16000 when it sets none — on an agent that sets `model.maxTokens: 4096`,
+  `thinkingBudgetTokens: 8000` goes out as 4095.** Every agent definition bundled with the CLI sets `maxTokens: 40000`, so on those the budget
   goes out as 8000. There is no key here for raising that ceiling — it is the agent definition's
   `model.maxTokens`, a third configuration surface.
 

@@ -48,6 +48,9 @@ public final class ModelCapabilities {
     // it: a reasoning summary is only ever on a request because somebody asked for one, so withholding it would be
     // fail-CLOSED. See supportsReasoningSummary() and unknown()'s javadoc for why that stays safe.
     private static final boolean DEFAULT_SUPPORTS_REASONING_SUMMARY = true;
+    // False: a block binding is a field nobody configures -- the client adds it on its own initiative -- so the
+    // fail-open value is the one that invents nothing and keeps the request body as it was before the flag existed.
+    private static final boolean DEFAULT_SUPPORTS_THINKING_BLOCK_BINDING = false;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
 
@@ -58,6 +61,7 @@ public final class ModelCapabilities {
     private final Set<ReasoningEffort> acceptedReasoningEfforts;
     private final ThinkingDialect thinkingDialect;
     private final boolean supportsReasoningSummary;
+    private final boolean supportsThinkingBlockBinding;
 
     private ModelCapabilities(Builder builder) {
         this.supportsSamplingParameters = builder.supportsSamplingParameters;
@@ -67,6 +71,7 @@ public final class ModelCapabilities {
         this.acceptedReasoningEfforts = builder.acceptedReasoningEfforts;
         this.thinkingDialect = builder.thinkingDialect;
         this.supportsReasoningSummary = builder.supportsReasoningSummary;
+        this.supportsThinkingBlockBinding = builder.supportsThinkingBlockBinding;
     }
 
     /**
@@ -99,7 +104,7 @@ public final class ModelCapabilities {
      * have costs a 400 that fails the turn. A model that really does start at {@code NONE} is describable — register a
      * row with {@code lowestReasoningEffort(NONE)}, or with {@code acceptedReasoningEfforts(...)} when the ladder has a
      * gap in it rather than a floor. The thinking dialect is {@link ThinkingDialect#UNKNOWN}, which is the only one of
-     * the seven that is not a permission at all: both real dialects are a 400 on the model that speaks <em>only</em>
+     * the eight that is not a permission at all: both real dialects are a 400 on the model that speaks <em>only</em>
      * the other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one of its values.
      * A reasoning summary is <em>allowed</em>, which is the same rule reaching the opposite boolean from
      * {@link #supportsReasoningEffort()}: a summary is only ever on a request because somebody set it, so withholding
@@ -107,7 +112,9 @@ public final class ModelCapabilities {
      * the parameter exists only on OpenAI's Responses endpoint, which a request reaches only when
      * {@link #supportsReasoningTraceRoundTrip()} is {@code true}, and that flag's own fail-open value is
      * {@code false}. So this one's job is to state what the rows that already exist mean, and they mean the summary
-     * is accepted. Changing any of these silently changes the wire for every deployment
+     * is accepted. A thinking block binding is <em>not</em> sent, because no caller ever asks for one: the client
+     * adds it of its own accord, so sending it to a model nobody has described would be inventing a field. Changing
+     * any of these silently changes the wire for every deployment
      * running a model no registry describes, which is why a test asserts each one individually.
      *
      * @return the fail-open descriptor (never null)
@@ -272,6 +279,32 @@ public final class ModelCapabilities {
         return supportsReasoningSummary;
     }
 
+    /**
+     * Whether the model accepts {@code thinking.block_binding} — Anthropic's control over what happens to a replayed
+     * thinking block whose prompt prefix has changed since it was produced.
+     *
+     * <p>
+     * <strong>Read by the Anthropic client and nowhere else.</strong> Vendor-shaped on a neutral type, with the same
+     * justification as {@link #thinkingDialect()}: one table is read by every client through one configuration
+     * translator. The current generation (Sonnet 5.5, Opus 5.5, Haiku 5.5) checks that the system prompt, the tools
+     * and every earlier message are unchanged since a thinking block was produced, and a request that replays a block
+     * after such an edit is an HTTP 400 on accounts where the check is enforced. AIMON edits that prefix in two
+     * predictable ways — the system prompt is re-rendered per turn, and compaction replaces the head of the history —
+     * so on a model that runs the check, a client that replays thinking blocks asks the server to <em>drop</em> a
+     * block it can no longer validate rather than fail the request. The vendor documents the binding as valid only
+     * alongside adaptive thinking, which is why the client sends it only on an adaptive request.
+     *
+     * <p>
+     * Not folded into {@link #supportsReasoningTraceRoundTrip()}: that flag says traces replay at all, this one says
+     * the request surface takes a field that governs a stale one, and a model can satisfy the first without the second.
+     *
+     * @return {@code true} when a client that replays thinking blocks may send {@code thinking.block_binding};
+     *         {@code false} (the fail-open value) when the request body stays as it was before this flag existed
+     */
+    public boolean supportsThinkingBlockBinding() {
+        return supportsThinkingBlockBinding;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -286,13 +319,15 @@ public final class ModelCapabilities {
                 && supportsToolsWithReasoning == that.supportsToolsWithReasoning
                 && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip
                 && acceptedReasoningEfforts.equals(that.acceptedReasoningEfforts)
-                && thinkingDialect == that.thinkingDialect && supportsReasoningSummary == that.supportsReasoningSummary;
+                && thinkingDialect == that.thinkingDialect && supportsReasoningSummary == that.supportsReasoningSummary
+                && supportsThinkingBlockBinding == that.supportsThinkingBlockBinding;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, acceptedReasoningEfforts, thinkingDialect, supportsReasoningSummary);
+                supportsReasoningTraceRoundTrip, acceptedReasoningEfforts, thinkingDialect, supportsReasoningSummary,
+                supportsThinkingBlockBinding);
     }
 
     @Override
@@ -301,7 +336,8 @@ public final class ModelCapabilities {
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
                 + ", acceptedReasoningEfforts=" + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect
-                + ", supportsReasoningSummary=" + supportsReasoningSummary + '}';
+                + ", supportsReasoningSummary=" + supportsReasoningSummary + ", supportsThinkingBlockBinding="
+                + supportsThinkingBlockBinding + '}';
     }
 
     /**
@@ -319,6 +355,7 @@ public final class ModelCapabilities {
         private Set<ReasoningEffort> acceptedReasoningEfforts = DEFAULT_ACCEPTED_REASONING_EFFORTS;
         private ThinkingDialect thinkingDialect = DEFAULT_THINKING_DIALECT;
         private boolean supportsReasoningSummary = DEFAULT_SUPPORTS_REASONING_SUMMARY;
+        private boolean supportsThinkingBlockBinding = DEFAULT_SUPPORTS_THINKING_BLOCK_BINDING;
 
         private Builder() {
         }
@@ -442,6 +479,16 @@ public final class ModelCapabilities {
          */
         public Builder supportsReasoningSummary(boolean supportsReasoningSummary) {
             this.supportsReasoningSummary = supportsReasoningSummary;
+            return this;
+        }
+
+        /**
+         * @param supportsThinkingBlockBinding
+         *            {@code true} when the model accepts {@code thinking.block_binding} with adaptive thinking
+         * @return This builder
+         */
+        public Builder supportsThinkingBlockBinding(boolean supportsThinkingBlockBinding) {
+            this.supportsThinkingBlockBinding = supportsThinkingBlockBinding;
             return this;
         }
 

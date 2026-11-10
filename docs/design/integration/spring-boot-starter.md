@@ -541,7 +541,7 @@ public final class AimonStack implements AutoCloseable {
 ```java
 AimonStackSpec.builder()
     .workspaceRoot(Path.of("/var/lib/myapp/agent"))       // 필수 — 파생하지 않는다 (§6 D7)
-    .llm(LlmSpec.anthropic(apiKey).model("claude-sonnet-4-20250514").build())
+    .llm(LlmSpec.anthropic(apiKey).model("claude-sonnet-5-5").build())
     .agents(AgentsSpec.builder()                           // N개 (§4.11)
             .add(AgentSpec.fromBundle("ops-agent").budget(b -> b.maxIterations(30)))
             .add(AgentSpec.fromBundle("inquiry"))

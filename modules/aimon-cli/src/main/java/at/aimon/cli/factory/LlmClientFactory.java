@@ -393,7 +393,8 @@ public class LlmClientFactory {
                     .lowestReasoningEffort(capabilities.getLowestReasoningEffort())
                     .acceptedReasoningEfforts(rungSetOf(capabilities.getAcceptedReasoningEfforts()))
                     .thinkingDialect(capabilities.getThinkingDialect())
-                    .supportsReasoningSummary(capabilities.getSupportsReasoningSummary()).build();
+                    .supportsReasoningSummary(capabilities.getSupportsReasoningSummary())
+                    .supportsThinkingBlockBinding(capabilities.getSupportsThinkingBlockBinding()).build();
         } catch (IllegalArgumentException e) {
             throw new ConfigurationException(
                     "Invalid `" + MODEL_CAPABILITIES_KEY + "." + name + "` in the LLM config: " + e.getMessage(), e);

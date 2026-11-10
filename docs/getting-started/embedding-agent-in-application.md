@@ -285,7 +285,7 @@ aimon:
   llm:
     provider: anthropic             # anthropic(기본) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
-    timeout: 60s
+    timeout: 60s                    # 스트리밍을 포함한 호출 전체의 상한. 비우면 클라이언트 기본값(Anthropic 600s, OpenAI 60s)
     anthropic:                      # anthropic 분기만 읽는다 — 다른 provider 아래에 적으면 기동 실패
       thinking-mode: "off"          # "off"(기본) | extended | adaptive | auto — 따옴표는 아래 참조
       replay-thinking-blocks: true
@@ -401,9 +401,10 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  여덟 플래그
+  아홉 플래그
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `thinking-dialect` ·
+  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `supports-thinking-block-binding` ·
+  `thinking-dialect` ·
   `lowest-reasoning-effort` · `accepted-reasoning-efforts`)가 있고
   **전부 선택**이며, **내장 표가 모르는 이름**(위 예제처럼 개명된 게이트웨이 배포)에 대해 적지 않은 것은
   오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다.
@@ -415,7 +416,9 @@ aimon:
   그런 이름에는 그 행이 말하던 플래그를 전부 옮겨 적습니다(`thinking-dialect` 와
   `supports-sampling-parameters: false`). `thinking-dialect` 는 anthropic 분기만,
   `supports-reasoning-summary` 는 OpenAI Responses 경로만 읽습니다 — 후자는 `reasoning.effort` 는 받고
-  `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리입니다. 뒤의 두 개는 같은
+  `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리입니다. `supports-thinking-block-binding` 은 anthropic
+  분기가 adaptive 방언에서만 읽으며, `true` 이면 되실은 thinking 블록의 prefix 가 바뀌었을 때 요청을 실패시키는 대신
+  그 블록을 버리라고(`drop_block`) 서버에 청합니다 — 내장 표는 `claude-*-5-5` 세 모델에 `true` 를 적습니다. 뒤의 두 개는 같은
   사실을 적는 **서로 배타적인** 두 방법입니다: `lowest-reasoning-effort` 는 "여기서 시작해서 끝까지" 의
   축약이고, `accepted-reasoning-efforts=none,low,medium,high` 는 사다리 중간에 구멍이 있을 때 쓰는
   일반형입니다(내장 `gpt-5.6-terra` 행이 실측된 그 경우입니다 — `none` 을 받고 `minimal` 을 거절합니다).
@@ -480,11 +483,12 @@ aimon:
   넘기기 때문이며, 그때 기동은 실패하고 메시지가 이 따옴표를 알려 줍니다. CLI 는 파서가 읽은 원문을 볼 수
   있어 이 제약이 없습니다 — 같은 충돌에 두 표면이 다르게 답하는 자리입니다.
 
-  내장 표가 `BUDGETED` 로 적은 세 가족(`claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5`)에서
-  `auto` 는 예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나옵니다** — 적지 않았으면 가운데
-  칸인 4096 입니다. 그 예산에도 바로 아래 `thinking-budget-tokens` 의 상한이 똑같이 걸립니다. 에이전트 정의가
-  `model.maxTokens` 를 적지 않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 4096 이므로 예산은 4095 로
-  clamp 되고 WARN 이 한 번 뜨며, **답변에 남는 것은 1 토큰입니다.** 처방은 둘입니다 — 에이전트 정의의
+  내장 표가 `BUDGETED` 로 적은 세 가족(`claude-opus-4-5` · `claude-sonnet-4-5`(deprecated, 2026-11-30 은퇴) ·
+  `claude-haiku-4-5`)에서 `auto` 는 예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나옵니다** —
+  적지 않았으면 가운데 칸인 4096 입니다. 그 예산에도 바로 아래 `thinking-budget-tokens` 의 상한이 똑같이 걸립니다.
+  에이전트 정의가 `model.maxTokens` 를 적지 않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 16000 이라 4096 은
+  그대로 나갑니다. `model.maxTokens` 를 4096 이하로 적은 에이전트에서는 예산이 `maxTokens - 1` 로 clamp 되고 WARN 이
+  한 번 뜨며, 4096 이면 **답변에 남는 것은 1 토큰입니다.** 처방은 둘입니다 — 에이전트 정의의
   `model.maxTokens` 를 올리거나, `aimon.llm.reasoning-effort` 를 `low`(2048) 나 `minimal`(1024) 로 내립니다
   (에이전트 정의에 `model.reasoningEffort` 가 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐입니다.**
   이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한 대안은
@@ -496,8 +500,8 @@ aimon:
   **모드를 빼고 예산만 적는 것**이고, 그때 모드는 `off` 라 그 숫자가 아무 데도 닿지 않으므로 그것도 기동
   실패입니다. 값에는 아래로 1024(API 의 하한)와 위로 `max_tokens` 미만이라는 두 상한이 있습니다 — thinking
   토큰이 `max_tokens` 에 함께 계산되므로 클라이언트가 `max_tokens - 1` 로 clamp 하고 WARN 을 남기며,
-  **기본 `max_tokens` 가 4096 이라 손대지 않은 배포에서 `thinking-budget-tokens: 8000` 은 실제로 4095 로
-  나갑니다.** 천장을 올리는 프로퍼티는 없습니다 — 그것은 에이전트 정의의 `model.maxTokens` 입니다.
+  **`model.maxTokens: 4096` 을 적은 에이전트에서 `thinking-budget-tokens: 8000` 은 실제로 4095 로 나갑니다**(기본
+  `max_tokens` 16000 에서는 그대로 나갑니다). 천장을 올리는 프로퍼티는 없습니다 — 그것은 에이전트 정의의 `model.maxTokens` 입니다.
 
   `replay-thinking-blocks: false` 는 이름 있는 실패 하나를 위한 비상구입니다 — *"Invalid `signature` in
   `thinking` block. The block is bound to a different conversation."* 벤더의 처방이 이력에서 thinking 블록을

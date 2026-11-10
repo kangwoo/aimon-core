@@ -77,6 +77,14 @@ class CliConfigLoaderTest {
             assertThat(config.getLlmConfig()).isNotNull();
             assertThat(config.getLlmConfig().getProvider()).isNotEmpty();
         }
+
+        @Test
+        @DisplayName("the shipped default leaves llm.timeout unset, so each provider client's own default applies")
+        void theShippedDefaultLeavesTheTimeoutUnset() {
+            // Anthropic's default is 600s because its default model thinks by default; a shipped 60 would cap every
+            // CLI call, streaming included, at a minute for both providers.
+            assertThat(loader.loadDefault().getLlmConfig().getTimeout()).isNull();
+        }
     }
 
     @Nested
@@ -681,6 +689,7 @@ class CliConfigLoaderTest {
                           supportsToolsWithReasoning: true
                           supportsReasoningTraceRoundTrip: false
                           supportsReasoningSummary: false
+                          supportsThinkingBlockBinding: true
                           thinkingDialect: adaptive
                           lowestReasoningEffort: minimal
                     """);
@@ -694,6 +703,7 @@ class CliConfigLoaderTest {
             assertThat(declared.getSupportsToolsWithReasoning()).isTrue();
             assertThat(declared.getSupportsReasoningTraceRoundTrip()).isFalse();
             assertThat(declared.getSupportsReasoningSummary()).isFalse();
+            assertThat(declared.getSupportsThinkingBlockBinding()).isTrue();
             assertThat(declared.getThinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
             assertThat(declared.getLowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
         }

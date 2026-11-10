@@ -82,9 +82,10 @@ class AnthropicThinkingLiveTest {
     /**
      * Adaptive-only, and one of the six models that reject a non-default {@code temperature}. That second property is
      * what {@link AdaptiveReachability} is about: it used to make {@code OFF} unreachable, and sending no sampling
-     * value is what makes it reachable now.
+     * value is what makes it reachable now. The client's default model, so the adaptive suite runs on the shape most
+     * deployments send.
      */
-    private static final String ADAPTIVE_MODEL = "claude-sonnet-5";
+    private static final String ADAPTIVE_MODEL = "claude-sonnet-5-5";
 
     /**
      * Adaptive-only as well, and the model the streamed reasoning channel was measured on.

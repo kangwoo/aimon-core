@@ -38,11 +38,18 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  */
 public final class AnthropicConfig {
 
-    // Measured served by the Messages API on 2026-09-11 (#116, backlog L-24), and described by the capability table's
-    // claude-sonnet-4-5 row. claude-sonnet-4-20250514, the default before it, was answered 404 not_found_error then.
-    private static final String DEFAULT_MODEL = "claude-sonnet-4-5";
-    private static final int DEFAULT_MAX_TOKENS = 4096;
-    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
+    // The vendor's current Sonnet, described by the capability table's exact claude-sonnet-5-5 row. The previous
+    // default, claude-sonnet-4-5 (measured served on 2026-09-11, #116), is deprecated and retires on 2026-11-30;
+    // pinning it still works until then and logs a deprecation warning (AnthropicModelLifecycle).
+    private static final String DEFAULT_MODEL = "claude-sonnet-5-5";
+    // Room for the thinking the default model does on its own: Sonnet 5.5 thinks adaptively by default (effort high),
+    // even under thinkingMode OFF, and thinking tokens count against max_tokens. 4096 could be spent on thinking alone
+    // and end the turn on max_tokens with no text. A ceiling, not a charge.
+    private static final int DEFAULT_MAX_TOKENS = 16000;
+    // A total per-call ceiling (see Builder.timeout), sized for DEFAULT_MAX_TOKENS-scale and larger responses with
+    // thinking on. A ceiling costs nothing when responses are fast; a too-short one costs a cut-off reply plus billed
+    // retries.
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(600);
     private static final AnthropicThinkingMode DEFAULT_THINKING_MODE = AnthropicThinkingMode.OFF;
     private static final boolean DEFAULT_REPLAY_THINKING_BLOCKS = true;
 
@@ -172,6 +179,10 @@ public final class AnthropicConfig {
     /**
      * Gets the maximum tokens.
      *
+     * <p>
+     * Thinking tokens count against this ceiling, and the current models think by default, so it bounds reasoning and
+     * answer together. Defaults to 16000.
+     *
      * @return The maximum tokens
      */
     public int getMaxTokens() {
@@ -180,6 +191,11 @@ public final class AnthropicConfig {
 
     /**
      * Gets the request timeout.
+     *
+     * <p>
+     * A <em>total</em> ceiling on each HTTP call, streaming included: the SDK makes it OkHttp's {@code callTimeout},
+     * so a long streamed answer is cut when it is reached, and the SDK then retries (each attempt is billed). Size it
+     * with {@link #getMaxTokens()} in mind. Defaults to 600 seconds.
      *
      * @return The timeout duration (never null)
      */
@@ -389,7 +405,7 @@ public final class AnthropicConfig {
         }
 
         /**
-         * Sets the maximum tokens for completion.
+         * Sets the maximum tokens for completion. Thinking counts against it; defaults to 16000.
          *
          * @param maxTokens
          *            The maximum tokens
@@ -401,7 +417,8 @@ public final class AnthropicConfig {
         }
 
         /**
-         * Sets the request timeout.
+         * Sets the request timeout: a total ceiling on each HTTP call, streaming included (OkHttp's
+         * {@code callTimeout}), retried by the SDK when hit. Defaults to 600 seconds.
          *
          * @param timeout
          *            The timeout duration

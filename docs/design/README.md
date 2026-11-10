@@ -119,6 +119,7 @@
 | [`anthropic-thinking.md`](llm/anthropic-thinking.md) | Anthropic thinking 요청의 해석 — 모드 × 모델 방언, 예산 사다리와 clamp, `AUTO` 정책, display, 조립 중에는 보고하지 않는 보고 계약 |
 | [`configuration-surface.md`](llm/configuration-surface.md) | LLM 설정의 세 표면(CLI · 스타터 · frontmatter) — 공통과 벤더 네임스페이스를 가르는 규칙, 능력 선언 키, 바인딩 불변식, 값이 선언까지 옮겨지는지 보는 왕복 가드 |
 | [`model-name-resolution.md`](llm/model-name-resolution.md) | 요청에 실리는 모델 이름과 CLI 가 보여 주는 이름 — 모델을 적지 않은 부품은 클라이언트의 기본 모델로 돈다는 원칙, 쓰인 그대로 보내는 이름, provider 전환 기동 검사 |
+| [`anthropic-default-model-sonnet-5-5.md`](llm/anthropic-default-model-sonnet-5-5.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) Anthropic 기본 모델을 은퇴하는 `claude-sonnet-4-5` 에서 `claude-sonnet-5-5` 로 옮긴 설계 — 5.5 세대의 깨지는 변경 감사, 세 exact 능력 행, 기본 `maxTokens` · timeout, preserved thinking 을 `drop_block` 으로 다루는 블록 바인딩과 그 대조군 실측, 은퇴 모델 WARN, 기각한 대안 |
 
 ### 상태를 갖는 서브시스템
 

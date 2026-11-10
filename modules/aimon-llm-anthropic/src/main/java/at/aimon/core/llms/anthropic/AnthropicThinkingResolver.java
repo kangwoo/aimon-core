@@ -1,5 +1,6 @@
 package at.aimon.core.llms.anthropic;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -37,6 +38,11 @@ import at.aimon.core.llm.capability.ThinkingDialect;
  */
 final class AnthropicThinkingResolver {
 
+    /** The {@code thinking} field that governs a replayed block whose prompt prefix changed. */
+    static final String BLOCK_BINDING = "block_binding";
+    static final String PREFIX_MISMATCH_BEHAVIOR = "prefix_mismatch_behavior";
+    static final String DROP_BLOCK = "drop_block";
+
     private final AnthropicConfig config;
 
     AnthropicThinkingResolver(AnthropicConfig config) {
@@ -47,8 +53,9 @@ final class AnthropicThinkingResolver {
      * Resolves what this request asks the model to think, and what to say about it.
      *
      * <p>
-     * {@link AnthropicThinkingMode#OFF} and {@link ReasoningEffort#NONE} both mean "send nothing", uniformly across
-     * both dialects. The alternative for the second — {@code thinking: {"type": "disabled"}} — is itself rejected by
+     * {@link AnthropicThinkingMode#OFF} and {@link ReasoningEffort#NONE} both mean "ask for no thinking", uniformly
+     * across both dialects — no parameter, except the carrier {@link #applyBlockBinding} adds on a row that states a
+     * block binding. The alternative for the second — {@code thinking: {"type": "disabled"}} — is itself rejected by
      * several models, and omission cannot 400. The cost, stated rather than hidden: on a model where thinking is on
      * by default, {@code NONE} does not turn it off.
      *
@@ -71,6 +78,18 @@ final class AnthropicThinkingResolver {
      */
     AnthropicThinkingResolution resolve(LlmModel modelConfig, int maxTokens, ModelCapabilities capabilities,
             String modelName) {
+        final AnthropicThinkingResolution.Builder resolution = resolveShape(modelConfig, maxTokens, capabilities,
+                modelName);
+        applyBlockBinding(resolution, capabilities, modelName);
+        return resolution.build();
+    }
+
+    /**
+     * The thinking shape alone, decided as if no block binding existed: what this request asks the model to think.
+     * {@link #applyBlockBinding} runs after it and changes only what carries the binding.
+     */
+    private AnthropicThinkingResolution.Builder resolveShape(LlmModel modelConfig, int maxTokens,
+            ModelCapabilities capabilities, String modelName) {
         final AnthropicThinkingResolution.Builder resolution = AnthropicThinkingResolution.builder();
         final AnthropicThinkingMode mode = config.getThinkingMode();
         final ReasoningEffort effort = requestedEffort(modelConfig).orElse(null);
@@ -78,22 +97,86 @@ final class AnthropicThinkingResolver {
         if (mode == AnthropicThinkingMode.OFF) {
             recordInertEffort(resolution, effort);
             recordInertDisplay(resolution);
-            return resolution.build();
+            return resolution;
         }
         if (effort == ReasoningEffort.NONE) {
-            return resolution.build();
+            return resolution;
         }
 
         final Optional<ThinkingDialect> dialect = resolveDialect(resolution, mode, capabilities.thinkingDialect(),
                 modelName);
         if (dialect.isEmpty()) {
-            return resolution.build();
+            return resolution;
         }
         if (dialect.get() == ThinkingDialect.ADAPTIVE) {
             return resolveAdaptiveThinking(resolution, effort);
         }
         recordDisplayOnBudgetedDialect(resolution);
         return resolveExtendedThinking(resolution, effort, maxTokens);
+    }
+
+    /**
+     * Asks the server to drop, rather than reject, a replayed thinking block whose prompt prefix has changed.
+     *
+     * <p>
+     * The current generation checks that the system prompt, the tools and every earlier message are unchanged since a
+     * thinking block was produced, and a request that replays a block after such an edit is a 400 where the check is
+     * enforced. AIMON edits that prefix in predictable ways — the system prompt is re-rendered per turn, compaction
+     * replaces the head of the history, the rolling window drops it — so on a model whose row states
+     * {@link ModelCapabilities#supportsThinkingBlockBinding()} the request carries
+     * {@code thinking.block_binding.prefix_mismatch_behavior: "drop_block"} and the beta header that admits it.
+     *
+     * <p>
+     * Added only when all of these hold: the row states the flag; this client replays thinking blocks (with replay
+     * off there is nothing to bind, and the body stays as it was); and the row's dialect is
+     * {@link ThinkingDialect#ADAPTIVE}, because the vendor documents the binding as valid only with
+     * {@code {"type": "adaptive"}}. Then:
+     *
+     * <ul>
+     * <li>an adaptive parameter gains the binding beside whatever it already carries ({@code display} included);
+     * <li>no parameter becomes {@code {"type": "adaptive", "block_binding": ...}} — a carrier, with no
+     * {@code display} and no effort. On these models adaptive at the server's default effort <em>is</em> what an
+     * omitted parameter means, so the only change is the binding, and
+     * {@link AnthropicThinkingResolution#requestsThinking()} stays {@code false} so the findings about an inert
+     * effort or display still fire.
+     * </ul>
+     *
+     * <p>
+     * A declared row that states the flag with another dialect gets no binding and one finding saying why.
+     */
+    private void applyBlockBinding(AnthropicThinkingResolution.Builder resolution, ModelCapabilities capabilities,
+            String modelName) {
+        if (!capabilities.supportsThinkingBlockBinding() || !config.isReplayThinkingBlocks()) {
+            return;
+        }
+        if (capabilities.thinkingDialect() != ThinkingDialect.ADAPTIVE) {
+            resolution.record(AnthropicThinkingResolution.Finding.unconditional(
+                    "thinkingBlockBindingWithoutAdaptive@" + modelName,
+                    "The capability row for {} states supportsThinkingBlockBinding but its thinking dialect is {}, "
+                            + "and the vendor documents thinking.block_binding as valid only with "
+                            + "{\"type\": \"adaptive\"}; no binding is being sent. Declare thinkingDialect {} for "
+                            + "this name if the model speaks it, or drop the flag.",
+                    modelName, capabilities.thinkingDialect(), ThinkingDialect.ADAPTIVE));
+            return;
+        }
+        final ThinkingConfigParam current = resolution.currentParameter();
+        if (current == null) {
+            resolution.bindingCarrier(ThinkingConfigParam.ofAdaptive(withBinding(ThinkingConfigAdaptive.builder())));
+        } else if (current.isAdaptive()) {
+            resolution.rebind(ThinkingConfigParam.ofAdaptive(withBinding(current.asAdaptive().toBuilder())));
+        } else {
+            // Not reachable from an ADAPTIVE row -- resolveNamedDialect translates EXTENDED -- but the binding must
+            // never ride on a budgeted parameter, so the branch says nothing and sends none.
+            return;
+        }
+        resolution.betaHeader(AnthropicThinkingResolution.BLOCK_BINDING_BETA);
+    }
+
+    private static ThinkingConfigAdaptive withBinding(ThinkingConfigAdaptive.Builder adaptive) {
+        // The same escape hatch `display` uses: SDK 3.3.0 does not model block_binding.
+        return adaptive
+                .putAdditionalProperty(BLOCK_BINDING, JsonValue.from(Map.of(PREFIX_MISMATCH_BEHAVIOR, DROP_BLOCK)))
+                .build();
     }
 
     /**
@@ -107,7 +190,7 @@ final class AnthropicThinkingResolver {
      * {@link AnthropicThinkingMode#EXTENDED} ({@code AnthropicConfig}), so it reaches an adaptive request
      * only by translation, and there the number cannot go on the wire at all.
      */
-    private AnthropicThinkingResolution resolveAdaptiveThinking(AnthropicThinkingResolution.Builder resolution,
+    private AnthropicThinkingResolution.Builder resolveAdaptiveThinking(AnthropicThinkingResolution.Builder resolution,
             ReasoningEffort effort) {
         final ThinkingConfigAdaptive.Builder adaptive = ThinkingConfigAdaptive.builder();
         // putAdditionalProperty rather than a typed setter because this SDK version does not model `display` --
@@ -122,7 +205,7 @@ final class AnthropicThinkingResolver {
         // same request.
         recordBudgetOverridesEffort(resolution, effort);
         AnthropicThinkingBudgets.effortFor(intendedEffort(effort)).ifPresent(resolution::outputConfigEffort);
-        return resolution.parameter(ThinkingConfigParam.ofAdaptive(adaptive.build())).build();
+        return resolution.parameter(ThinkingConfigParam.ofAdaptive(adaptive.build()));
     }
 
     /**
@@ -392,7 +475,7 @@ final class AnthropicThinkingResolver {
                 config.getThinkingDisplay().get(), ThinkingDialect.BUDGETED));
     }
 
-    private AnthropicThinkingResolution resolveExtendedThinking(AnthropicThinkingResolution.Builder resolution,
+    private AnthropicThinkingResolution.Builder resolveExtendedThinking(AnthropicThinkingResolution.Builder resolution,
             ReasoningEffort effort, int maxTokens) {
         recordBudgetOverridesEffort(resolution, effort);
 
@@ -406,7 +489,7 @@ final class AnthropicThinkingResolver {
                     "maxTokens is {}, which leaves no room for the {}-token minimum thinking budget; the thinking "
                             + "parameter is being omitted and the call will succeed without extended thinking.",
                     maxTokens, AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS));
-            return resolution.build();
+            return resolution;
         }
 
         final int requested = AnthropicThinkingBudgets.requestedBudget(effort, configuredBudget);
@@ -430,7 +513,7 @@ final class AnthropicThinkingResolver {
                     requested, maxTokens, resolved, tokens(maxTokens - resolved), lowerRemedy));
         }
         final ThinkingConfigEnabled enabled = ThinkingConfigEnabled.builder().budgetTokens(resolved).build();
-        return resolution.parameter(ThinkingConfigParam.ofEnabled(enabled)).build();
+        return resolution.parameter(ThinkingConfigParam.ofEnabled(enabled));
     }
 
     private static String tokens(int count) {

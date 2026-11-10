@@ -166,7 +166,7 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 
 | 키 가족 | CLI | 스타터 | frontmatter | 판정 | 이유 |
 |---|---|---|---|---|---|
-| 모델 능력 선언(잎 여덟) | `llm.modelCapabilities.<model>.*` | `aimon.llm.model-capabilities.<model>.*` | — | **공유** | 이름이 provider 중립 SPI(`at.aimon.core.llm.capability`)의 것이고, "이 모델의 요청 표면이 무엇을 받는가" 는 벤더가 바뀌어도 같은 물음이다. OpenAI · Anthropic 두 클라이언트가 같은 번역기로 읽는다. `thinkingDialect` · `supportsReasoningSummary` 도 이 가족의 잎이다 |
+| 모델 능력 선언(잎 아홉) | `llm.modelCapabilities.<model>.*` | `aimon.llm.model-capabilities.<model>.*` | — | **공유** | 이름이 provider 중립 SPI(`at.aimon.core.llm.capability`)의 것이고, "이 모델의 요청 표면이 무엇을 받는가" 는 벤더가 바뀌어도 같은 물음이다. OpenAI · Anthropic 두 클라이언트가 같은 번역기로 읽는다. `thinkingDialect` · `supportsReasoningSummary` · `supportsThinkingBlockBinding`(2026-11-10) 도 이 가족의 잎이다 |
 | `reasoningEffort` | `llm.reasoningEffort` | `aimon.llm.reasoning-effort` | `model.reasoningEffort` | **공유** | 이름이 중립 SPI 타입 `ReasoningEffort` 의 것이고, OpenAI 의 rung 과 Anthropic 의 예산 · effort 는 한 의도를 두 가지로 옮긴 것이다. 두 분기가 모두 적용한다 |
 | `thinkingMode` | `llm.anthropic.thinkingMode` | `aimon.llm.anthropic.thinking-mode` | — | **벤더** | 이름 — "thinking" 은 Anthropic 의 현상 어휘이고(이 저장소의 중립 명사는 `ReasoningEffort` · `ReasoningTrace`), 값 `EXTENDED` · `ADAPTIVE` 는 Anthropic 와이어 모양의 이름이다 |
 | `thinkingBudgetTokens` | `llm.anthropic.thinkingBudgetTokens` | `aimon.llm.anthropic.thinking-budget-tokens` | — | **벤더** | 이름 — `budget_tokens` 는 Anthropic 요청 본문의 필드다. 뜻 — 다른 벤더는 생각의 양을 토큰 수로 말하지 않는다 |
@@ -292,7 +292,7 @@ ladder 는 두 키 중 어느 것으로 적어도 적은 것이다. 같은 발�
 
 ### 4.4 설정 표면은 내장 표의 어떤 행이든 표현한다
 
-그래서 `ModelCapabilities` 의 모든 사실이 선언 키로 노출된다 — 다섯 불리언, 방언, 그리고 ladder 를 쓰는 **두 키**.
+그래서 `ModelCapabilities` 의 모든 사실이 선언 키로 노출된다 — 불리언들, 방언, 그리고 ladder 를 쓰는 **두 키**.
 
 - `lowestReasoningEffort` — "이 rung 에서 시작해 위로 구멍이 없다" 의 축약
 - `acceptedReasoningEfforts` — 구멍이 있는 ladder(예: `[none, low, medium, high]`)
@@ -325,9 +325,9 @@ ladder 는 두 키 중 어느 것으로 적어도 적은 것이다. 같은 발�
 - 필드는 전부 박싱 타입이고 **`null` 이 "선언되지 않음"** 이다. 부분 선언을 표현하는 유일한 방법이므로, 빌더 세터는
   `null` 을 받는다 — 이 저장소의 `requireNonNull` 관례에 대한 의도된 예외이고 이유가 타입 javadoc 에 있다
 - 모델 이름을 담지 않는다. 이름은 두 표면에서 맵 키이고, 한 사실이 두 자리에 있으면 어긋난다
-- `build()` 는 여덟 필드가 모두 미선언인 선언과 두 ladder 키를 함께 적은 선언을 거절한다
+- `build()` 는 아홉 필드가 모두 미선언인 선언과 두 ladder 키를 함께 적은 선언을 거절한다
 - `capabilities()` 는 선언된 필드만 `ModelCapabilities.builder()` 에 적용한 결과를 한 번 만들어 들고 있다
-- `equals` · `hashCode` · `toString` 은 여덟 필드 전부를 대상으로 한다(파생된 `capabilities` 는 제외) — §8 의 가드가 여기에 기댄다
+- `equals` · `hashCode` · `toString` 은 아홉 필드 전부를 대상으로 한다(파생된 `capabilities` 는 제외) — §8 의 가드가 여기에 기댄다
 
 **`withDefaultsExtendedBy` 가 거절하는 것.**
 
@@ -359,7 +359,7 @@ provider 모듈의 테스트가 설정 경로가 실제로 쓰는 번역기를 �
 
 | 키 | CLI 필드 타입 | 스타터 필드 타입 |
 |---|---|---|
-| `modelCapabilities` 의 다섯 불리언 · `supportsReasoningSummary` | `Boolean` | `Boolean` |
+| `modelCapabilities` 의 다섯 불리언 · `supportsReasoningSummary` · `supportsThinkingBlockBinding` | `Boolean` | `Boolean` |
 | `lowestReasoningEffort` · `acceptedReasoningEfforts` | `ReasoningEffort` · `List<ReasoningEffort>` | 같음 |
 | `thinkingDialect` | `ThinkingDialect` | `ThinkingDialect` |
 | `reasoningEffort` | `ReasoningEffort` | `ReasoningEffort` |
@@ -681,7 +681,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
   한 키를 빠뜨린 가짜 표면 · getter 하나가 세터 둘을 먹이는 가짜 표면 등으로 그 경로를 자기 테스트에서 붙든다. 가짜 표면은
   모양별로 고른 키만 가지므로 새 키가 이 모듈의 편집 지점이 되지 않는다
 - **바인더 고리 테스트를 대체하지 않는다.** 프로브는 bean 세터로 쓰므로 바인더를 지나지 않는다. 키마다 손으로 쓴 바인더
-  테스트는 그대로 남는다. 지금의 여덟 키는 두 표면 모두에서 텍스트로 확인되고, 다음 키의 테스트는 누가 쓰기 전까지 없다 — L-14
+  테스트는 그대로 남는다. 지금의 아홉 키는 두 표면 모두에서 텍스트로 확인되고, 다음 키의 테스트는 누가 쓰기 전까지 없다 — L-14
 
 ---
 
@@ -770,7 +770,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 - ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
 - ~~**L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다~~ — 2026-10-05 닫힘(기동 시 WARN, §4)
 - ~~**L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다~~ — 2026-10-05 닫힘
-- **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인된다. 지금의 여덟 키는 두 표면에서 전부 덮였고, 남은 것은 변환이
+- **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인된다. 지금의 아홉 키는 두 표면에서 전부 덮였고, 남은 것은 변환이
   필요한 타입의 다음 키다. 스타터에서 **이름**이 어긋나는 쪽은 §6.7 이 기동 실패로 만든다
 
 등록되지 않은 항목:

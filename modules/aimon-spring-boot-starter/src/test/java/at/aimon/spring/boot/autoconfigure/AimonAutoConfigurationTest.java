@@ -349,6 +349,25 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("an unset aimon.llm.timeout leaves each client's default: Anthropic 600s, OpenAI 60s")
+    void unsetTimeoutLeavesEachClientsDefault(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> {
+            assertThat(ctx.getBean(AimonProperties.class).getLlm().getTimeout()).isNull();
+            assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                    .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getTimeout())
+                    .isEqualTo(Duration.ofSeconds(600));
+        });
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                        .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getTimeout())
+                        .isEqualTo(Duration.ofSeconds(60)));
+        minimal(workspace).withPropertyValues("aimon.llm.timeout=60s")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                        .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getTimeout())
+                        .isEqualTo(Duration.ofSeconds(60)));
+    }
+
+    @Test
     @DisplayName("the four anthropic thinking keys reach the vendor config")
     void thinkingKeysReachTheAnthropicClient(@TempDir Path workspace) {
         minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=extended",

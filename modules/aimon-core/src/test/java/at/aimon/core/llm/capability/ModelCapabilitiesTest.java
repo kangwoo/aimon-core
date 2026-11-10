@@ -54,6 +54,8 @@ class ModelCapabilitiesTest {
         // supportsReasoningTraceRoundTrip(), whose own default is false -- so this value's job is to say what the
         // rows that already exist mean, and none of them withholds it.
         assertThat(unknown.supportsReasoningSummary()).isTrue();
+        // False: the client adds a block binding of its own accord, so a model nobody described gets none.
+        assertThat(unknown.supportsThinkingBlockBinding()).isFalse();
     }
 
     @Test
@@ -208,6 +210,9 @@ class ModelCapabilitiesTest {
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).supportsReasoningSummary(false).build());
+        assertThat(a).isNotEqualTo(
+                ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                        .supportsToolsWithReasoning(false).supportsThinkingBlockBinding(true).build());
         assertThat(a).isNotEqualTo(null).isNotEqualTo("not a descriptor");
     }
 
@@ -218,7 +223,7 @@ class ModelCapabilitiesTest {
                 .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
                 .contains("supportsReasoningTraceRoundTrip=false")
                 .contains("acceptedReasoningEfforts=[MINIMAL, LOW, MEDIUM, HIGH]").contains("thinkingDialect=UNKNOWN")
-                .contains("supportsReasoningSummary=true");
+                .contains("supportsReasoningSummary=true").contains("supportsThinkingBlockBinding=false");
     }
 
     @Test

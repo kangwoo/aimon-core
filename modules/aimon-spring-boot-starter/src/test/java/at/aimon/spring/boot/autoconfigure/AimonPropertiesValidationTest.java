@@ -794,6 +794,14 @@ class AimonPropertiesValidationTest {
     }
 
     @Test
+    @DisplayName("a declared thinking block binding binds and reaches the descriptor a client reads")
+    void theThinkingBlockBindingFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-claude.supports-thinking-block-binding=true").run(
+                ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                        .resolve("prod-claude").supportsThinkingBlockBinding()).isTrue());
+    }
+
+    @Test
     @DisplayName("a declared reasoning-summary refusal binds and reaches the descriptor a client reads")
     void theReasoningSummaryFlagBinds() {
         runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-reasoning-summary=false").run(

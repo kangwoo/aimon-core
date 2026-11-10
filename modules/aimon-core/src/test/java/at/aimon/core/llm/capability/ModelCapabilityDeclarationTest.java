@@ -70,12 +70,13 @@ class ModelCapabilityDeclarationTest {
     }
 
     @Test
-    @DisplayName("each of the eight keys round-trips")
+    @DisplayName("each of the nine keys round-trips")
     void everyFlagRoundTrips() {
         final ModelCapabilityDeclaration declaration = ModelCapabilityDeclaration.builder()
                 .supportsSamplingParameters(false).supportsReasoningEffort(true).supportsToolsWithReasoning(false)
                 .supportsReasoningTraceRoundTrip(true).lowestReasoningEffort(ReasoningEffort.LOW)
-                .thinkingDialect(ThinkingDialect.ADAPTIVE).supportsReasoningSummary(false).build();
+                .thinkingDialect(ThinkingDialect.ADAPTIVE).supportsReasoningSummary(false)
+                .supportsThinkingBlockBinding(true).build();
 
         assertThat(declaration.supportsSamplingParameters()).contains(false);
         assertThat(declaration.supportsReasoningEffort()).contains(true);
@@ -84,10 +85,11 @@ class ModelCapabilityDeclarationTest {
         assertThat(declaration.lowestReasoningEffort()).contains(ReasoningEffort.LOW);
         assertThat(declaration.thinkingDialect()).contains(ThinkingDialect.ADAPTIVE);
         assertThat(declaration.supportsReasoningSummary()).contains(false);
+        assertThat(declaration.supportsThinkingBlockBinding()).contains(true);
         assertThat(declaration.capabilities()).isEqualTo(ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true)
                 .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.ADAPTIVE)
-                .supportsReasoningSummary(false).build());
+                .supportsReasoningSummary(false).supportsThinkingBlockBinding(true).build());
     }
 
     @Test
@@ -111,7 +113,7 @@ class ModelCapabilityDeclarationTest {
     void theRefusalMessageNamesEveryDeclarableKey() {
         // #69 is the shape where a message advertises a key nothing else in the system supplies. This test cannot
         // see either configuration surface -- aimon-core does not depend on aimon-cli or the starter -- so it is a
-        // message-vs-declaration consistency check and nothing more: it fails when a ninth key is added to the
+        // message-vs-declaration consistency check and nothing more: it fails when a tenth key is added to the
         // builder and its name never reaches the sentence an operator reads. The surface half of that guard is one
         // test per surface module (ModelCapabilityConfigBindingTest, AimonPropertiesBindingCoverageTest).
         final String message = catchThrowableOfType(() -> ModelCapabilityDeclaration.builder().build(),
@@ -123,7 +125,7 @@ class ModelCapabilityDeclarationTest {
                 .filter(method -> method.getReturnType() == ModelCapabilityDeclaration.Builder.class)
                 .map(Method::getName).sorted().toList();
 
-        assertThat(setters).hasSize(8);
+        assertThat(setters).hasSize(9);
         assertThat(message).contains(setters);
     }
 

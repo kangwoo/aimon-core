@@ -22,4 +22,19 @@ class InMemoryModelContextWindowRegistryTest {
         assertThat(registry.resolve("unknown-model").getContextWindow())
                 .isEqualTo(ModelContextLimits.DEFAULT_CONTEXT_WINDOW);
     }
+
+    @Test
+    @DisplayName("the 5.x families and Mythos resolve to the catalog's 1M window; Haiku 4.5 stays 200K")
+    void claudeFiveFamiliesHaveTheRealWindow() {
+        final InMemoryModelContextWindowRegistry registry = InMemoryModelContextWindowRegistry.withDefaults();
+
+        for (final String name : new String[]{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5",
+                "claude-sonnet-5", "claude-opus-5", "claude-fable-5-1", "claude-mythos-5", "Claude-Haiku-5-5"}) {
+            assertThat(registry.resolve(name).getContextWindow()).as(name).isEqualTo(1_000_000);
+        }
+        assertThat(registry.resolve("claude-haiku-4-5").getContextWindow()).isEqualTo(200_000);
+        assertThat(registry.resolve("claude-sonnet-4-5").getContextWindow()).isEqualTo(200_000);
+        assertThat(registry.resolve("unknown-model").getContextWindow())
+                .isEqualTo(ModelContextLimits.DEFAULT_CONTEXT_WINDOW);
+    }
 }

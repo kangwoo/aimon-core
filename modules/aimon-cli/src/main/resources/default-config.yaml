@@ -46,7 +46,11 @@ llm:
 # client's default model, and when `memory` is on, startup prints one line naming that model.
 # An OpenAI name left here after switching to anthropic is what memory and wiki generation send to Anthropic.
   model: "gpt-5.1"
-  timeout: 60
+# Total per-call ceiling in seconds, streaming included (the vendor SDKs apply it as the whole HTTP call's timeout,
+# and retry -- billed -- when it is hit). A value set here applies to BOTH providers. Left unset, each provider
+# client's own default applies: Anthropic 600, OpenAI 60. Anthropic's is long because its default model thinks by
+# default and a long streamed answer must not be cut off.
+#  timeout: 60
 # How hard the model should think. Read by BOTH providers -- the name is the framework's own neutral
 # type and the question means the same thing to either vendor, which is why it is here and not under
 # `anthropic` below. Commented out on purpose: an uncommented default would change every request this
@@ -76,6 +80,10 @@ llm:
 #      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
 #      supportsReasoningSummary: true           # false when the gateway takes reasoning.effort and 400s
 #                                               #   on reasoning.summary (only read on /v1/responses)
+#      supportsThinkingBlockBinding: false      # true when the model accepts thinking.block_binding (Anthropic,
+#                                               #   adaptive only): stale replayed thinking blocks are then
+#                                               #   dropped instead of failing the request. Built in for
+#                                               #   claude-sonnet-5-5, claude-opus-5-5, claude-haiku-5-5
 #      thinkingDialect: adaptive                # unknown | either | budgeted | adaptive -- which thinking request
 #                                               #   shape this model speaks. `llm.anthropic.thinkingMode: auto`
 #                                               #   asks this. `unknown` says "act on no built-in row";
@@ -193,7 +201,7 @@ agent:
 # Selects the classpath bundle agents/<name>/. That bundle's agent.md `model.name`, and each of its
 # subagents' `model`, are the model names agent requests carry -- `llm.model` does not replace them.
 #   default            names OpenAI models: gpt-5.6-terra, and gpt-5.1 for its `explore` subagent
-#   default-anthropic  for `provider: anthropic` (claude-sonnet-4-5; its `explore` subagent names no model
+#   default-anthropic  for `provider: anthropic` (claude-sonnet-5-5; its `explore` subagent names no model
 #                      and runs on the same one)
 # Subagent files in .aimon/agents/ under the CLI's working directory (the jar's directory, else user.dir --
 # the banner's `Working Directory:` line) load with every agent, whichever bundle this names.

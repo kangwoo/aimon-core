@@ -726,4 +726,58 @@ class InMemoryModelCapabilityRegistryTest {
         assertThatThrownBy(() -> InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(mixed))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("the three current-generation names resolve to exact rows: adaptive, no sampling, block binding")
+    void currentGenerationHasExactRows() {
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5",
+                "Claude-Haiku-5-5"}) {
+            final ModelCapabilities caps = registry.resolve(model);
+            assertThat(caps.thinkingDialect()).as("%s dialect", model).isEqualTo(ThinkingDialect.ADAPTIVE);
+            assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
+            assertThat(caps.supportsThinkingBlockBinding()).as("%s binding", model).isTrue();
+            assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isFalse();
+            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("the 5.5 rows are reached exactly, not through the claude-sonnet-5 / claude-opus-5 prefixes")
+    void currentGenerationIsNotReachedByPrefix() {
+        final ModelCapabilities different = ModelCapabilities.builder().thinkingDialect(ThinkingDialect.BUDGETED)
+                .build();
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builderWithDefaults()
+                .registerPrefix("claude-sonnet-5", different).registerPrefix("claude-opus-5", different)
+                .registerPrefix("claude-haiku-5", different).build();
+
+        assertThat(registry.resolve("claude-sonnet-5")).isEqualTo(different);
+        for (String model : new String[]{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as(model).isEqualTo(ThinkingDialect.ADAPTIVE);
+        }
+    }
+
+    @Test
+    @DisplayName("the block binding is stated on the three exact rows and on no prefix row")
+    void bindingIsOnlyOnTheExactRows() {
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-fable-5-1",
+                "claude-mythos-5-1", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-4-5", "claude-sonnet-4-5",
+                "claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6", "gpt-5", "o3", "unknown-model"}) {
+            assertThat(registry.resolve(model).supportsThinkingBlockBinding()).as(model).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("the deprecated previous default still resolves to its measured budgeted row, dated snapshot too")
+    void previousDefaultKeepsItsRow() {
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-sonnet-4-5", "claude-sonnet-4-5-20250929"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as(model).isEqualTo(ThinkingDialect.BUDGETED);
+            assertThat(registry.resolve(model).supportsSamplingParameters()).as(model).isTrue();
+        }
+    }
 }

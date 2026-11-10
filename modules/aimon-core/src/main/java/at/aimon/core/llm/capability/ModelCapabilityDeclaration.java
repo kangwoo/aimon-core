@@ -54,6 +54,7 @@ public final class ModelCapabilityDeclaration {
     private final Set<ReasoningEffort> acceptedReasoningEfforts;
     private final ThinkingDialect thinkingDialect;
     private final Boolean supportsReasoningSummary;
+    private final Boolean supportsThinkingBlockBinding;
     private final ModelCapabilities capabilities;
 
     private ModelCapabilityDeclaration(Builder builder) {
@@ -64,6 +65,7 @@ public final class ModelCapabilityDeclaration {
         this.lowestReasoningEffort = builder.lowestReasoningEffort;
         this.thinkingDialect = builder.thinkingDialect;
         this.supportsReasoningSummary = builder.supportsReasoningSummary;
+        this.supportsThinkingBlockBinding = builder.supportsThinkingBlockBinding;
         // Resolved before the defensive copy below, and the order matters: resolve() is where an empty or
         // null-bearing ladder is refused by name, while EnumSet.copyOf would beat it to the exception with a
         // message about a collection.
@@ -100,6 +102,9 @@ public final class ModelCapabilityDeclaration {
         }
         if (builder.supportsReasoningSummary != null) {
             resolved.supportsReasoningSummary(builder.supportsReasoningSummary);
+        }
+        if (builder.supportsThinkingBlockBinding != null) {
+            resolved.supportsThinkingBlockBinding(builder.supportsThinkingBlockBinding);
         }
         return resolved.build();
     }
@@ -174,6 +179,14 @@ public final class ModelCapabilityDeclaration {
     }
 
     /**
+     * @return whether the declaration states {@link ModelCapabilities#supportsThinkingBlockBinding()}, and what it
+     *         says
+     */
+    public Optional<Boolean> supportsThinkingBlockBinding() {
+        return Optional.ofNullable(supportsThinkingBlockBinding);
+    }
+
+    /**
      * The descriptor this declaration stands for: the flags it states, with every flag it does not state left at
      * {@link ModelCapabilities#unknown()}'s value.
      *
@@ -203,14 +216,15 @@ public final class ModelCapabilityDeclaration {
                 && lowestReasoningEffort == that.lowestReasoningEffort
                 && Objects.equals(acceptedReasoningEfforts, that.acceptedReasoningEfforts)
                 && thinkingDialect == that.thinkingDialect
-                && Objects.equals(supportsReasoningSummary, that.supportsReasoningSummary);
+                && Objects.equals(supportsReasoningSummary, that.supportsReasoningSummary)
+                && Objects.equals(supportsThinkingBlockBinding, that.supportsThinkingBlockBinding);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
                 supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts, thinkingDialect,
-                supportsReasoningSummary);
+                supportsReasoningSummary, supportsThinkingBlockBinding);
     }
 
     @Override
@@ -220,7 +234,7 @@ public final class ModelCapabilityDeclaration {
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
                 + ", lowestReasoningEffort=" + lowestReasoningEffort + ", acceptedReasoningEfforts="
                 + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect + ", supportsReasoningSummary="
-                + supportsReasoningSummary + '}';
+                + supportsReasoningSummary + ", supportsThinkingBlockBinding=" + supportsThinkingBlockBinding + '}';
     }
 
     /**
@@ -239,6 +253,7 @@ public final class ModelCapabilityDeclaration {
         private Set<ReasoningEffort> acceptedReasoningEfforts;
         private ThinkingDialect thinkingDialect;
         private Boolean supportsReasoningSummary;
+        private Boolean supportsThinkingBlockBinding;
 
         private Builder() {
         }
@@ -335,19 +350,30 @@ public final class ModelCapabilityDeclaration {
         }
 
         /**
-         * @return whether any of the eight flags has been declared
+         * @param value
+         *            {@code true} when the model accepts {@code thinking.block_binding} with adaptive thinking;
+         *            {@code null} to leave the flag undeclared
+         * @return This builder
+         */
+        public Builder supportsThinkingBlockBinding(Boolean value) {
+            this.supportsThinkingBlockBinding = value;
+            return this;
+        }
+
+        /**
+         * @return whether any of the nine flags has been declared
          */
         boolean declaresAnything() {
             return supportsSamplingParameters != null || supportsReasoningEffort != null
                     || supportsToolsWithReasoning != null || supportsReasoningTraceRoundTrip != null
                     || lowestReasoningEffort != null || acceptedReasoningEfforts != null || thinkingDialect != null
-                    || supportsReasoningSummary != null;
+                    || supportsReasoningSummary != null || supportsThinkingBlockBinding != null;
         }
 
         /**
          * @return A new {@link ModelCapabilityDeclaration}
          * @throws IllegalArgumentException
-         *             if none of the eight flags was declared — such an entry would register
+         *             if none of the nine flags was declared — such an entry would register
          *             {@link ModelCapabilities#unknown()}, which is indistinguishable from not writing the entry at
          *             all, while the operator who wrote it believes it does something; or if both ladder keys were
          *             declared, because they describe the same fact two ways and an entry stating both leaves no
@@ -358,10 +384,10 @@ public final class ModelCapabilityDeclaration {
             if (!declaresAnything()) {
                 throw new IllegalArgumentException("A model capability declaration must state at least one of"
                         + " supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,"
-                        + " supportsReasoningTraceRoundTrip, supportsReasoningSummary, lowestReasoningEffort,"
-                        + " acceptedReasoningEfforts, thinkingDialect. An entry that states none of them registers"
-                        + " the same fail-open capabilities the model already had, so it would bind and do nothing;"
-                        + " if you meant to set a flag, check the spelling of its keys.");
+                        + " supportsReasoningTraceRoundTrip, supportsReasoningSummary, supportsThinkingBlockBinding,"
+                        + " lowestReasoningEffort, acceptedReasoningEfforts, thinkingDialect. An entry that states none"
+                        + " of them registers the same fail-open capabilities the model already had, so it would bind"
+                        + " and do nothing; if you meant to set a flag, check the spelling of its keys.");
             }
             // Refused here rather than resolved by a precedence rule. A Java caller writes a sequence, where "the
             // last statement wins" is an unambiguous answer and is what ModelCapabilities.Builder does; a

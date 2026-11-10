@@ -7,6 +7,58 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking default): Anthropic default model `claude-sonnet-4-5` → `claude-sonnet-5-5`
+
+`claude-sonnet-4-5` is deprecated and retires on **2026-11-30**; from then on every deployment that names no Anthropic
+model, and every CLI user of the `default-anthropic` bundle, would fail on every request. The default moves to the
+current Sonnet, and the client is made to work with the 5.5 generation's breaking API changes. Design:
+`docs/design/llm/anthropic-default-model-sonnet-5-5.md`.
+
+- **Changed (breaking default): the default model.** `AnthropicConfig`'s default and the CLI's `default-anthropic`
+  bundle are `claude-sonnet-5-5`. The bundle also drops its `temperature: 0.2`, which never reached the wire (API
+  2026-10-21 has no sampling) and only produced a WARN at the start of every CLI session.
+- **Changed (breaking default): `AnthropicConfig` default `maxTokens` 4096 → 16000.** The new default thinks
+  adaptively by default (effort `high`) even under `thinkingMode: off`, and thinking counts toward `max_tokens`; at
+  4096 a turn could end on `max_tokens` with no text. Anyone who sets `maxTokens` (every CLI bundle sets 40000) is
+  unaffected.
+- **Changed (breaking default): Anthropic default `timeout` 60s → 600s, and the CLI and Spring no longer pin 60s.** The
+  timeout is a **total** per-call ceiling (OkHttp `callTimeout`), streaming included, and a hit is retried by the SDK
+  and billed. The CLI's shipped `llm.timeout: 60` is now commented out and Spring's `aimon.llm.timeout` no longer
+  defaults to 60s, so each provider client's own default applies: Anthropic 600s, OpenAI 60s (unchanged). To restore
+  the old ceiling, set `llm.timeout: 60` / `aimon.llm.timeout=60s`.
+- **Changed: preserved thinking on the 5.5 models.** On `claude-sonnet-5-5`, `claude-opus-5-5` and `claude-haiku-5-5`,
+  with `replayThinkingBlocks: true` (the default), requests carry `thinking.block_binding.prefix_mismatch_behavior:
+  drop_block` and the `thinking-binding-controls-2026-08-01` beta header. Those models check that the system prompt,
+  tools and earlier messages are unchanged since a replayed thinking block was produced, and AIMON edits that prefix (a
+  system prompt re-rendered on a new turn, client-side compaction), which on new accounts would otherwise fail the
+  request — and every later one. Stale blocks are now dropped instead; the drops listed in the response's
+  `input_transformations` are WARNed per reason on the 1st, 10th, 100th … occurrence. Under `thinkingMode: off` this
+  means `thinking: {type: adaptive}` (the server's own default on those models) is now sent as the binding's carrier;
+  how much the model thinks does not change. Verified live on Sonnet 5.5 and Haiku 5.5, with a control showing the
+  same request without `drop_block` is a 400. With the rolling context engine the window drops old messages on nearly
+  every request once full, so replayed blocks are dropped and the drop WARN fires — expected, not a bug.
+- **Added: capability flag `supportsThinkingBlockBinding`** (`ModelCapabilities`, `ModelCapabilityDeclaration`; CLI
+  `llm.modelCapabilities.<model>.supportsThinkingBlockBinding`, Spring
+  `aimon.llm.model-capabilities.<model>.supports-thinking-block-binding`). Fail-open `false`. Other models that run the
+  check (Fable 5.1, Mythos 5.1) are not flagged; if they hit the "bound to a different conversation" 400, the client
+  logs both remedies once (declare the flag, or turn replay off).
+- **Added: a deprecation / retirement WARN.** A request on `claude-sonnet-4-5` (any snapshot) logs once per model name
+  that it retires on 2026-11-30; retired names (`claude-3-*`, `claude-2.*`, the 4.0/4.1 Sonnet and Opus snapshots) log
+  that they are retired. A warning, never a refusal. **Pin the old model until 2026-11-30** with
+  `model: claude-sonnet-4-5`; its capability row stays.
+- **Behaviour on the new default:** adaptive thinking runs even with `thinkingMode: off` — use `reasoningEffort: low`
+  with `auto`/`adaptive` to think less. Text between tool calls may arrive as thinking blocks, so the CLI can be quieter
+  between tool calls. A caller-built assistant prefill now gets a 400 on the 5.5 models instead of an empty response.
+  Cost is $2/$10 per MTok, against $3/$15 for the previous default.
+- **Registry:** capability — exact rows for `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5` (adaptive,
+  sampling refused, block binding); this fixes `thinkingMode: extended` (was a 400) and `auto` (sent nothing) on
+  `claude-haiku-5-5`. Context window — 1M for the `claude-{sonnet,opus,haiku,fable}-5*` and `claude-mythos` families.
+  Price — Sonnet 5.x ($2/$10), Haiku 5.5, Opus 5.5 ($4/$20), Opus 5 ($5/$25). **The Haiku 5.5 row uses the ≤100K-prompt
+  card** ($0.10/$0.50); with the 1M window long sessions routinely go past 100K and are under-reported by up to 5x
+  there ($0.50/$2.50 billed).
+- **Build only:** the real-model E2E defaults to `claude-haiku-5-5` with `maxTokens` 16000; the adaptive live suite runs
+  on `claude-sonnet-5-5`; new gated live test `AnthropicThinkingBindingLiveTest`.
+
 ### Changed: PTC last polish — inline-skill span reason, spaced host paths, live E2E answer check
 
 Closes backlog TC-32 (registered and closed here) and the PTC wrap-up review's remaining non-blocking findings. No

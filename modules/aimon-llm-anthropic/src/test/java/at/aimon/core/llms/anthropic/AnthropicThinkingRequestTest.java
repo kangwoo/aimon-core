@@ -89,12 +89,14 @@ class AnthropicThinkingRequestTest {
      * {@link at.aimon.core.llm.capability.ThinkingDialect#BUDGETED} row, so the ADAPTIVE cases would have started
      * seeing a translation and a warning. {@code claude-sonnet-4-20250514} was {@code AnthropicConfig}'s own
      * {@code DEFAULT_MODEL} until #116 measured it unserved on 2026-09-11 and the default moved to
-     * {@code claude-sonnet-4-5}. It stays the fixture because it is still a Claude name outside the table, and these
-     * golden bodies are request shapes built against a mocked SDK, so none of them is sent — undescribed by the
-     * table, not undialected in fact, and {@link #theUndescribedModelReallyIsUndescribed} is what makes the next row
-     * that describes it fail with a sentence.
+     * {@code claude-sonnet-4-5}. It stopped being the fixture when {@code AnthropicModelLifecycle} began warning that
+     * it is retired: every "says nothing" assertion here would have picked that warning up. The fixture is now a
+     * gateway-style rename, the case the fail-open path really exists for — undescribed by the table and by the
+     * lifecycle list, and {@link #theUndescribedModelReallyIsUndescribed} is what makes the next row that describes it
+     * fail with a sentence. These golden bodies are request shapes built against a mocked SDK, so none of them is
+     * sent.
      */
-    private static final String UNDESCRIBED_MODEL = "claude-sonnet-4-20250514";
+    private static final String UNDESCRIBED_MODEL = "gateway-claude-deployment";
 
     private static AnthropicConfig.Builder config() {
         return AnthropicConfig.builder().apiKey("test-key").model(UNDESCRIBED_MODEL);
@@ -141,8 +143,8 @@ class AnthropicThinkingRequestTest {
         // This literal used to end in `"temperature":0.0`, and its removal is the whole of what stopping the config
         // from manufacturing a value does on the wire. Restoring a DEFAULT_TEMPERATURE in AnthropicConfig turns this
         // test red, which is the point of writing the body out in full.
-        assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
-                + "\"model\":\"claude-sonnet-4-20250514\",\"system\":\"You are helpful\"}");
+        assertThat(body).isEqualTo("{\"max_tokens\":16000,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
+                + "\"model\":\"gateway-claude-deployment\",\"system\":\"You are helpful\"}");
         assertThat(warnings()).isEmpty();
     }
 
@@ -155,8 +157,8 @@ class AnthropicThinkingRequestTest {
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).temperature(0.7).build());
 
         assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
-        // The default maxTokens of 4096 clamps HIGH's 16000 down to maxTokens - 1.
-        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4095);
+        // The default maxTokens of 16000 clamps HIGH's 16000 down to maxTokens - 1.
+        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(15999);
         // Not "temperature is null" — the key is absent. A null would be rejected the same way a value is.
         assertThat(body.has("temperature")).isFalse();
         assertThat(warnings()).anyMatch(w -> w.startsWith("temperature 0.7"))
@@ -328,8 +330,9 @@ class AnthropicThinkingRequestTest {
     @DisplayName("a clamped configured budget names thinkingBudgetTokens as the second remedy, not the effort")
     void clampedConfiguredBudgetNamesTheBudgetNotTheEffort() {
         // L-15: a configured budget wins over the ladder, so lowering the effort would change nothing here.
-        send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(6000).build()),
-                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+        // maxTokens pinned at 4096 so a 6000 budget is a clamp under it; the default is 16000.
+        send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(6000).maxTokens(4096)
+                .build()), LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
 
         assertThat(warnings()).filteredOn(w -> w.contains("does not fit under maxTokens")).singleElement().asString()
                 .contains("or lower thinkingBudgetTokens below 4096").doesNotContain("reasoning effort");
@@ -406,8 +409,8 @@ class AnthropicThinkingRequestTest {
         final String body = AnthropicFixtures.bodyOf(sendCapturingParams(
                 client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build()));
 
-        assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
-                + "\"model\":\"claude-sonnet-4-20250514\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
+        assertThat(body).isEqualTo("{\"max_tokens\":16000,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
+                + "\"model\":\"gateway-claude-deployment\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
         assertThat(warnings()).isEmpty();
     }
 

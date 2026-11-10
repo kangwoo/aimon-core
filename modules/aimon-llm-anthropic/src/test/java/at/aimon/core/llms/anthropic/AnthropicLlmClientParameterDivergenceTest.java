@@ -73,7 +73,8 @@ class AnthropicLlmClientParameterDivergenceTest {
 
     private AnthropicLlmClient client() {
         lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
-        AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").model("claude-sonnet-4-20250514").build();
+        AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").model("gateway-claude-deployment")
+                .build();
         return new AnthropicLlmClient(config, mockAnthropicClient);
     }
 
@@ -188,7 +189,7 @@ class AnthropicLlmClientParameterDivergenceTest {
         when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
         lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
         AnthropicLlmClient client = new AnthropicLlmClient(AnthropicConfig.builder().apiKey("test-key")
-                .model("claude-sonnet-4-20250514").thinkingMode(AnthropicThinkingMode.ADAPTIVE)
+                .model("gateway-claude-deployment").thinkingMode(AnthropicThinkingMode.ADAPTIVE)
                 .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build(), mockAnthropicClient);
 
         send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.NONE).build());

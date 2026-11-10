@@ -29,7 +29,6 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.StopReason;
-import com.anthropic.models.messages.ThinkingConfigParam;
 import com.anthropic.models.messages.ToolUnion;
 import com.anthropic.models.messages.ToolUseBlock;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -124,6 +123,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * still — they name a <em>condition</em> rather than a value, so the realistic count is single digits.
      */
     private static final int MAX_REPORTED_DIVERGENCES = 32;
+
+    /** The request header that names the betas a request opts into. */
+    static final String ANTHROPIC_BETA = "anthropic-beta";
 
     private final AnthropicConfig config;
     private final AnthropicClient client;
@@ -501,12 +503,16 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         final ModelCapabilities capabilities = capabilitiesFor(modelName);
         final AnthropicThinkingResolution resolvedThinking = thinkingResolver.resolve(modelConfig, maxTokens,
                 capabilities, modelName);
-        final Optional<ThinkingConfigParam> thinking = resolvedThinking.parameter();
+        // A warning, never a refusal; once per model name, so both the config default and a per-request override (an
+        // agent definition's model) are covered without repeating every ReAct iteration.
+        AnthropicModelLifecycle.warningFor(modelName)
+                .ifPresent(warning -> reportDivergence("modelLifecycle@" + modelName, "{}", warning));
 
         MessageCreateParams.Builder requestBuilder = MessageCreateParams.builder().model(modelName)
                 .maxTokens((long) maxTokens);
 
-        thinking.ifPresent(requestBuilder::thinking);
+        // parameter(), not requestsThinking(): this is the wire, and a block-binding carrier goes on it too.
+        resolvedThinking.parameter().ifPresent(requestBuilder::thinking);
         // The resolution decides whether an effort accompanies the parameter, because it is the thing that knows
         // which shape it produced: output_config belongs to the adaptive dialect alone, and a mode the model
         // contradicts has already been translated. The guard is measured rather than tidy — `output_config.effort`
@@ -541,7 +547,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
         // with one rule: it replays what it is given.
-        reportIfReplayIsOffWhileThinking(thinking);
+        reportIfReplayIsOffWhileThinking(resolvedThinking);
         final List<Message> outbound = config.isReplayThinkingBlocks()
                 ? messages
                 : AnthropicMessageConverter.withoutReasoningTraces(messages);
@@ -553,7 +559,26 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             requestBuilder.tools(anthropicTools);
         }
 
-        return requestBuilder.build();
+        final MessageCreateParams request = requestBuilder.build();
+        // The resolution decides the beta header as well, so this builder makes no thinking decision of its own. The
+        // streaming path rebuilds these params with toBuilder(), which keeps the header.
+        return resolvedThinking.betaHeader().map(beta -> withBetaHeader(request, beta)).orElse(request);
+    }
+
+    /**
+     * Adds one {@code anthropic-beta} value, comma-joined with any value the request already carries — the form the
+     * API takes for several betas on one request.
+     */
+    static MessageCreateParams withBetaHeader(MessageCreateParams request, String beta) {
+        final List<String> existing = request._additionalHeaders().values(ANTHROPIC_BETA);
+        if (existing.isEmpty()) {
+            return request.toBuilder().putAdditionalHeader(ANTHROPIC_BETA, beta).build();
+        }
+        final List<String> joined = new ArrayList<>(existing);
+        if (!joined.contains(beta)) {
+            joined.add(beta);
+        }
+        return request.toBuilder().replaceAdditionalHeaders(ANTHROPIC_BETA, String.join(",", joined)).build();
     }
 
     /**
@@ -580,9 +605,14 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * that looks exactly like a working one. It is not, however, a mistake — it is the documented escape from the
      * preserved-thinking prefix check, and an operator who set it deliberately should read this as confirmation
      * rather than as a correction.
+     *
+     * <p>
+     * Gated on {@link AnthropicThinkingResolution#requestsThinking()} rather than on a parameter being present: a
+     * block-binding carrier asks for no thinking. With replay off no carrier is ever built, so the gate changes no
+     * behaviour; it states which question the warning is about.
      */
-    private void reportIfReplayIsOffWhileThinking(Optional<ThinkingConfigParam> thinking) {
-        if (thinking.isEmpty() || config.isReplayThinkingBlocks()) {
+    private void reportIfReplayIsOffWhileThinking(AnthropicThinkingResolution resolvedThinking) {
+        if (!resolvedThinking.requestsThinking() || config.isReplayThinkingBlocks()) {
             return;
         }
         reportDivergence("replayOffWhileThinking",
@@ -605,6 +635,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      */
     private LlmClientException mapSdkFailure(com.anthropic.errors.AnthropicException failure, String messagePrefix) {
         final LlmClientException mapped = AnthropicExceptionMapper.map(failure, messagePrefix);
+        reportIfThinkingBlockBindingRejected(mapped);
         final String baseUrl = config.getBaseUrl();
         if (baseUrl == null || baseUrl.isEmpty()) {
             return mapped;
@@ -622,6 +653,33 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                             + "Claude 4.7.");
         }
         return mapped;
+    }
+
+    /**
+     * Explains the preserved-thinking 400, with or without a gateway.
+     *
+     * <p>
+     * The current generation rejects a replayed thinking block once the system prompt, the tools or an earlier message
+     * changed since the block was produced, and this client both re-renders the system prompt per turn and compacts
+     * history. On a model whose capability row states {@code supportsThinkingBlockBinding} the request asks the server
+     * to drop such a block instead, so this 400 reaches only names without the flag: gateway renames, and models the
+     * built-in table does not flag. The exception is unchanged; the hint goes beside it, as the gateway hints do.
+     */
+    private void reportIfThinkingBlockBindingRejected(LlmClientException mapped) {
+        final String message = mapped.getMessage();
+        if (!(mapped instanceof LlmInvalidRequestException) || message == null
+                || !message.contains("bound to a different conversation")) {
+            return;
+        }
+        reportDivergence("thinkingBlockBindingRejected",
+                "The model rejected a replayed thinking block as bound to a different conversation: it checks that "
+                        + "the system prompt, tools and earlier messages are unchanged since the block was produced, "
+                        + "and AIMON re-renders the system prompt per turn and compacts history. Either declare "
+                        + "supportsThinkingBlockBinding: true for this model name (llm.modelCapabilities.<model> / "
+                        + "aimon.llm.model-capabilities.<model>), if the vendor documents thinking.block_binding for "
+                        + "it, so stale blocks are dropped instead; or set replayThinkingBlocks(false) (CLI "
+                        + "llm.anthropic.replayThinkingBlocks: false, Spring "
+                        + "aimon.llm.anthropic.replay-thinking-blocks=false).");
     }
 
     /**
@@ -946,6 +1004,10 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         final at.aimon.core.llm.StopReason neutralStopReason = result.stopReason()
                 .map(reason -> AnthropicStopReasons.fromWire(reason.asString()))
                 .orElse(at.aimon.core.llm.StopReason.UNKNOWN);
+
+        // Present only when the request carried the block-binding beta header; reported, never fatal.
+        AnthropicInputTransformations.report(result._additionalProperties(), AnthropicUsages.model(result),
+                this::reportRecurringDivergence);
 
         final List<ReasoningTrace> traces = AnthropicOutputBlocks.resolve(orderedBlocks, providerName);
         return LlmResponse.of(textContent.toString(), toolUses, tokenUsage, neutralStopReason)

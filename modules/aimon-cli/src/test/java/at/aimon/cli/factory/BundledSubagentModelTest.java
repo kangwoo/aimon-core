@@ -61,12 +61,21 @@ class BundledSubagentModelTest {
     }
 
     @Test
-    @DisplayName("default-anthropic's explore runs on exactly the main agent's claude-sonnet-4-5")
+    @DisplayName("default-anthropic's explore runs on exactly the main agent's claude-sonnet-5-5")
     void defaultAnthropicExploreInheritsTheMainModel() {
         final AgentBundle bundle = loader.load("default-anthropic");
         final Subagent explore = bundle.getSubagentRegistry().orElseThrow().getSubagent("explore").orElseThrow();
 
         assertThat(explore.getMetadata().getModel()).as("explore names no model of its own").isNull();
-        assertThat(resolvedName(explore, bundle)).contains("claude-sonnet-4-5");
+        assertThat(resolvedName(explore, bundle)).contains("claude-sonnet-5-5");
+    }
+
+    @Test
+    @DisplayName("default-anthropic sets no temperature: API 2026-10-21 has no sampling, so it would only warn")
+    void defaultAnthropicSetsNoTemperature() {
+        final AgentBundle bundle = loader.load("default-anthropic");
+
+        assertThat(bundle.getAgent().getMetadata().getModel().getTemperature()).isEmpty();
+        assertThat(bundle.getAgent().getMetadata().getModel().getMaxTokens()).contains(40000);
     }
 }

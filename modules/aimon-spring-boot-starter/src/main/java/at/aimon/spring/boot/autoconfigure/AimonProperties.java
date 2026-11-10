@@ -1368,8 +1368,12 @@ public class AimonProperties implements InitializingBean {
         /** Override for the vendor API endpoint — a gateway, a proxy, a compatible third-party service. */
         private String baseUrl;
 
-        /** Per-request timeout for the vendor client. */
-        private Duration timeout = Duration.ofSeconds(60);
+        /**
+         * Total per-call ceiling for the vendor client, streaming included — the SDKs apply it to the whole HTTP call
+         * and retry (billed) when it is hit. Null (the default) leaves each client's own default in place:
+         * Anthropic 600s, OpenAI 60s.
+         */
+        private Duration timeout;
 
         /**
          * How hard the model should think. Null leaves whatever the vendor decides on its own in place.
@@ -1998,6 +2002,13 @@ public class AimonProperties implements InitializingBean {
          */
         private Boolean supportsReasoningSummary;
 
+        /**
+         * {@code true} when the model accepts Anthropic's {@code thinking.block_binding} with adaptive thinking, so a
+         * client that replays thinking blocks asks the server to drop a stale one instead of failing the request.
+         * Built in for {@code claude-sonnet-5-5}, {@code claude-opus-5-5} and {@code claude-haiku-5-5}.
+         */
+        private Boolean supportsThinkingBlockBinding;
+
         public Boolean getSupportsSamplingParameters() {
             return supportsSamplingParameters;
         }
@@ -2063,6 +2074,22 @@ public class AimonProperties implements InitializingBean {
         }
 
         /**
+         * @return whether the model accepts {@code thinking.block_binding}, or {@code null} when undeclared
+         */
+        public Boolean getSupportsThinkingBlockBinding() {
+            return supportsThinkingBlockBinding;
+        }
+
+        /**
+         * @param supportsThinkingBlockBinding
+         *            {@code true} when the model accepts {@code thinking.block_binding} with adaptive thinking;
+         *            {@code null} to leave the flag undeclared
+         */
+        public void setSupportsThinkingBlockBinding(Boolean supportsThinkingBlockBinding) {
+            this.supportsThinkingBlockBinding = supportsThinkingBlockBinding;
+        }
+
+        /**
          * Translates this entry into the framework's neutral declaration type.
          *
          * <p>
@@ -2080,7 +2107,8 @@ public class AimonProperties implements InitializingBean {
                     .supportsToolsWithReasoning(supportsToolsWithReasoning)
                     .supportsReasoningTraceRoundTrip(supportsReasoningTraceRoundTrip)
                     .lowestReasoningEffort(lowestReasoningEffort).acceptedReasoningEfforts(rungSet())
-                    .thinkingDialect(thinkingDialect).supportsReasoningSummary(supportsReasoningSummary).build();
+                    .thinkingDialect(thinkingDialect).supportsReasoningSummary(supportsReasoningSummary)
+                    .supportsThinkingBlockBinding(supportsThinkingBlockBinding).build();
         }
 
         /**

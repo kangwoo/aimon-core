@@ -371,7 +371,7 @@ class AgentModelProviderCheckTest {
         @DisplayName("default-anthropic declares its main agent's model alone — explore names none — and is silent under anthropic (#104)")
         void defaultAnthropicDeclaresOnlyTheMainAgent() {
             assertThat(modelsOf("default-anthropic")).extracting(DeclaredModel::getModelName)
-                    .containsExactly("claude-sonnet-4-5");
+                    .containsExactly("claude-sonnet-5-5");
             assertThat(checkBundle("default-anthropic", "anthropic")).isEmpty();
         }
 

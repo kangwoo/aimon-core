@@ -69,6 +69,7 @@ Anthropic 행으로 해석되어 샘플링이 억제된다. 그 모델이 실제
 | `supportsToolsWithReasoning` | OpenAI 의 Chat Completions 경로만 |
 | `thinkingDialect` | Anthropic 클라이언트만 |
 | `supportsReasoningSummary` | OpenAI 의 Responses 경로만 |
+| `supportsThinkingBlockBinding` | Anthropic 클라이언트만(adaptive 방언에서) |
 
 벤더별 레지스트리를 따로 두지 않는 결정적 이유는 비용이다. 두 설정 표면은 한 번역기를 거쳐 이 표 하나에 선언을
 넣는다([`configuration-surface.md`](configuration-surface.md)). 벤더 표가 둘이면 모델 이름을 바꾸는 게이트웨이
@@ -113,6 +114,7 @@ Anthropic 행으로 해석되어 샘플링이 억제된다. 그 모델이 실제
 | `acceptedReasoningEfforts` | effort 값으로 받는 rung 집합. 비어 있지 않고, 반복 순서가 ladder 순서다 | `{MINIMAL, LOW, MEDIUM, HIGH}` | `OpenAiRequestParameters.maySendEffort`(두 엔드포인트) |
 | `thinkingDialect` | thinking 요청 파라미터의 모양 — `UNKNOWN` · `EITHER` · `BUDGETED` · `ADAPTIVE` | `UNKNOWN` | `AnthropicThinkingResolver` |
 | `supportsReasoningSummary` | reasoning summary 요청을 받는가 | `true` | `OpenAIResponsesRequestFactory` |
+| `supportsThinkingBlockBinding` | `thinking.block_binding` 을 받는가 — 되실은 thinking 블록의 prefix 가 바뀌었을 때 요청 대신 블록을 버리라고 청하는 필드. adaptive 방언에서만 유효하다 | `false` | `AnthropicThinkingResolver` |
 
 ### 3.2 fail-open — 요청한 것은 보류하지 않고, 요청하지 않은 것은 지어내지 않는다
 
@@ -192,6 +194,14 @@ ladder 중간에 구멍이 있다(§6.1). 바닥 하나로는 이것을 기술�
 접으면 선언된 행 하나가 운영자가 가를 수 없는 두 사실을 단언하게 된다. 이름이 OpenAI 모양이 아닌 것은 Anthropic 이 같은
 축을 `thinking.display: summarized` 로 표현하기 때문이지만, 오늘 이 플래그를 읽는 곳은 Responses 요청 팩토리 하나다.
 게이트 동작은 [`openai-responses-path.md`](openai-responses-path.md).
+
+**`supportsThinkingBlockBinding` 의 fail-open 값은 `false` 다**(2026-11-10). 이 필드는 누구도 설정하지 않는다 — 클라이언트가
+thinking 블록을 되실을 때 스스로 붙인다. 그래서 기술되지 않은 모델에 보내면 "요청하지 않은 것을 지어내는" 쪽이고, `false`
+는 요청 본문을 이 필드가 생기기 전 그대로 둔다. 현 세대(Sonnet 5.5 · Opus 5.5 · Haiku 5.5)는 thinking 블록이 생긴 뒤 시스템
+프롬프트 · 도구 · 앞의 메시지가 바뀌지 않았는지 검사하고, AIMON 은 그 prefix 를 턴마다(시스템 프롬프트 재렌더링)와
+컴팩션에서 편집하므로, 그 모델들의 행이 `true` 를 말해 클라이언트가 `drop_block` 을 싣는다. trace 왕복 플래그에 접지 않는
+이유는 `supportsReasoningSummary` 와 같다 — 재생한다는 사실과 낡은 블록을 다루는 필드를 받는다는 사실은 따로 성립한다. 요청
+모양과 실측은 [`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) §4.5 · §6.3.
 
 ---
 
@@ -416,7 +426,8 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 |---|---|---|---|---|
 | `claude-fable-5` · `claude-opus-5` · `claude-opus-4-7` · `claude-opus-4-8` · `claude-sonnet-5` | prefix ×5 | 샘플링 `false` · `ADAPTIVE` | 샘플링: 여섯 이름(`claude-fable-5-1` 은 `claude-fable-5` prefix 에 걸린다)이 `temperature` `0.0`·`0.5` 거부 · `1.0` 수용, `top_p`(`0.9`, 그리고 `claude-opus-5`·`claude-opus-4-7` 에서 `1.0`) 거부, `top_k: 5` 거부. 방언: adaptive 200 · budgeted 400 | 샘플링 2026-09-09, 방언 2026-09-10 |
 | `claude-mythos` | prefix | 샘플링 `false` · `ADAPTIVE` | documentation-derived(§5.4). 사실도 식별자도 호출하지 않았다 | — |
-| `claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5` | prefix ×3 | `BUDGETED` 만 | 날짜 스냅샷과 목록에 없는 날짜 없는 별칭 모두 adaptive 400 · budgeted 200. 세 모델 모두 샘플링 파라미터를 받으므로 샘플링은 fail-open 그대로 둔다 | 방언 2026-09-10, 샘플링 수용 2026-09-09 |
+| `claude-sonnet-5-5` · `claude-opus-5-5` · `claude-haiku-5-5` | exact ×3 | 샘플링 `false` · `ADAPTIVE` · 블록 바인딩 `true` | documentation-derived(벤더 카탈로그와 이행 가이드, 2026-11). 날짜 스냅샷이 없는 고정 id 라 exact 다(`gpt-6*` 와 같은 규칙, §5.4). Sonnet 5.5 · Haiku 5.5 는 adaptive 경로와 바인딩을 라이브로 확인했고(바뀐 prefix 의 블록이 `prefix_binding_mismatch` 로 버려지고, 대조군 `error` 는 400), Opus 5.5 는 카탈로그뿐이다 — [`L-33`](../../backlog/llm-config-surface-open-items.md) | 2026-11-10 |
+| `claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5` | prefix ×3 | `BUDGETED` 만 | `claude-sonnet-4-5` 는 deprecated 이고 2026-11-30 에 은퇴한다 — 그날까지 고정한 배포를 위해 행을 남긴다. 날짜 스냅샷과 목록에 없는 날짜 없는 별칭 모두 adaptive 400 · budgeted 200. 세 모델 모두 샘플링 파라미터를 받으므로 샘플링은 fail-open 그대로 둔다 | 방언 2026-09-10, 샘플링 수용 2026-09-09 |
 | `claude-opus-4-6` · `claude-sonnet-4-6` | prefix ×2 | `EITHER` 만 | adaptive 200 · budgeted 200. 샘플링 파라미터를 받는다. 날짜 붙은 4-6 이름은 추측한 둘이 404 여서 주장하지 않고, 나타나면 prefix 가 물려준다 | 방언 2026-09-10, 샘플링 수용 2026-09-09 |
 
 샘플링을 거부하는 모델과 adaptive 전용 모델이 같은 집합인 것은 측정된 현재 세대가 adaptive 전용 세대이기 때문이다.
@@ -544,6 +555,10 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
   그대로 내보낸다. 행과 요청 로직은 바꾸지 않았고, 클라이언트가 그 요청을
   내보내기 전에 한 번 WARN 한다(`OpenAILlmClient.reportForcedChatToolsWithoutNone`) — 바꿔 보내지 않기로 한 결정은
   [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-28
+- **`claude-opus-5-5` 행은 카탈로그뿐이다.** adaptive 200 · budgeted 400 을 잰 적이 없다 —
+  [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-33
+- **Fable 5.1 · Mythos 5.1 도 prefix 검사를 하지만 블록 바인딩을 말하지 않는다.** 그 prefix 가 5.0 모델까지 덮기 때문이다 —
+  L-34
 - **나머지 미측정은 항목이 아니라 §6.4 의 빈 칸이다**
 
 ---

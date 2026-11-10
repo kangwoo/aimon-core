@@ -96,6 +96,22 @@ class InMemoryModelPriceTableTest {
         }
 
         @Test
+        @DisplayName("prices the 5.x generation, with Opus 5.5 apart from Opus 5")
+        void pricesTheFiveGeneration() {
+            final InMemoryModelPriceTable table = InMemoryModelPriceTable.withDefaults();
+
+            assertThat(table.priceOf("claude-sonnet-5-5")).contains(ModelPrice.perMillionUsd(2.00, 10.00, 0.20, 2.50));
+            assertThat(table.priceOf("claude-sonnet-5")).contains(ModelPrice.perMillionUsd(2.00, 10.00, 0.20, 2.50));
+            // The <=100K-prompt card: the table holds one flat price per model.
+            assertThat(table.priceOf("claude-haiku-5-5")).contains(ModelPrice.perMillionUsd(0.10, 0.50, 0.01, 0.125));
+            // Registration order is load-bearing: claude-opus-5 would otherwise match claude-opus-5-5 first.
+            assertThat(table.priceOf("claude-opus-5-5")).contains(ModelPrice.perMillionUsd(4.00, 20.00, 0.20, 5.00));
+            assertThat(table.priceOf("claude-opus-5")).contains(ModelPrice.perMillionUsd(5.00, 25.00, 0.50, 6.25));
+            // The deprecated previous default keeps the claude-sonnet-4 family price.
+            assertThat(table.priceOf("claude-sonnet-4-5")).contains(ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75));
+        }
+
+        @Test
         @DisplayName("prices claude-sonnet-4 via prefix")
         void pricesClaudeSonnet4() {
             assertThat(InMemoryModelPriceTable.withDefaults().priceOf("claude-sonnet-4-20250514"))
