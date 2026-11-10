@@ -5,12 +5,14 @@
 package at.aimon.core.scheduling;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,9 +32,12 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.scheduling.exception.TaskSchedulerException;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
+import at.aimon.core.scheduling.scheduler.InMemoryTaskScheduler;
 import at.aimon.core.scheduling.scheduler.ScheduledFire;
+import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 
 /**
  * Pins the drain seam of {@link SchedulingEngine}: pausing fires stops new runs on this node while the run already in
@@ -43,7 +48,6 @@ class SchedulingEngineDrainTest {
     private static final Duration PATIENCE = Duration.ofSeconds(10);
     private static final Instant SLOT_1 = Instant.parse("2026-01-01T09:00:00Z");
     private static final Instant SLOT_2 = Instant.parse("2026-01-01T09:05:00Z");
-    private static final Instant SLOT_3 = Instant.parse("2026-01-01T09:10:00Z");
 
     private final Principal alice = Principal.user("alice");
     private final InMemoryScheduledTaskExecutionHistoryRepository history = new InMemoryScheduledTaskExecutionHistoryRepository();
@@ -99,12 +103,89 @@ class SchedulingEngineDrainTest {
         assertThat(history.findByTaskIdOrderByStartedAtDesc(task.getId(), 10)).singleElement()
                 .satisfies(h -> assertThat(h.getStatus()).isEqualTo(ScheduledTaskExecutionHistory.Status.SUCCESS));
 
-        // Resuming admits fires again.
+        // Resuming admits fires again — and the very occurrence refused while paused runs now, which shows the
+        // refusal never claimed it.
         engine.resumeFires();
         assertThat(engine.isAcceptingFires()).isTrue();
         tool.release.release();
-        manager.executeFire(ScheduledFire.of(task.getId(), SLOT_3, SLOT_3));
+        manager.executeFire(ScheduledFire.of(task.getId(), SLOT_2, SLOT_2));
         assertThat(tool.invocations).hasValue(2);
+        assertThat(history.findByTaskIdOrderByStartedAtDesc(task.getId(), 10)).hasSize(2);
+    }
+
+    @Test
+    void aSchedulerThatFailsToPauseStillLeavesTheManagerRefusingFires() {
+        final SchedulingEngine failing = SchedulingEngineBuilder.create()
+                .taskRepository(new InMemoryScheduledTaskRepository())
+                .taskSchedulerFactory(executor -> new InMemoryTaskScheduler(executor) {
+                    @Override
+                    public boolean pauseFiring() {
+                        throw new TaskSchedulerException("standby failed");
+                    }
+                }).build();
+        try {
+            failing.start();
+            assertThatThrownBy(failing::pauseFires).hasMessageContaining("standby failed");
+            assertThat(failing.isAcceptingFires()).isFalse();
+        } finally {
+            failing.close();
+        }
+    }
+
+    @Test
+    void aPauseBeforeStartIsStillInEffectAfterStart() {
+        final List<String> calls = new CopyOnWriteArrayList<>();
+        final SchedulingEngine early = SchedulingEngineBuilder.create()
+                .taskRepository(new InMemoryScheduledTaskRepository())
+                .taskSchedulerFactory(executor -> new RecordingScheduler(executor, calls)).build();
+        try {
+            early.pauseFires();
+            early.start();
+
+            assertThat(early.isAcceptingFires()).isFalse();
+            // Paused before start, and asked again once started, for a scheduler that forgot the first request.
+            assertThat(calls).containsExactly("pause", "start", "pause");
+
+            early.resumeFires();
+            assertThat(early.isAcceptingFires()).isTrue();
+            assertThat(calls).endsWith("resume");
+        } finally {
+            early.close();
+        }
+    }
+
+    @Test
+    void aHugeTimeoutIsClampedRatherThanThrowing() throws Exception {
+        assertThat(engine.awaitIdle(Duration.ofSeconds(Long.MAX_VALUE))).isTrue();
+    }
+
+    /** Records the lifecycle calls the engine makes on its scheduler, in order. */
+    private static final class RecordingScheduler extends InMemoryTaskScheduler {
+
+        private final List<String> calls;
+
+        RecordingScheduler(ScheduledTaskExecutor executor, List<String> calls) {
+            super(executor);
+            this.calls = calls;
+        }
+
+        @Override
+        public void start() {
+            calls.add("start");
+            super.start();
+        }
+
+        @Override
+        public boolean pauseFiring() {
+            calls.add("pause");
+            return super.pauseFiring();
+        }
+
+        @Override
+        public void resumeFiring() {
+            calls.add("resume");
+            super.resumeFiring();
+        }
     }
 
     @Test

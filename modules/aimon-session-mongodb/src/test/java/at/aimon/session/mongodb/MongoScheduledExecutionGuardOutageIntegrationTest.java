@@ -149,7 +149,7 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
                 .boundRuntimeId(AgentRuntimeId.fromName("outage")).routine(List.of(RoutineStep.of("Bash", "{}")))
                 .enabled(true).build();
         manager.register(task);
-        when(routine.execute(any())).thenReturn(RoutineResult.success(taskId, List.of(), SLOT, SLOT));
+        when(routine.execute(any(), any())).thenReturn(RoutineResult.success(taskId, List.of(), SLOT, SLOT));
 
         warmConnectionPool();
         pause();
@@ -157,7 +157,7 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
                 .isInstanceOf(SchedulingException.class);
         assertThatCode(() -> manager.executeFire(ScheduledFire.of(taskId, SLOT.plusSeconds(60), SLOT.plusSeconds(60))))
                 .doesNotThrowAnyException();
-        verify(routine, never()).execute(any());
+        verify(routine, never()).execute(any(), any());
         resume();
 
         // Those two writes went out on open connections, so the server may apply them on resume though their callers
@@ -171,7 +171,7 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
             return !Mockito.mockingDetails(routine).getInvocations().isEmpty();
         }, "a fire runs once the server is back");
 
-        verify(routine).execute(any());
+        verify(routine).execute(any(), any());
         assertThat(document().getDate(DocumentKeys.F_LAST_SLOT)).isEqualTo(Date.from(ran[0]));
         assertThat(guard.tryBegin(ScheduledFire.of(taskId, SLOT, SLOT))).as("the outage's slot stays behind").isEmpty();
     }

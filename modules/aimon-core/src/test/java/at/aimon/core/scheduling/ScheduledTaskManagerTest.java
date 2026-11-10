@@ -33,6 +33,7 @@ import at.aimon.core.scheduling.exception.UnauthorizedTaskAccessException;
 import at.aimon.core.scheduling.quota.DefaultTaskQuotaManager;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
 
 class ScheduledTaskManagerTest {
@@ -264,7 +265,7 @@ class ScheduledTaskManagerTest {
 
         RoutineResult result = RoutineResult.success(task.getId(), List.of(), Instant.now(),
                 Instant.now().plusMillis(10));
-        when(routine.execute(task)).thenReturn(result);
+        when(routine.execute(eq(task), any())).thenReturn(result);
 
         manager.executeTask(task.getId());
 
@@ -273,10 +274,44 @@ class ScheduledTaskManagerTest {
         assertThat(historyRepo.findByTaskIdOrderByStartedAtDesc(task.getId(), 5)).hasSize(1);
     }
 
+    /**
+     * Every scheduled run goes through the two-argument entry point — an untimed fire with its untimed fire, a keyed
+     * one with its own — and never through the one-argument form, which is for direct calls only.
+     */
+    @Test
+    void everyFireReachesTheExecutorThroughTheFireAwareEntryPoint() {
+        ScheduledTask task = newTask(alice, "* * * * *", true);
+        manager.register(task);
+        RoutineResult result = RoutineResult.success(task.getId(), List.of(), Instant.now(),
+                Instant.now().plusMillis(10));
+        when(routine.execute(eq(task), any())).thenReturn(result);
+        final Instant slot = Instant.parse("2026-01-01T09:00:00Z");
+        final ScheduledFire keyed = ScheduledFire.of(task.getId(), slot, slot);
+
+        manager.executeTask(task.getId());
+        manager.executeFire(keyed);
+
+        verify(routine).execute(task, ScheduledFire.untimed(task.getId()));
+        verify(routine).execute(task, keyed);
+        verify(routine, never()).execute(any(ScheduledTask.class));
+    }
+
+    @Test
+    void anOccurrenceInterruptWithABlankKeyIsRefusedBeforeAnythingIsStopped() {
+        ScheduledTask task = newTask(alice, "* * * * *", true);
+        manager.register(task);
+
+        assertThatThrownBy(() -> manager.interrupt(task.getId(), " ", alice))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(routine, never()).interrupt(any(), any(), any());
+        verify(routine, never()).interrupt(any(), any());
+    }
+
     @Test
     void executeTaskSkipsWhenTaskNotFound() {
         manager.executeTask(ScheduledTaskId.of("ghost"));
-        verify(routine, never()).execute(any());
+        verify(routine, never()).execute(any(), any());
     }
 
     @Test
@@ -285,7 +320,7 @@ class ScheduledTaskManagerTest {
         manager.register(task);
 
         manager.executeTask(task.getId());
-        verify(routine, never()).execute(any());
+        verify(routine, never()).execute(any(), any());
     }
 
     @Test
@@ -293,7 +328,7 @@ class ScheduledTaskManagerTest {
         ScheduledTask task = newTask(alice, "* * * * *", true);
         manager.register(task);
 
-        when(routine.execute(task)).thenThrow(new RuntimeException("boom"));
+        when(routine.execute(eq(task), any())).thenThrow(new RuntimeException("boom"));
 
         // Must not throw out of executeTask; failure is logged and swallowed.
         manager.executeTask(task.getId());
@@ -314,7 +349,7 @@ class ScheduledTaskManagerTest {
 
         guarded.executeTask(task.getId());
 
-        verify(routine, never()).execute(any());
+        verify(routine, never()).execute(any(), any());
         assertThat(historyRepo.findByTaskIdOrderByStartedAtDesc(task.getId(), 5)).isEmpty();
     }
 
@@ -325,13 +360,13 @@ class ScheduledTaskManagerTest {
 
         RoutineResult result = RoutineResult.success(task.getId(), List.of(), Instant.now(),
                 Instant.now().plusMillis(10));
-        when(routine.execute(task)).thenReturn(result);
+        when(routine.execute(eq(task), any())).thenReturn(result);
 
         // The default in-memory guard grants, runs, and releases on completion; a second sequential fire runs again.
         manager.executeTask(task.getId());
         manager.executeTask(task.getId());
 
-        verify(routine, times(2)).execute(task);
+        verify(routine, times(2)).execute(eq(task), any());
     }
 
     /**

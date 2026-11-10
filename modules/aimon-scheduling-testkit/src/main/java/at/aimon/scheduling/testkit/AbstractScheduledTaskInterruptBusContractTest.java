@@ -1,6 +1,7 @@
 package at.aimon.scheduling.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -72,7 +73,8 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * {@link ScheduledTaskInterruptBus.InterruptListener#onInterruptRequested(ScheduledTaskId, String, InterruptReason)},
  * and a task-wide request must stay task-wide. The SPI's default widens a keyed request to the task so that buses
  * written before keys keep working; a backend that does that fails {@code occurrenceKeyCrossesToTheOtherNode} here,
- * on purpose — it is the cross-node half of stopping one occurrence and not the next.
+ * on purpose — it is the cross-node half of stopping one occurrence and not the next. A blank key is refused at
+ * publish ({@code blankOccurrenceKeyIsRefused}): it would decode as task-wide on the other side.
  */
 public abstract class AbstractScheduledTaskInterruptBusContractTest {
 
@@ -149,6 +151,28 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
         final List<Received> heard = List.of(poll(heardOnB), poll(heardOnB));
         assertThat(heard).containsExactlyInAnyOrder(new Received(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED),
                 new Received(taskId, InterruptReason.TASK_CANCELLED));
+    }
+
+    /**
+     * A blank key names no occurrence, and a receiver reads a document or message without a usable key as task-wide —
+     * so a blank key let through would stop nothing on the publishing node and every run of the task elsewhere. A bus
+     * that carries keys refuses it at publish.
+     */
+    @Test
+    @DisplayName("a blank occurrence key is refused at publish and never reaches the other node")
+    void blankOccurrenceKeyIsRefused() throws Exception {
+        final ScheduledTaskInterruptBus nodeA = busFor("node-A");
+        final ScheduledTaskInterruptBus nodeB = busFor("node-B");
+        final BlockingQueue<Received> heardOnB = listenOn(nodeB);
+        awaitSubscriptionsLive();
+
+        final ScheduledTaskId taskId = ScheduledTaskId.generate();
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> nodeA.publish(taskId, "", InterruptReason.TASK_CANCELLED));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> nodeA.publish(taskId, " ", InterruptReason.TASK_CANCELLED));
+
+        assertThat(heardOnB.poll(QUIET_PERIOD.toMillis(), TimeUnit.MILLISECONDS)).isNull();
     }
 
     @Test

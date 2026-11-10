@@ -6,6 +6,12 @@ package at.aimon.core.scheduling;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -35,6 +41,8 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.scheduler.ScheduledFire;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Pins the occurrence-targeted interrupt and the non-destructive drain view of {@link RoutineExecutor}.
@@ -157,6 +165,64 @@ class RoutineExecutorOccurrenceAndDrainTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(executor.awaitIdle(PATIENCE)).isTrue();
         assertThat(executor.inFlightRunCount()).isZero();
+    }
+
+    @Test
+    void aTracerThatThrowsOnCloseDoesNotLeaveTheRunRegistered() throws Exception {
+        final Tracer.Span root = mock(Tracer.Span.class);
+        doThrow(new IllegalStateException("tracer broke on close")).when(root).close();
+        final Tracer tracer = mock(Tracer.class);
+        when(tracer.startRoot(anyString(), any(SpanType.class), anyString(), anyMap())).thenReturn(root);
+        executor.withTracer(tracer);
+        tool.release.release();
+
+        final ScheduledFire fire = ScheduledFire.of(task.getId(), SLOT_1, SLOT_1);
+        assertThatThrownBy(() -> executor.execute(task, fire)).hasMessageContaining("tracer broke on close");
+
+        // The run is gone from the registry despite the throw: the count is back to zero and a drain completes.
+        assertThat(executor.inFlightRunCount()).isZero();
+        assertThat(executor.isRunning(task.getId())).isFalse();
+        assertThat(executor.awaitIdle(Duration.ZERO)).isTrue();
+        assertThat(
+                executor.interrupt(task.getId(), fire.getOccurrenceKey().orElseThrow(), InterruptReason.TASK_CANCELLED))
+                .isFalse();
+    }
+
+    @Test
+    void aBlankOccurrenceKeyIsRefused() {
+        assertThatThrownBy(() -> executor.interrupt(task.getId(), "", InterruptReason.TASK_CANCELLED))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> executor.interrupt(task.getId(), "  ", InterruptReason.TASK_CANCELLED))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void untimedAndDirectRunsAreTheSameEntryPoint() throws Exception {
+        tool.release.release();
+        assertThat(executor.execute(task).isSuccess()).isTrue();
+        tool.release.release();
+        assertThat(executor.execute(task, ScheduledFire.untimed(task.getId())).isSuccess()).isTrue();
+        assertThat(executor.inFlightRunCount()).isZero();
+    }
+
+    @Test
+    void aHugeTimeoutIsClampedRatherThanOverflowing() throws Exception {
+        assertThat(executor.awaitIdle(Duration.ofSeconds(Long.MAX_VALUE))).isTrue();
+        final CompletableFuture<RoutineResult> run = startAndAwaitEntry(ScheduledFire.of(task.getId(), SLOT_1, SLOT_1));
+        final CompletableFuture<Boolean> idle = CompletableFuture.supplyAsync(() -> {
+            try {
+                return executor.awaitIdle(Duration.ofSeconds(Long.MAX_VALUE));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        });
+        // The huge wait waits (it neither throws nor returns at once) until the run ends.
+        Thread.sleep(100);
+        assertThat(idle).isNotDone();
+        tool.release.release();
+        assertThat(run.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isSuccess()).isTrue();
+        assertThat(idle.get(PATIENCE.toSeconds(), TimeUnit.SECONDS)).isTrue();
     }
 
     private CompletableFuture<RoutineResult> startAndAwaitEntry(ScheduledFire fire) throws InterruptedException {
