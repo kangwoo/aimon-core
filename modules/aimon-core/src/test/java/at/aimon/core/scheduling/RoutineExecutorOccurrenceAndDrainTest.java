@@ -5,6 +5,7 @@
 package at.aimon.core.scheduling;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -13,8 +14,11 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -130,7 +134,7 @@ class RoutineExecutorOccurrenceAndDrainTest {
                 ScheduledFire.of(task.getId(), SLOT_1, SLOT_1));
         final CompletableFuture<RoutineResult> second = startAndAwaitEntry(
                 ScheduledFire.of(task.getId(), SLOT_2, SLOT_2));
-        final CompletableFuture<RoutineResult> untimed = startAndAwaitEntry(null);
+        final CompletableFuture<RoutineResult> untimed = startAndAwaitEntry(ScheduledFire.untimed(task.getId()));
         assertThat(executor.inFlightRunCount()).isEqualTo(3);
 
         assertThat(executor.interrupt(task.getId(), InterruptReason.TASK_CANCELLED)).isTrue();
@@ -139,6 +143,81 @@ class RoutineExecutorOccurrenceAndDrainTest {
         assertThat(second.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isCancelled()).isTrue();
         assertThat(untimed.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isCancelled()).isTrue();
         assertThat(executor.awaitIdle(PATIENCE)).isTrue();
+    }
+
+    @Test
+    void anOccurrenceCancelThatArrivesBeforeItsRunRegistersStopsThatRunBeforeItsFirstStep() throws Exception {
+        final ScheduledFire fire = ScheduledFire.of(task.getId(), SLOT_1, SLOT_1);
+        // The fire is admitted but still in the guard, so nothing of it runs here yet.
+        assertThat(
+                executor.interrupt(task.getId(), fire.getOccurrenceKey().orElseThrow(), InterruptReason.TASK_CANCELLED))
+                .isFalse();
+        assertThat(executor.occurrenceTombstoneCount()).isEqualTo(1);
+
+        final RoutineResult result = executor.execute(task, fire);
+
+        assertThat(result.isCancelled()).isTrue();
+        assertThat(result.getInterruptReason()).contains(InterruptReason.TASK_CANCELLED);
+        assertThat(tool.entered.availablePermits()).as("the step never started").isZero();
+        assertThat(executor.occurrenceTombstoneCount()).as("the run consumed its tombstone").isZero();
+        assertThat(executor.awaitIdle(Duration.ZERO)).isTrue();
+    }
+
+    @Test
+    void anEarlyOccurrenceCancelNeverTouchesAnotherOccurrenceOrAnUntimedRun() throws Exception {
+        final ScheduledFire cancelled = ScheduledFire.of(task.getId(), SLOT_1, SLOT_1);
+        final ScheduledFire other = ScheduledFire.of(task.getId(), SLOT_2, SLOT_2);
+        executor.interrupt(task.getId(), cancelled.getOccurrenceKey().orElseThrow(), InterruptReason.TASK_CANCELLED);
+
+        final CompletableFuture<RoutineResult> next = startAndAwaitEntry(other);
+        final CompletableFuture<RoutineResult> untimed = startAndAwaitEntry(ScheduledFire.untimed(task.getId()));
+        tool.release.release(2);
+
+        assertThat(next.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isSuccess()).isTrue();
+        assertThat(untimed.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isSuccess()).isTrue();
+        assertThat(executor.occurrenceTombstoneCount()).as("still waiting for its own occurrence").isEqualTo(1);
+    }
+
+    @Test
+    void anOccurrenceTombstoneExpiresAfterItsTtl() throws Exception {
+        final MutableClock clock = new MutableClock(Instant.parse("2026-01-01T08:59:00Z"));
+        executor.shutdown();
+        executor = new RoutineExecutor(registry, new SimpleScheduledTaskEventPublisher(), clock);
+        final ScheduledFire fire = ScheduledFire.of(task.getId(), SLOT_1, SLOT_1);
+        executor.interrupt(task.getId(), fire.getOccurrenceKey().orElseThrow(), InterruptReason.TASK_CANCELLED);
+
+        clock.advance(RoutineExecutor.OCCURRENCE_TOMBSTONE_TTL.plusSeconds(1));
+        final CompletableFuture<RoutineResult> run = startAndAwaitEntry(fire);
+        tool.release.release();
+
+        assertThat(run.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isSuccess()).isTrue();
+        assertThat(executor.occurrenceTombstoneCount()).isZero();
+    }
+
+    @Test
+    void occurrenceTombstonesAreBoundedAndTheOldestGoesFirst() throws Exception {
+        final int limit = RoutineExecutor.OCCURRENCE_TOMBSTONE_LIMIT;
+        for (int i = 0; i <= limit; i++) {
+            final Instant slot = SLOT_1.plusSeconds(60L * i);
+            executor.interrupt(task.getId(),
+                    ScheduledFire.of(task.getId(), slot, slot).getOccurrenceKey().orElseThrow(),
+                    InterruptReason.TASK_CANCELLED);
+        }
+        assertThat(executor.occurrenceTombstoneCount()).isEqualTo(limit);
+
+        // The newest is still remembered; the oldest was evicted, so its occurrence runs.
+        final Instant newest = SLOT_1.plusSeconds(60L * limit);
+        assertThat(executor.execute(task, ScheduledFire.of(task.getId(), newest, newest)).isCancelled()).isTrue();
+        final CompletableFuture<RoutineResult> oldest = startAndAwaitEntry(
+                ScheduledFire.of(task.getId(), SLOT_1, SLOT_1));
+        tool.release.release();
+        assertThat(oldest.get(PATIENCE.toSeconds(), TimeUnit.SECONDS).isSuccess()).isTrue();
+    }
+
+    @Test
+    void aNullFireIsRefused() {
+        assertThatNullPointerException().isThrownBy(() -> executor.execute(task, null));
+        assertThat(executor.inFlightRunCount()).isZero();
     }
 
     @Test
@@ -229,6 +308,35 @@ class RoutineExecutorOccurrenceAndDrainTest {
         final CompletableFuture<RoutineResult> run = CompletableFuture.supplyAsync(() -> executor.execute(task, fire));
         assertThat(tool.entered.tryAcquire(PATIENCE.toMillis(), TimeUnit.MILLISECONDS)).as("step entered").isTrue();
         return run;
+    }
+
+    /** A clock the test moves by hand. */
+    private static final class MutableClock extends Clock {
+
+        private volatile Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     /** Parks until released, or until the run's signal trips — cooperative, so an interrupt ends it promptly. */

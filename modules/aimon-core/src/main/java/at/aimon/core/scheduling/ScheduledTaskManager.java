@@ -613,6 +613,12 @@ public class ScheduledTaskManager {
      * either: the direct local interrupt this method makes is, but the self-delivered task-wide request that follows
      * may stop the next occurrence's run here as well. Only a bus that carries the key keeps the whole request exact.
      *
+     * <p>
+     * A request that arrives before the occurrence's run has registered — the fire is admitted but still in the
+     * execution guard or loading the task — is not lost: every node that finds no run of the occurrence remembers it
+     * briefly, and the run starts already interrupted (see
+     * {@link RoutineExecutor#interrupt(ScheduledTaskId, String, InterruptReason)}).
+     *
      * @param taskId
      *            the task
      * @param occurrenceKey
@@ -620,7 +626,8 @@ public class ScheduledTaskManager {
      * @param principal
      *            the principal requesting the interrupt
      * @return {@code true} if the occurrence's run was signalled <b>on this instance</b>; {@code false} does not mean
-     *         nothing was stopped, as for {@link #interrupt(ScheduledTaskId, Principal)}
+     *         nothing was stopped, as for {@link #interrupt(ScheduledTaskId, Principal)}, nor that nothing will be — a
+     *         run of the occurrence that has not registered yet starts interrupted
      * @throws IllegalArgumentException
      *             if {@code occurrenceKey} is blank
      * @throws TaskNotFoundException

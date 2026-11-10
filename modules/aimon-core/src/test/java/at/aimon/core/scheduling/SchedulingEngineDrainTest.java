@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -52,6 +53,7 @@ class SchedulingEngineDrainTest {
     private final Principal alice = Principal.user("alice");
     private final InMemoryScheduledTaskExecutionHistoryRepository history = new InMemoryScheduledTaskExecutionHistoryRepository();
     private final GateTool tool = new GateTool();
+    private final DefaultAgentRuntimeRegistry runtimes = new DefaultAgentRuntimeRegistry();
     private SchedulingEngine engine;
     private ScheduledTask task;
 
@@ -59,7 +61,6 @@ class SchedulingEngineDrainTest {
     void setUp() {
         final Agent agent = DefaultAgent.builder().name("drain-test").systemPrompt("test").build();
         final AgentRuntimeId runtimeId = AgentRuntimeId.from(agent);
-        final DefaultAgentRuntimeRegistry runtimes = new DefaultAgentRuntimeRegistry();
         runtimes.register(new StubAgentRuntime(runtimeId, agent, List.of(tool)));
         engine = SchedulingEngineBuilder.create().taskRepository(new InMemoryScheduledTaskRepository())
                 .historyRepository(history).agentRuntimeRegistry(runtimes).build();
@@ -85,7 +86,7 @@ class SchedulingEngineDrainTest {
                 .runAsync(() -> manager.executeFire(ScheduledFire.of(task.getId(), SLOT_1, SLOT_1)));
         assertThat(tool.entered.tryAcquire(PATIENCE.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
 
-        engine.pauseFires();
+        assertThat(engine.pauseFires()).as("the in-memory scheduler can pause").isTrue();
         assertThat(engine.isAcceptingFires()).isFalse();
 
         // A fire that arrives while paused is refused at once: no run, no claim on the occurrence.
@@ -133,6 +134,76 @@ class SchedulingEngineDrainTest {
     }
 
     @Test
+    void aSchedulerThatCannotPauseIsReportedAndTheManagerStillRefusesFires() {
+        final SchedulingEngine unpausable = SchedulingEngineBuilder.create()
+                .taskRepository(new InMemoryScheduledTaskRepository()).historyRepository(history)
+                .agentRuntimeRegistry(runtimes).taskSchedulerFactory(executor -> new InMemoryTaskScheduler(executor) {
+                    @Override
+                    public boolean pauseFiring() {
+                        return false; // the TaskScheduler default: cannot pause
+                    }
+                }).build();
+        try {
+            unpausable.start();
+            unpausable.getTaskManager().register(task);
+
+            assertThat(unpausable.pauseFires()).as("the caller learns the scheduler kept firing").isFalse();
+            assertThat(unpausable.isAcceptingFires()).isFalse();
+
+            // A fire the scheduler still hands this node is refused before any run starts.
+            unpausable.getTaskManager().executeFire(ScheduledFire.of(task.getId(), SLOT_1, SLOT_1));
+            assertThat(tool.invocations).hasValue(0);
+            assertThat(history.findByTaskIdOrderByStartedAtDesc(task.getId(), 10)).isEmpty();
+        } finally {
+            unpausable.close();
+        }
+    }
+
+    @Test
+    void aResumeRacingAPauseWaitsForThePauseToFinishOnBothHalves() throws Exception {
+        final CountDownLatch pauseEntered = new CountDownLatch(1);
+        final CountDownLatch finishPause = new CountDownLatch(1);
+        final List<String> calls = new CopyOnWriteArrayList<>();
+        final SchedulingEngine racing = SchedulingEngineBuilder.create()
+                .taskRepository(new InMemoryScheduledTaskRepository())
+                .taskSchedulerFactory(executor -> new RecordingScheduler(executor, calls) {
+                    @Override
+                    public boolean pauseFiring() {
+                        final boolean paused = super.pauseFiring();
+                        pauseEntered.countDown();
+                        try {
+                            finishPause.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return paused;
+                    }
+                }).build();
+        try {
+            racing.start();
+            final CompletableFuture<Boolean> pause = CompletableFuture.supplyAsync(racing::pauseFires);
+            assertThat(pauseEntered.await(PATIENCE.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+
+            // The scheduler half of the pause is done, the manager half is not. A resume now must not slip in between:
+            // it would restart the scheduler and then be undone by the manager half, leaving fires refused.
+            final CompletableFuture<Void> resume = CompletableFuture.runAsync(racing::resumeFires);
+            Thread.sleep(200L);
+            assertThat(resume).as("resume waits for the pause to finish").isNotDone();
+
+            finishPause.countDown();
+            assertThat(pause.get(PATIENCE.toSeconds(), TimeUnit.SECONDS)).isTrue();
+            resume.get(PATIENCE.toSeconds(), TimeUnit.SECONDS);
+
+            // Resume ran last on both halves: the manager admits and the scheduler fires again.
+            assertThat(racing.isAcceptingFires()).isTrue();
+            assertThat(calls).containsExactly("start", "pause", "resume");
+        } finally {
+            finishPause.countDown();
+            racing.close();
+        }
+    }
+
+    @Test
     void aPauseBeforeStartIsStillInEffectAfterStart() {
         final List<String> calls = new CopyOnWriteArrayList<>();
         final SchedulingEngine early = SchedulingEngineBuilder.create()
@@ -160,7 +231,7 @@ class SchedulingEngineDrainTest {
     }
 
     /** Records the lifecycle calls the engine makes on its scheduler, in order. */
-    private static final class RecordingScheduler extends InMemoryTaskScheduler {
+    private static class RecordingScheduler extends InMemoryTaskScheduler {
 
         private final List<String> calls;
 
