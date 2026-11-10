@@ -460,8 +460,8 @@ S 와 S+1 의 키가 달라 실행이 겹치고, 더 오래된 misfire 도 거�
 
 `InMemoryScheduledExecutionGuard` 는 여전히 taskId 로 겹침만 막는다. 한 노드에서는 그것이 위험의 전부다.
 
-**회차 키는 인터럽트의 주소이기도 하다.** `executeFire` 는 slot 이 있는 발화를 `RoutineExecutor.execute(task, fire)`
-로 넘기고, 실행은 `getOccurrenceKey()` 아래에 등록된다. 그래서 `ScheduledTaskManager.interrupt(taskId, occurrenceKey,
+**회차 키는 인터럽트의 주소이기도 하다.** `executeFire` 는 모든 발화를 — slot 이 없는 untimed 발화까지 —
+`RoutineExecutor.execute(task, fire)` 하나로 넘기고, slot 이 있는 실행은 `getOccurrenceKey()` 아래에 등록된다. 그래서 `ScheduledTaskManager.interrupt(taskId, occurrenceKey,
 principal)` 은 그 회차만 끊고, 늦게 도착한 취소가 다음 회차를 끊지 않는다
 ([`interrupt.md` §12.8](../agent-execution/interrupt.md#128-회차-하나만-끊기--occurrence-key)).
 
@@ -697,14 +697,21 @@ application-scoped 이고(§2.3) 일시정지는 `resumeFires()` 로 되돌릴 �
 
 | 메서드 | 하는 일 |
 |--------|--------|
-| `SchedulingEngine.pauseFires()` | ① `TaskScheduler.pauseFiring()` — 이 노드에서 트리거를 그만 쏜다. ② `ScheduledTaskManager.pauseFires()` — 그래도 들어오는 발화(호스트가 직접 부르는 `executeFire` 포함)를 guard 에 묻기 **전에** 거절한다 |
+| `SchedulingEngine.pauseFires()` | ① `TaskScheduler.pauseFiring()` — 이 노드에서 트리거를 그만 쏜다. ② 매니저의 일시정지 — 그래도 들어오는 발화(호스트가 직접 부르는 `executeFire` 포함)를 guard 에 묻기 **전에** 거절한다. ①이 던져도 ②는 `finally` 에서 걸린다 |
 | `SchedulingEngine.inFlightRunCount()` | 이 노드에서 도는 루틴 실행 수(`RoutineExecutor.inFlightRunCount()`) |
 | `SchedulingEngine.awaitIdle(Duration)` | 받아들인 발화와 루틴 실행이 모두 끝나기를 기다린다. 타임아웃이면 `false` — **아무것도 끊지 않는다** |
 
 순서에 이유가 있다. 스케줄러를 먼저 멈추므로 클러스터 저장소의 Quartz 에서는 다른 노드가 트리거를 가져간다.
 매니저의 거절은 그 뒤에 걸리는 장벽이다 — `pauseFires()` 가 돌아온 뒤로는 어떤 발화도 받아들여지지 않고, 그 전에
 받아들여진 것은 `awaitIdle` 이 센다. 거절을 guard 앞에 두는 것은 거절한 회차를 이 노드가 차지하지 않게 하려는
-것이다(노드별 트리거라면 다른 노드가 같은 회차를 돌 수 있다).
+것이다(노드별 트리거라면 다른 노드가 같은 회차를 돌 수 있다). 매니저의 `pauseFires` · `resumeFires` ·
+`isAcceptingFires` · `awaitIdle` 은 패키지 전용이다 — 스케줄러를 멈추지 않고 매니저만 멈추면 클러스터 트리거가
+준 회차를 버리게 되므로, 엔진만 부른다.
+
+`pauseFires()` 는 `start()` 전에 불러도 된다. `start()` 는 그 일시정지를 지킨다 — 소유 Quartz 는 시작하지 않은
+standby 상태 그대로 남고(재개할 때 시작한다), 인메모리 스케줄러는 일시정지 플래그를 그대로 가진 채 시작한다.
+기억하지 못하는 스케줄러를 위해 엔진은 스케줄러를 시작한 직후 `pauseFiring()` 을 한 번 더 부른다. 그러지 않으면
+클러스터 저장소에서 트리거를 가져온 뒤 매니저가 거절해, 그 회차는 어디서도 돌지 않는다.
 
 | 스케줄러 | `pauseFiring()` |
 |---------|----------------|
@@ -715,6 +722,11 @@ application-scoped 이고(§2.3) 일시정지는 `resumeFires()` 로 되돌릴 �
 
 스케줄러가 멈추지 못하면(`false`) 클러스터 전체 트리거가 이 노드에 준 회차는 거절되어 **어디서도 돌지 않는다**.
 차용 Quartz 라면 애플리케이션이 직접 standby 해야 한다.
+
+소유 Quartz 의 standby 도 빈틈없는 장벽은 아니다. Quartz 는 트리거를 새로 *가져오지* 않을 뿐이어서, 이미 가져온
+트리거 가운데 발화 시각이 Quartz 의 반환 임계값(수 ms — JDBC 저장소에서 약 70 ms, RAM 저장소에서는 더 짧다) 안에
+든 것과 이미 워커 스레드에 넘어간 잡은 standby 뒤에도 `executeFire` 에 닿는다. 매니저가 그것을 거절하지만 Quartz
+는 그 트리거를 발화한 것으로 세므로, 그 회차는 어디서도 돌지 않고 misfire 로 다시 시도되지도 않는다.
 
 전형적인 드레인은 `pauseFires()` → `awaitIdle(grace)` → `close()` 다. `close()` 는 예전처럼 트리거를 먼저 내리고
 그다음 `RoutineExecutor.shutdown()` 이 유예를 넘긴 실행을 `SYSTEM_SHUTDOWN` 으로 끊는다. 주의할 것 하나 —

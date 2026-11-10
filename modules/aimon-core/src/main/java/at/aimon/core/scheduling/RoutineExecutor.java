@@ -359,7 +359,14 @@ public class RoutineExecutor {
     }
 
     /**
-     * Executes a routine for the given scheduled task.
+     * Executes a routine for the given scheduled task, outside any scheduled fire — a direct call such as a manual
+     * "run now". Delegates to {@link #execute(ScheduledTask, ScheduledFire)} with {@link ScheduledFire#untimed} fire.
+     *
+     * <p>
+     * <b>Not the scheduler's entry point.</b> {@link ScheduledTaskManager} starts every scheduled run — keyed and
+     * untimed fires alike — through {@link #execute(ScheduledTask, ScheduledFire)}, never through this method. A
+     * subclass or test double that wants to observe or replace scheduled runs must override that method; overriding
+     * only this one sees direct calls alone.
      *
      * @param task
      *            the scheduled task to execute
@@ -367,16 +374,21 @@ public class RoutineExecutor {
      */
     public RoutineResult execute(ScheduledTask task) {
         Objects.requireNonNull(task, "Task cannot be null");
-        return execute(task, null);
+        return execute(task, ScheduledFire.untimed(task.getId()));
     }
 
     /**
-     * Executes a routine for one fire of a scheduled task — {@link #execute(ScheduledTask)}, with the run registered
-     * under the fire's {@link ScheduledFire#getOccurrenceKey() occurrence key} so that
+     * Executes a routine for one fire of a scheduled task, with the run registered under the fire's
+     * {@link ScheduledFire#getOccurrenceKey() occurrence key} so that
      * {@link #interrupt(ScheduledTaskId, String, InterruptReason)} can address it. A fire without a slot
      * ({@link ScheduledFire#untimed}) has no key, and its run is reachable by the task-wide
      * {@link #interrupt(ScheduledTaskId, InterruptReason)} only — exactly like a run started through
      * {@link #execute(ScheduledTask)}.
+     *
+     * <p>
+     * This is the single entry point {@link ScheduledTaskManager} uses for every scheduled run, untimed fires included;
+     * {@link #execute(ScheduledTask)} delegates here too. Override this method, not the one-argument form, to observe
+     * or replace scheduled runs.
      *
      * @param task
      *            the scheduled task to execute (must not be null)
@@ -407,12 +419,21 @@ public class RoutineExecutor {
             result = runRoutine(task, coordinator, executionId, trace);
             return result;
         } finally {
-            trace.close(result);
-            // Deregister before closing, so an interrupt racing this teardown either finds the coordinator and trips
-            // a run that is already unwinding (harmless), or does not find it at all. Closing first would leave a
-            // window where the registry hands out a coordinator that rejects new registrars.
-            deregisterRun(task.getId(), run);
-            coordinator.close();
+            try {
+                trace.close(result);
+            } finally {
+                // Nested, so a Tracer that throws while closing the span cannot leave the run registered: the
+                // in-flight count would stay raised for good, awaitIdle would never see zero and isRunning would
+                // stay true. Deregister before closing, so an interrupt racing this teardown either finds the
+                // coordinator and trips a run that is already unwinding (harmless), or does not find it at all.
+                // Closing first would leave a window where the registry hands out a coordinator that rejects new
+                // registrars.
+                try {
+                    deregisterRun(task.getId(), run);
+                } finally {
+                    coordinator.close();
+                }
+            }
         }
     }
 
@@ -482,7 +503,8 @@ public class RoutineExecutor {
      * @param taskId
      *            the task (must not be null)
      * @param occurrenceKey
-     *            the occurrence to stop, as {@link ScheduledFire#getOccurrenceKey()} gave it (must not be null)
+     *            the occurrence to stop, as {@link ScheduledFire#getOccurrenceKey()} gave it (must not be null or
+     *            blank)
      * @param reason
      *            why (must not be null)
      * @return {@code true} if a run of that occurrence was signalled here, {@code false} if none is in progress on this
@@ -490,11 +512,18 @@ public class RoutineExecutor {
      *         occurrence
      * @throws NullPointerException
      *             if any argument is null
+     * @throws IllegalArgumentException
+     *             if {@code occurrenceKey} is blank
      */
     public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
         Objects.requireNonNull(reason, "Reason cannot be null");
+        if (occurrenceKey.isBlank()) {
+            // A blank key matches no run here, but a bus would carry it and a remote decoder reads blank as task-wide,
+            // so the same call would stop nothing locally and everything remotely. Refuse it at the door.
+            throw new IllegalArgumentException("Occurrence key cannot be blank");
+        }
 
         final Set<InFlightRun> runs = inFlightRuns.get(taskId);
         int signalled = 0;
@@ -550,7 +579,7 @@ public class RoutineExecutor {
         if (timeout.isNegative()) {
             throw new IllegalArgumentException("Timeout cannot be negative: " + timeout);
         }
-        final long deadline = System.nanoTime() + timeout.toNanos();
+        final long deadline = System.nanoTime() + SchedulingDurations.saturatedNanos(timeout);
         synchronized (idleLock) {
             while (inFlightCount > 0) {
                 final long remaining = deadline - System.nanoTime();

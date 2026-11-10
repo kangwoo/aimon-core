@@ -5,6 +5,7 @@
 package at.aimon.core.scheduling;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import java.util.ArrayList;
@@ -128,6 +129,27 @@ class InMemoryScheduledTaskInterruptBusTest {
         bus.publish(taskId, InterruptReason.TASK_CANCELLED);
 
         assertThat(keys).containsExactly("k@1", "task-wide");
+    }
+
+    @Test
+    void aBlankOccurrenceKeyIsRefusedRatherThanDelivered() {
+        final List<String> heard = new ArrayList<>();
+        bus.subscribe(new ScheduledTaskInterruptBus.InterruptListener() {
+            @Override
+            public void onInterruptRequested(ScheduledTaskId id, InterruptReason reason) {
+                heard.add("task-wide");
+            }
+
+            @Override
+            public void onInterruptRequested(ScheduledTaskId id, String key, InterruptReason reason) {
+                heard.add(key);
+            }
+        });
+
+        assertThatIllegalArgumentException().isThrownBy(() -> bus.publish(taskId, "", InterruptReason.TASK_CANCELLED));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> bus.publish(taskId, "  ", InterruptReason.TASK_CANCELLED));
+        assertThat(heard).isEmpty();
     }
 
     @Test

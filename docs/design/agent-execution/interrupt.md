@@ -605,9 +605,16 @@ public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, Interrupt
 `ScheduledFire` 가 slot 을 가지면 그 실행은 `getOccurrenceKey()`(`<taskId>@<slot epoch ms>`) 아래에
 등록되고, 키를 받는 `interrupt` 는 키가 같은 실행만 트립한다. 어긋나면 아무것도 하지 않고 `false` 다.
 slot 이 없는 실행 — `execute(ScheduledTask)` 나 `ScheduledFire.untimed` 로 시작한 것 — 은 키가 없으므로
-태스크 단위 형태로만 닿는다. 매니저는 `executeFire` 에서 키가 있는 발화만 두 인자 `execute` 로 넘기고,
-untimed 발화는 예전처럼 한 인자 `execute(ScheduledTask)` 를 부른다 — 그 메서드를 재정의한 하위 클래스나
-테스트 대역이 보던 것을 그대로 보게 하려는 것이다.
+태스크 단위 형태로만 닿는다. 매니저는 `executeFire` 에서 **모든** 발화를 — 키가 있든 untimed 든 — 두 인자
+`execute(task, fire)` 하나로 넘긴다. 한 인자 `execute(ScheduledTask)` 는 untimed 발화로 두 인자 형태에
+위임하며 직접 호출(수동 실행)용으로만 남는다. 진입점을 둘로 나누면 한 인자 형태만 재정의한 하위 클래스나
+테스트 대역이 cron 발화는 못 보고 untimed 발화만 보게 되어, 어느 쪽도 예전과 같지 않다. 그래서 스케줄된
+실행을 관찰하거나 바꾸려면 두 인자 형태를 재정의한다.
+
+빈(blank) 키는 받지 않는다. `RoutineExecutor.interrupt`, `ScheduledTaskManager.interrupt`, 두 버스의 키 있는
+`publish` 가 모두 `IllegalArgumentException` 을 던진다. 로컬에서는 어떤 실행과도 맞지 않아 아무것도 멈추지
+않지만, 버스를 건넌 쪽은 쓸 수 있는 키가 없는 요청을 태스크 단위로 읽으므로 같은 호출이 원격에서는 태스크의
+모든 실행을 멈추게 되기 때문이다. 코덱이 외부 문서의 빈 키를 태스크 단위로 읽는 관대한 디코딩은 그대로 둔다.
 
 노드를 건너는 쪽은 `ScheduledTaskManager.interrupt(taskId, occurrenceKey, principal)` 이 로컬 트립 뒤에
 `ScheduledTaskInterruptBus.publish(taskId, occurrenceKey, reason)` 으로 방송하고, 엔진의 구독자는
@@ -615,6 +622,11 @@ untimed 발화는 예전처럼 한 인자 `execute(ScheduledTask)` 를 부른다
 두 메서드 모두 **default 가 태스크 단위로 넓힌다** — 키를 실을 자리가 없는 옛 버스와 람다로 쓴 옛
 리스너가 그대로 돌게 하려는 것이며, 정지를 버리는 것보다 넓게 멈추는 쪽을 골랐다. 버스 계약 테스트는
 키가 그대로 건너야 통과하므로, 분산 구현이 default 에 기대면 거기서 실패한다.
+
+default 로 넓히는 버스가 자기가 발행한 요청을 자기에게도 전달한다면(구독 계약상 허용된다 —
+`MongoScheduledTaskInterruptBus` 는 발행 노드를 걸러 내지만 커스텀 버스는 아닐 수 있다) 로컬 쪽도 정확하지
+않다. 매니저가 직접 하는 로컬 트립은 정확하지만, 뒤따라 돌아온 태스크 단위 요청이 이 노드에서 다음 회차의
+실행까지 멈출 수 있다. 요청 전체가 정확한 것은 키를 싣는 버스뿐이다.
 
 `MongoScheduledTaskInterruptBus` 는 키를 문서의 선택 필드 `occurrenceKey` 에 싣는다. 그 필드가 없는 문서
 (옛 노드가 발행한 것)는 태스크 단위로 읽히고, 옛 노드는 새 문서의 그 필드를 무시하고 태스크 단위로
@@ -625,7 +637,10 @@ untimed 발화는 예전처럼 한 인자 `execute(ScheduledTask)` 를 부른다
 워커를 내리는 호스트에게 필요한 것은 "지금 몇 개가 돌고 있나" 와 "끝날 때까지 기다리기" 이고, 어느 것도
 무언가를 끊어서는 안 된다. `RoutineExecutor.inFlightRunCount()` 와 `awaitIdle(Duration)` 은 보기만
 한다 — 타임아웃이 나도 `false` 를 돌려줄 뿐 실행의 신호는 건드리지 않는다. 남은 것을 끊을지는 호스트가
-정하고, 끊는 길은 여전히 `interrupt` 와 `shutdown()`(§12.6) 이다.
+정하고, 끊는 길은 여전히 `interrupt` 와 `shutdown()`(§12.6) 이다. 실행 하나가 끝날 때 트레이서가 루트 스팬을
+닫다가 던지더라도 실행은 레지스트리에서 빠진다 — 해제와 코디네이터 닫기는 중첩된 `finally` 안에 있다. 그렇지
+않으면 진행 중 카운트가 영영 내려가지 않아 `awaitIdle` 이 언제나 타임아웃 나고 `isRunning` 이 계속 `true` 를
+돌려준다. 나노초로 나타낼 수 없을 만큼 큰 타임아웃은 예외 대신 `Long.MAX_VALUE` 로 잘라 그냥 기다린다.
 
 새 실행을 막는 것은 엔진 쪽이다(`SchedulingEngine.pauseFires()`,
 [`llm-scheduling-agent.md` §7.6](../scheduling/llm-scheduling-agent.md#76-노드-드레인--발화를-멈추고-끝나기를-기다린다)).

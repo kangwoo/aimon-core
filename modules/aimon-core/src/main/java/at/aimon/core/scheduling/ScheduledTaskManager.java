@@ -605,18 +605,24 @@ public class ScheduledTaskManager {
      * the next one has started (see {@link RoutineExecutor#interrupt(ScheduledTaskId, String, InterruptReason)}).
      *
      * <p>
-     * A bus implementation that predates occurrence keys widens the broadcast to the whole task on the other nodes
-     * ({@link ScheduledTaskInterruptBus#publish(ScheduledTaskId, String, InterruptReason)}); the local half is always
-     * exact.
+     * A bus implementation that predates occurrence keys widens the request to the whole task
+     * ({@link ScheduledTaskInterruptBus#publish(ScheduledTaskId, String, InterruptReason)} defaults to the task-wide
+     * publish). That widening reaches every node the bus delivers to — and this one too when the bus delivers a
+     * request back to its own publisher (the {@link ScheduledTaskInterruptBus#subscribe subscribe} contract allows it;
+     * the MongoDB bus filters its own requests out, a custom bus may not). With such a bus the local half is not exact
+     * either: the direct local interrupt this method makes is, but the self-delivered task-wide request that follows
+     * may stop the next occurrence's run here as well. Only a bus that carries the key keeps the whole request exact.
      *
      * @param taskId
      *            the task
      * @param occurrenceKey
-     *            the occurrence to stop (must not be null)
+     *            the occurrence to stop (must not be null or blank)
      * @param principal
      *            the principal requesting the interrupt
      * @return {@code true} if the occurrence's run was signalled <b>on this instance</b>; {@code false} does not mean
      *         nothing was stopped, as for {@link #interrupt(ScheduledTaskId, Principal)}
+     * @throws IllegalArgumentException
+     *             if {@code occurrenceKey} is blank
      * @throws TaskNotFoundException
      *             if the task doesn't exist
      * @throws UnauthorizedTaskAccessException
@@ -624,6 +630,9 @@ public class ScheduledTaskManager {
      */
     public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, Principal principal) {
         Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        if (occurrenceKey.isBlank()) {
+            throw new IllegalArgumentException("Occurrence key cannot be blank");
+        }
         getById(taskId, principal);
 
         final boolean signalled = routineExecutor.interrupt(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED);
@@ -950,9 +959,10 @@ public class ScheduledTaskManager {
      * {@link ScheduledFire#untimed} when it had no slot) from the getters and passes it here.
      *
      * <p>
-     * While fires are paused on this node ({@link #pauseFires()}) the fire is refused before the guard is asked, so
-     * the occurrence is not claimed here and stays available to a node that is still accepting — on schedulers whose
-     * triggers fire on every node. Never throws, for the reason given on {@link #executeTask(ScheduledTaskId)}.
+     * While fires are paused on this node ({@link SchedulingEngine#pauseFires()}) the fire is refused before the guard
+     * is asked, so the occurrence is not claimed here and stays available to a node that is still accepting — on
+     * schedulers whose triggers fire on every node. Never throws, for the reason given on
+     * {@link #executeTask(ScheduledTaskId)}.
      *
      * @param fire
      *            the fire to execute
@@ -999,8 +1009,11 @@ public class ScheduledTaskManager {
      * whose trigger fires on one node of the cluster (Quartz on a clustered store) a fire that still lands here is
      * refused and that occurrence is <b>not</b> run anywhere. Use {@link SchedulingEngine#pauseFires()}, which puts
      * the scheduler in standby first and so hands the triggers to the other nodes. Idempotent.
+     *
+     * <p>
+     * Package-private for that reason: calling it alone drops occurrences, so the engine is its only caller.
      */
-    public void pauseFires() {
+    void pauseFires() {
         synchronized (admissionLock) {
             acceptingFires = false;
         }
@@ -1008,7 +1021,7 @@ public class ScheduledTaskManager {
     }
 
     /** Admits fires again after {@link #pauseFires()}. Idempotent. */
-    public void resumeFires() {
+    void resumeFires() {
         synchronized (admissionLock) {
             acceptingFires = true;
         }
@@ -1020,7 +1033,7 @@ public class ScheduledTaskManager {
      *
      * @return {@code false} between {@link #pauseFires()} and {@link #resumeFires()}
      */
-    public boolean isAcceptingFires() {
+    boolean isAcceptingFires() {
         synchronized (admissionLock) {
             return acceptingFires;
         }
@@ -1038,12 +1051,12 @@ public class ScheduledTaskManager {
      * @throws InterruptedException
      *             if the calling thread is interrupted while waiting
      */
-    public boolean awaitIdle(Duration timeout) throws InterruptedException {
+    boolean awaitIdle(Duration timeout) throws InterruptedException {
         Objects.requireNonNull(timeout, "Timeout cannot be null");
         if (timeout.isNegative()) {
             throw new IllegalArgumentException("Timeout cannot be negative: " + timeout);
         }
-        final long deadline = System.nanoTime() + timeout.toNanos();
+        final long deadline = System.nanoTime() + SchedulingDurations.saturatedNanos(timeout);
         synchronized (admissionLock) {
             while (admittedFires > 0) {
                 final long remaining = deadline - System.nanoTime();
@@ -1086,12 +1099,10 @@ public class ScheduledTaskManager {
                 return;
             }
 
-            // Only a fire with a slot has an occurrence to register under. An untimed fire keeps the one-argument call,
-            // so an executor subclass or test double that overrides execute(ScheduledTask) still sees every run that
-            // carries nothing more than it did before.
-            final RoutineResult result = fire.getOccurrenceKey().isPresent()
-                    ? routineExecutor.execute(task, fire)
-                    : routineExecutor.execute(task);
+            // One entry point for every scheduled run, keyed or untimed: the executor registers a keyed fire under its
+            // occurrence key and an untimed one under none. A subclass or test double observing scheduled runs
+            // overrides execute(ScheduledTask, ScheduledFire); the one-argument form is for direct calls only.
+            final RoutineResult result = routineExecutor.execute(task, fire);
 
             // Record the run. Conditional, not a blind save: the task can be cancelled while this run is in flight —
             // that is now the normal case rather than a rare one, since cancelling interrupts the run — and a plain

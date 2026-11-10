@@ -148,10 +148,23 @@ public final class SchedulingEngine implements AutoCloseable {
      * On one node of several whose scheduler is not shared, the stored tasks are <b>not</b> scheduled
      * ({@link #rehydratesAtStart()}).
      * </p>
+     *
+     * <p>
+     * A {@link #pauseFires()} made before this call stays in effect: a scheduler that remembers the pause starts
+     * straight into it (owned Quartz is left in standby, the in-memory scheduler skips due occurrences), and the pause
+     * is asked for again right after the scheduler starts, for one that does not. Without that, a clustered scheduler
+     * would acquire triggers the paused manager then refuses, and those occurrences would run nowhere.
+     * </p>
      */
     public void start() {
         final List<ScheduledTask> stored = rehydrateAtStart ? taskManager.readStoredEnabled() : List.of();
         taskScheduler.start();
+        if (!taskManager.isAcceptingFires()) {
+            // Idempotent on a scheduler that already started into the pause; for one that ignored a pause asked for
+            // before it started, this closes the window as soon as it can.
+            taskScheduler.pauseFiring();
+            log.info("Scheduling engine starting with fires paused on this node");
+        }
         if (rehydrateAtStart) {
             taskManager.scheduleStored(stored);
         }
@@ -254,9 +267,13 @@ public final class SchedulingEngine implements AutoCloseable {
      * <p>
      * Two halves, in this order. The scheduler is asked to stop firing on this node
      * ({@link TaskScheduler#pauseFiring()}, a Quartz standby, so on a clustered store another node takes the triggers);
-     * then the manager refuses every fire that still arrives ({@link ScheduledTaskManager#pauseFires()}), including a
-     * host's own {@code executeFire} calls. Once this returns no new run starts here, and {@link #awaitIdle(Duration)}
-     * sees every run that did.
+     * then the manager refuses every fire that still arrives, including a host's own
+     * {@link ScheduledTaskManager#executeFire executeFire} calls. The manager's half runs even when the scheduler's
+     * throws (the exception is then rethrown), so a failed standby never leaves the node admitting fires. Once this
+     * returns — normally or not — no new run starts here, and {@link #awaitIdle(Duration)} sees every run that did.
+     *
+     * <p>
+     * May be called before {@link #start()}: the engine then starts with fires paused.
      *
      * <p>
      * A fire the scheduler had already dispatched when it paused either got in first (and is waited for) or is refused.
@@ -269,8 +286,12 @@ public final class SchedulingEngine implements AutoCloseable {
      * honoured while paused.
      */
     public void pauseFires() {
-        final boolean schedulerPaused = taskScheduler.pauseFiring();
-        taskManager.pauseFires();
+        final boolean schedulerPaused;
+        try {
+            schedulerPaused = taskScheduler.pauseFiring();
+        } finally {
+            taskManager.pauseFires();
+        }
         log.info("Scheduling engine paused fires on this node (scheduler paused: {}); {} routine run(s) in progress",
                 schedulerPaused, routineExecutor.inFlightRunCount());
     }
@@ -313,7 +334,7 @@ public final class SchedulingEngine implements AutoCloseable {
      */
     public boolean awaitIdle(Duration timeout) throws InterruptedException {
         Objects.requireNonNull(timeout, "Timeout cannot be null");
-        final long deadline = System.nanoTime() + timeout.toNanos();
+        final long deadline = System.nanoTime() + SchedulingDurations.saturatedNanos(timeout);
         if (!taskManager.awaitIdle(timeout)) {
             return false;
         }

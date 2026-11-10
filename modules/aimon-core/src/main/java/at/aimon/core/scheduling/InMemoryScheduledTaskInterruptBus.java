@@ -60,6 +60,10 @@ public final class InMemoryScheduledTaskInterruptBus implements ScheduledTaskInt
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
         Objects.requireNonNull(reason, "Reason cannot be null");
+        if (occurrenceKey.isBlank()) {
+            // A blank key names no occurrence: a receiver would read it as task-wide and stop every run of the task.
+            throw new IllegalArgumentException("Occurrence key cannot be blank");
+        }
 
         for (InterruptListener listener : listeners) {
             try {

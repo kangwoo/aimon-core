@@ -99,7 +99,9 @@ public interface ScheduledTaskInterruptBus {
      * @param taskId
      *            the task (must not be null)
      * @param occurrenceKey
-     *            the occurrence to stop (must not be null)
+     *            the occurrence to stop (must not be null or blank — a blank key names no occurrence, and a receiver
+     *            would read it as task-wide; an implementation that carries the key throws
+     *            {@link IllegalArgumentException} for it)
      * @param reason
      *            why (must not be null)
      */
