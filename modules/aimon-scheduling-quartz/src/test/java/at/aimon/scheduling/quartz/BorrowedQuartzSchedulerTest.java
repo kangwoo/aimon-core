@@ -81,6 +81,19 @@ class BorrowedQuartzSchedulerTest {
     }
 
     @Test
+    @DisplayName("pausing fires leaves the application's scheduler running and says it could not pause")
+    void pauseFiringLeavesTheApplicationSchedulerAlone() throws Exception {
+        final QuartzTaskScheduler borrowed = QuartzTaskScheduler.borrowing(application, executor);
+        borrowed.start();
+
+        assertThat(borrowed.pauseFiring()).isFalse();
+        assertThat(application.isInStandbyMode()).isFalse();
+        borrowed.resumeFiring();
+        assertThat(application.isStarted()).isTrue();
+        borrowed.shutdown();
+    }
+
+    @Test
     @DisplayName("shutdown removes AIMON's jobs rather than leaving them to fire against nothing")
     void shutdownRemovesOnlyAimonsJobs() throws Exception {
         final QuartzTaskScheduler borrowed = QuartzTaskScheduler.borrowing(application, executor);

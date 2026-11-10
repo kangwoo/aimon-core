@@ -77,6 +77,7 @@ import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.scheduling.event.TaskHaltedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
@@ -150,6 +151,19 @@ import at.aimon.core.tracing.Tracer;
  * running the work. In a scale-out deployment a run on another node is reported as "nothing running here" rather than
  * stopped, the same limitation {@code TaskStop} carries for background subagent tasks.
  *
+ * <p>
+ * <b>One occurrence, not the task.</b> A run started for a {@link ScheduledFire} that carries a slot
+ * ({@link #execute(ScheduledTask, ScheduledFire)}) is registered under the fire's occurrence key, and
+ * {@link #interrupt(ScheduledTaskId, String, InterruptReason)} stops only that run — a cancel aimed at an occurrence
+ * that arrives after it finished is a no-op instead of stopping the next occurrence's run.
+ *
+ * <h2>Draining</h2>
+ *
+ * <p>
+ * {@link #inFlightRunCount()} and {@link #awaitIdle(Duration)} let a host drain a node without tearing anything down:
+ * they only watch. Stopping new fires is the engine's half ({@link SchedulingEngine#pauseFires()}); {@link #shutdown()}
+ * remains the destructive end, which interrupts whatever is still running.
+ *
  * <h2>Tracing</h2>
  *
  * <p>
@@ -218,8 +232,21 @@ public class RoutineExecutor {
      * a caller that wants overlap ({@link ScheduledExecutionGuard#ALLOW_ALL}). Keying on the task and holding every
      * run under it means an interrupt stops all of that task's work here, which is what the request asks for, however
      * many runs the guard let through.
+     *
+     * <p>
+     * Each entry also remembers the occurrence it runs ({@link ScheduledFire#getOccurrenceKey()}), so
+     * {@link #interrupt(ScheduledTaskId, String, InterruptReason)} can stop one occurrence and leave the next alone.
      */
-    private final Map<ScheduledTaskId, Set<InterruptCoordinator>> inFlightRuns = new ConcurrentHashMap<>();
+    private final Map<ScheduledTaskId, Set<InFlightRun>> inFlightRuns = new ConcurrentHashMap<>();
+
+    /**
+     * How many runs are in progress here, across every task; guarded by {@link #idleLock}, which
+     * {@link #awaitIdle(Duration)} waits on. A count beside the map rather than a sum over it, so a waiter can be woken
+     * exactly when it reaches zero.
+     */
+    private int inFlightCount;
+
+    private final Object idleLock = new Object();
 
     /**
      * Records a ROUTINE span per run and a TOOL span per step attempt. Defaults to {@link Tracer#noop()}; wired via
@@ -340,13 +367,41 @@ public class RoutineExecutor {
      */
     public RoutineResult execute(ScheduledTask task) {
         Objects.requireNonNull(task, "Task cannot be null");
+        return execute(task, null);
+    }
+
+    /**
+     * Executes a routine for one fire of a scheduled task — {@link #execute(ScheduledTask)}, with the run registered
+     * under the fire's {@link ScheduledFire#getOccurrenceKey() occurrence key} so that
+     * {@link #interrupt(ScheduledTaskId, String, InterruptReason)} can address it. A fire without a slot
+     * ({@link ScheduledFire#untimed}) has no key, and its run is reachable by the task-wide
+     * {@link #interrupt(ScheduledTaskId, InterruptReason)} only — exactly like a run started through
+     * {@link #execute(ScheduledTask)}.
+     *
+     * @param task
+     *            the scheduled task to execute (must not be null)
+     * @param fire
+     *            the fire this run serves, or {@code null} when there is none; when present its task id must be
+     *            {@code task}'s
+     * @return the routine execution result
+     * @throws IllegalArgumentException
+     *             if {@code fire} names a different task
+     */
+    public RoutineResult execute(ScheduledTask task, ScheduledFire fire) {
+        Objects.requireNonNull(task, "Task cannot be null");
+        if (fire != null && !fire.getTaskId().equals(task.getId())) {
+            throw new IllegalArgumentException(
+                    "Fire " + fire + " does not belong to task '" + task.getId() + "'; refusing to run it");
+        }
+        final String occurrenceKey = fire == null ? null : fire.getOccurrenceKey().orElse(null);
 
         // Minted here rather than with the step context so the run's root span can name it too.
         final ExecutionId executionId = ExecutionId.generate("routine:" + task.getId());
         // Snapshot the volatile tracing fields once, so one run traces consistently.
         final RoutineTrace trace = RoutineTrace.open(tracer, tracePayloadPolicy, task, executionId);
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
-        registerRun(task.getId(), coordinator);
+        final InFlightRun run = new InFlightRun(coordinator, occurrenceKey);
+        registerRun(task.getId(), run);
         RoutineResult result = null;
         try {
             result = runRoutine(task, coordinator, executionId, trace);
@@ -356,7 +411,7 @@ public class RoutineExecutor {
             // Deregister before closing, so an interrupt racing this teardown either finds the coordinator and trips
             // a run that is already unwinding (harmless), or does not find it at all. Closing first would leave a
             // window where the registry hands out a coordinator that rejects new registrars.
-            deregisterRun(task.getId(), coordinator);
+            deregisterRun(task.getId(), run);
             coordinator.close();
         }
     }
@@ -383,15 +438,15 @@ public class RoutineExecutor {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(reason, "Reason cannot be null");
 
-        final Set<InterruptCoordinator> runs = inFlightRuns.get(taskId);
+        final Set<InFlightRun> runs = inFlightRuns.get(taskId);
         if (runs == null || runs.isEmpty()) {
             log.debug("No in-flight run of task '{}' on this instance; interrupt({}) is a no-op", taskId, reason);
             return false;
         }
 
         int signalled = 0;
-        for (InterruptCoordinator coordinator : runs) {
-            coordinator.requestInterrupt(reason);
+        for (InFlightRun run : runs) {
+            run.coordinator.requestInterrupt(reason);
             signalled++;
         }
 
@@ -407,6 +462,108 @@ public class RoutineExecutor {
     }
 
     /**
+     * Interrupts the run of one occurrence of {@code taskId} — the one started for the fire whose
+     * {@link ScheduledFire#getOccurrenceKey() occurrence key} is {@code occurrenceKey} — if it is in progress <b>on
+     * this instance</b>.
+     *
+     * <p>
+     * Differs from {@link #interrupt(ScheduledTaskId, InterruptReason)} in what happens when the named occurrence is no
+     * longer the running one. The task-wide form stops whatever of the task is running now — correct for an owner
+     * stopping a wedged task or a node shutting down, wrong for a host cancelling the occurrence it queued: by the time
+     * the request arrives, possibly across the bus, that occurrence may have finished and the next one started, and the
+     * task-wide form would stop that one instead. This form compares the key against each run's and does nothing on a
+     * mismatch.
+     *
+     * <p>
+     * A run started without a slot — through {@link #execute(ScheduledTask)}, or for a {@link ScheduledFire#untimed}
+     * fire — has no occurrence key and is never matched here; only the task-wide form reaches it. Cooperative in the
+     * same senses as the task-wide form.
+     *
+     * @param taskId
+     *            the task (must not be null)
+     * @param occurrenceKey
+     *            the occurrence to stop, as {@link ScheduledFire#getOccurrenceKey()} gave it (must not be null)
+     * @param reason
+     *            why (must not be null)
+     * @return {@code true} if a run of that occurrence was signalled here, {@code false} if none is in progress on this
+     *         instance — because it has finished, has not started, runs on another node, or the key names another
+     *         occurrence
+     * @throws NullPointerException
+     *             if any argument is null
+     */
+    public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+        Objects.requireNonNull(taskId, "Task ID cannot be null");
+        Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        Objects.requireNonNull(reason, "Reason cannot be null");
+
+        final Set<InFlightRun> runs = inFlightRuns.get(taskId);
+        int signalled = 0;
+        if (runs != null) {
+            for (InFlightRun run : runs) {
+                if (occurrenceKey.equals(run.occurrenceKey)) {
+                    run.coordinator.requestInterrupt(reason);
+                    signalled++;
+                }
+            }
+        }
+        if (signalled == 0) {
+            log.debug("No in-flight run of occurrence '{}' of task '{}' on this instance; interrupt({}) is a no-op",
+                    occurrenceKey, taskId, reason);
+            return false;
+        }
+        log.info("Interrupted the in-flight run of occurrence '{}' of task '{}' ({})", occurrenceKey, taskId, reason);
+        return true;
+    }
+
+    /**
+     * Returns how many routine runs are in progress on this instance, across every task. For a host draining a node:
+     * reading it changes nothing, and the answer can change the moment it is read, so pair it with
+     * {@link #awaitIdle(Duration)} rather than polling it into control flow.
+     *
+     * @return the number of runs in progress here
+     */
+    public int inFlightRunCount() {
+        synchronized (idleLock) {
+            return inFlightCount;
+        }
+    }
+
+    /**
+     * Waits until no routine run is in progress on this instance, or until {@code timeout} has passed — whichever
+     * comes first. <b>Nothing is interrupted</b>: this only watches. A host draining a worker stops new fires first
+     * ({@link SchedulingEngine#pauseFires()}), then waits here, and only once this returns {@code false} decides
+     * whether to stop what is left ({@link #interrupt(ScheduledTaskId, InterruptReason)}, or the engine's
+     * {@link SchedulingEngine#close() close()}).
+     *
+     * <p>
+     * Idle is a moment, not a state: unless new fires are refused, a run may start the instant this returns
+     * {@code true}.
+     *
+     * @param timeout
+     *            how long to wait at most (must not be null or negative; zero checks without waiting)
+     * @return {@code true} if no run was in progress when this returned, {@code false} if the timeout passed first
+     * @throws InterruptedException
+     *             if the calling thread is interrupted while waiting
+     */
+    public boolean awaitIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout, "Timeout cannot be null");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("Timeout cannot be negative: " + timeout);
+        }
+        final long deadline = System.nanoTime() + timeout.toNanos();
+        synchronized (idleLock) {
+            while (inFlightCount > 0) {
+                final long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                TimeUnit.NANOSECONDS.timedWait(idleLock, remaining);
+            }
+            return true;
+        }
+    }
+
+    /**
      * Reports whether a run of {@code taskId} is in progress on this instance. Intended for tests and diagnostics —
      * do not gate control flow on it, since the answer can change between the read and the act.
      *
@@ -416,17 +573,33 @@ public class RoutineExecutor {
      */
     public boolean isRunning(ScheduledTaskId taskId) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
-        final Set<InterruptCoordinator> runs = inFlightRuns.get(taskId);
+        final Set<InFlightRun> runs = inFlightRuns.get(taskId);
         return runs != null && !runs.isEmpty();
     }
 
-    private void registerRun(ScheduledTaskId taskId, InterruptCoordinator coordinator) {
-        inFlightRuns.computeIfAbsent(taskId, id -> ConcurrentHashMap.newKeySet()).add(coordinator);
+    private void registerRun(ScheduledTaskId taskId, InFlightRun run) {
+        synchronized (idleLock) {
+            inFlightCount++;
+        }
+        inFlightRuns.computeIfAbsent(taskId, id -> ConcurrentHashMap.newKeySet()).add(run);
     }
 
-    private void deregisterRun(ScheduledTaskId taskId, InterruptCoordinator coordinator) {
+    private void deregisterRun(ScheduledTaskId taskId, InFlightRun run) {
+        try {
+            removeRun(taskId, run);
+        } finally {
+            synchronized (idleLock) {
+                inFlightCount--;
+                if (inFlightCount == 0) {
+                    idleLock.notifyAll();
+                }
+            }
+        }
+    }
+
+    private void removeRun(ScheduledTaskId taskId, InFlightRun run) {
         inFlightRuns.computeIfPresent(taskId, (id, runs) -> {
-            runs.remove(coordinator);
+            runs.remove(run);
             // Drop the entry rather than leaving an empty set behind: the map is keyed by task id and a long-lived
             // engine would otherwise accumulate one entry per task ever fired.
             return runs.isEmpty() ? null : runs;
@@ -434,9 +607,9 @@ public class RoutineExecutor {
     }
 
     private void interruptAll(InterruptReason reason) {
-        for (Set<InterruptCoordinator> runs : inFlightRuns.values()) {
-            for (InterruptCoordinator coordinator : runs) {
-                coordinator.requestInterrupt(reason);
+        for (Set<InFlightRun> runs : inFlightRuns.values()) {
+            for (InFlightRun run : runs) {
+                run.coordinator.requestInterrupt(reason);
             }
         }
     }
@@ -1229,6 +1402,21 @@ public class RoutineExecutor {
         } catch (InterruptedException e) {
             timeoutExecutor.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * One run in the in-flight registry: its coordinator, and the occurrence it serves ({@code null} for a run started
+     * without a slot). Identity equality on purpose — two runs of the same occurrence, which an
+     * {@link ScheduledExecutionGuard#ALLOW_ALL} guard lets through, are two entries.
+     */
+    private static final class InFlightRun {
+        private final InterruptCoordinator coordinator;
+        private final String occurrenceKey;
+
+        InFlightRun(InterruptCoordinator coordinator, String occurrenceKey) {
+            this.coordinator = coordinator;
+            this.occurrenceKey = occurrenceKey;
         }
     }
 

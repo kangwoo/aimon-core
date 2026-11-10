@@ -62,6 +62,50 @@ current Sonnet, and the client is made to work with the 5.5 generation's breakin
 - **Build only:** the real-model E2E defaults to `claude-haiku-5-5` with `maxTokens` 16000; the adaptive live suite runs
   on `claude-sonnet-5-5`; new gated live test `AnthropicThinkingBindingLiveTest`.
 
+### Added: occurrence-targeted routine interrupt and node drain for scheduling
+
+A host that splits API servers from workers can now cancel one queued fire without hitting the next one, and drain a
+worker without killing the routines it is running. All additive: existing calls keep their behaviour. Design:
+`docs/design/agent-execution/interrupt.md` §12.8–§12.9, `docs/design/scheduling/llm-scheduling-agent.md` §6.1, §7.6.
+
+- **Added: `RoutineExecutor.execute(ScheduledTask, ScheduledFire)` and
+  `interrupt(ScheduledTaskId, String occurrenceKey, InterruptReason)`.** A run started for a fire with a slot is
+  registered under `ScheduledFire.getOccurrenceKey()`; the keyed interrupt trips only that run and is a no-op on a
+  mismatch, so a cancel that arrives after its occurrence finished no longer stops the next occurrence's run (the
+  scheduling counterpart of `SessionRouter.interrupt(SessionId, TurnId, …)`). Runs without a slot (`execute(task)`,
+  `ScheduledFire.untimed`) have no key and are reached by the task-wide form only, which is unchanged.
+  `ScheduledTaskManager.executeFire` passes keyed fires through; untimed fires still call `execute(ScheduledTask)`, so
+  subclasses and test doubles overriding it see what they saw before.
+- **Added: `ScheduledTaskManager.interrupt(ScheduledTaskId, String occurrenceKey, Principal)`** — authorizes, trips the
+  local run of that occurrence, and broadcasts the keyed request.
+- **Added (SPI, default methods): `ScheduledTaskInterruptBus.publish(taskId, occurrenceKey, reason)` and
+  `InterruptListener.onInterruptRequested(taskId, occurrenceKey, reason)`.** Both defaults widen to the task-wide
+  method, so buses and lambda listeners written before keys keep compiling and keep stopping what they always stopped —
+  over-stopping is chosen over dropping a stop. `InMemoryScheduledTaskInterruptBus` and `MongoScheduledTaskInterruptBus`
+  carry the key; `SchedulingEngine`'s subscriber routes it to the keyed interrupt. `AbstractScheduledTaskInterruptBusContractTest`
+  gains two cases — the key crosses intact (a backend relying on the widening default fails it), and a late keyed
+  cancel from another node spares the next occurrence.
+- **Added: drain visibility.** `RoutineExecutor.inFlightRunCount()` / `awaitIdle(Duration)` and
+  `SchedulingEngine.inFlightRunCount()` / `awaitIdle(Duration)` only watch — a timeout returns `false` and interrupts
+  nothing. `SchedulingEngine.pauseFires()` / `resumeFires()` / `isAcceptingFires()` stop this node from starting new
+  runs without closing anything: the scheduler stops firing here (`TaskScheduler.pauseFiring()` /
+  `resumeFiring()`, new default methods returning "cannot pause"; in-memory scheduler skips due occurrences, owned
+  Quartz goes to node-local `standby()`, borrowed Quartz is left alone), then `ScheduledTaskManager.pauseFires()`
+  refuses any fire that still arrives — before the execution guard, so the occurrence is not claimed here. Typical
+  drain: `pauseFires()` → `awaitIdle(grace)` → `close()`.
+- **Verified: `ScheduledFire` round-trips for host persistence.** `getTaskId()` / `getScheduledFireTime()` /
+  `getSlot()` rebuilt with `ScheduledFire.of(...)` (or `untimed`) give an equal fire with the same occurrence key, also
+  for a fire folded with `onGrid`; pinned by `ScheduledFireTest`. No API change was needed.
+- **Migration notes** — wire format: `MongoScheduledTaskInterruptBus` documents gain an optional `occurrenceKey` field.
+  Old documents (no field) decode as task-wide; a node on the previous release reading a keyed document ignores the
+  field and stops every run of the task, so during a rolling upgrade a keyed cancel may stop more than asked but is
+  never lost. No DDL change. A custom `ScheduledTaskInterruptBus` keeps working unchanged but widens keyed requests to
+  the task until it overrides the new `publish`. With a scheduler that cannot pause (a borrowed Quartz, or one without
+  `pauseFiring`), a cluster-wide trigger landing on a paused node is refused and that occurrence runs nowhere — standby
+  the application's scheduler yourself. Owned Quartz waits for running jobs on `shutdown` by default, so `close()` after
+  a timed-out `awaitIdle` blocks on what is left; build with `waitForJobsOnShutdown(false)` to have it interrupted
+  instead.
+
 ### Changed: PTC last polish — inline-skill span reason, spaced host paths, live E2E answer check
 
 Closes backlog TC-32 (registered and closed here) and the PTC wrap-up review's remaining non-blocking findings. No

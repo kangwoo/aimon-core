@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.scheduling.event.ScheduledTaskEventListener;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
@@ -112,7 +113,19 @@ public final class SchedulingEngine implements AutoCloseable {
         // Subscribe through the parameter, not the field: a method reference on `this.routineExecutor` would publish a
         // half-built `this` to a bus that may already be delivering. Honouring a request is just the local interrupt,
         // whose answer (did anything stop here?) a fan-out has nowhere to return, so it is discarded on purpose.
-        interruptSubscription = interruptBus.subscribe(routineExecutor::interrupt);
+        // Both halves of the listener are wired: a request naming an occurrence must reach the occurrence-targeted
+        // interrupt, or the default would widen it to every run of the task here.
+        interruptSubscription = interruptBus.subscribe(new ScheduledTaskInterruptBus.InterruptListener() {
+            @Override
+            public void onInterruptRequested(ScheduledTaskId taskId, InterruptReason reason) {
+                routineExecutor.interrupt(taskId, reason);
+            }
+
+            @Override
+            public void onInterruptRequested(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+                routineExecutor.interrupt(taskId, occurrenceKey, reason);
+            }
+        });
 
         log.debug("Scheduling engine created");
     }
@@ -231,6 +244,81 @@ public final class SchedulingEngine implements AutoCloseable {
         taskScheduler.shutdown();
         routineExecutor.shutdown();
         log.info("Scheduling engine stopped");
+    }
+
+    /**
+     * Stops this node from starting new routine runs, leaving the runs already in progress alone — the first step of
+     * draining a worker. Nothing is closed or interrupted, and the engine stays application-scoped and alive:
+     * {@link #resumeFires()} undoes it.
+     *
+     * <p>
+     * Two halves, in this order. The scheduler is asked to stop firing on this node
+     * ({@link TaskScheduler#pauseFiring()}, a Quartz standby, so on a clustered store another node takes the triggers);
+     * then the manager refuses every fire that still arrives ({@link ScheduledTaskManager#pauseFires()}), including a
+     * host's own {@code executeFire} calls. Once this returns no new run starts here, and {@link #awaitIdle(Duration)}
+     * sees every run that did.
+     *
+     * <p>
+     * A fire the scheduler had already dispatched when it paused either got in first (and is waited for) or is refused.
+     * Refused is dropped on this node; with a scheduler that could not pause (a borrowed Quartz scheduler, or one
+     * without {@code pauseFiring}), a cluster-wide trigger that keeps landing here is dropped the same way.
+     *
+     * <p>
+     * A typical drain: {@code pauseFires()}, then {@code awaitIdle(grace)}, then {@link #close()} — which interrupts
+     * whatever outlived the grace period with {@code SYSTEM_SHUTDOWN}. Cancellation requests from the bus are still
+     * honoured while paused.
+     */
+    public void pauseFires() {
+        final boolean schedulerPaused = taskScheduler.pauseFiring();
+        taskManager.pauseFires();
+        log.info("Scheduling engine paused fires on this node (scheduler paused: {}); {} routine run(s) in progress",
+                schedulerPaused, routineExecutor.inFlightRunCount());
+    }
+
+    /** Starts accepting fires on this node again after {@link #pauseFires()}. */
+    public void resumeFires() {
+        taskManager.resumeFires();
+        taskScheduler.resumeFiring();
+        log.info("Scheduling engine resumed fires on this node");
+    }
+
+    /**
+     * Whether this node accepts fires.
+     *
+     * @return {@code false} between {@link #pauseFires()} and {@link #resumeFires()}
+     */
+    public boolean isAcceptingFires() {
+        return taskManager.isAcceptingFires();
+    }
+
+    /**
+     * Returns how many routine runs are in progress on this node ({@link RoutineExecutor#inFlightRunCount()}).
+     *
+     * @return the number of runs in progress here
+     */
+    public int inFlightRunCount() {
+        return routineExecutor.inFlightRunCount();
+    }
+
+    /**
+     * Waits, without interrupting anything, until no fire admitted on this node is still in progress and no routine
+     * run is in progress here, or until {@code timeout} has passed. Call it after {@link #pauseFires()}; otherwise a
+     * new run may begin the moment it returns.
+     *
+     * @param timeout
+     *            how long to wait at most in total (must not be null or negative)
+     * @return {@code true} if this node was idle when it returned, {@code false} if the timeout passed first
+     * @throws InterruptedException
+     *             if the calling thread is interrupted while waiting
+     */
+    public boolean awaitIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout, "Timeout cannot be null");
+        final long deadline = System.nanoTime() + timeout.toNanos();
+        if (!taskManager.awaitIdle(timeout)) {
+            return false;
+        }
+        final long remaining = Math.max(0, deadline - System.nanoTime());
+        return routineExecutor.awaitIdle(Duration.ofNanos(remaining));
     }
 
     /**

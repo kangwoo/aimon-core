@@ -81,6 +81,47 @@ class ScheduledTaskInterruptCodecTest {
     }
 
     @Test
+    @DisplayName("an occurrence key survives encode → decode under its frozen wire key")
+    void occurrenceKeyRoundTrip() {
+        final Document doc = codec.encode(ScheduledTaskId.of("task-6"), "task-6@1767258000000",
+                InterruptReason.TASK_CANCELLED, "node-A");
+
+        // FROZEN WIRE FORMAT, spelled out for the reason given on wireKeysAreFrozen.
+        assertThat(doc.getString("occurrenceKey")).isEqualTo("task-6@1767258000000");
+        assertThat(codec.decode(doc).getOccurrenceKey()).contains("task-6@1767258000000");
+    }
+
+    @Test
+    @DisplayName("a task-wide request carries no occurrence key on the wire")
+    void taskWideRequestOmitsTheOccurrenceKey() {
+        final Document doc = codec.encode(ScheduledTaskId.of("task-7"), InterruptReason.TASK_CANCELLED, "node-A");
+
+        assertThat(doc.containsKey("occurrenceKey")).isFalse();
+        assertThat(codec.decode(doc).getOccurrenceKey()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a request from a node that predates occurrence keys decodes as task-wide")
+    void requestWithoutOccurrenceKeyDecodesAsTaskWide() {
+        final Document fromOlderNode = new Document("taskId", "task-8").append("reason", "TASK_CANCELLED")
+                .append("originNodeId", "node-B");
+
+        final ScheduledTaskInterruptCodec.Decoded decoded = codec.decode(fromOlderNode);
+
+        assertThat(decoded.getTaskId()).isEqualTo(ScheduledTaskId.of("task-8"));
+        assertThat(decoded.getOccurrenceKey()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a blank or non-string occurrence key is read as task-wide rather than dropping the stop")
+    void malformedOccurrenceKeyDecodesAsTaskWide() {
+        assertThat(codec.decode(new Document("taskId", "task-9").append("occurrenceKey", " ")).getOccurrenceKey())
+                .isEmpty();
+        assertThat(codec.decode(new Document("taskId", "task-9").append("occurrenceKey", 42)).getOccurrenceKey())
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("a request naming no task is rejected — there is nothing to stop")
     void missingTaskIdIsRejected() {
         assertThatThrownBy(() -> codec.decode(new Document("reason", "TASK_CANCELLED")))

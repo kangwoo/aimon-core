@@ -421,6 +421,51 @@ public class QuartzTaskScheduler implements TaskScheduler {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * An owned scheduler goes into Quartz {@linkplain Scheduler#standby() standby}: this node stops acquiring triggers,
+     * jobs already executing carry on, and on a clustered job store the other nodes keep firing the shared triggers.
+     * Standby is node-local — unlike {@code pauseJobs}, whose paused state a clustered store shares with every node.
+     * On a RAM store, triggers missed during standby are handled by their misfire policy on resume (fire-and-proceed:
+     * one catch-up fire). A borrowed scheduler belongs to the application, which may run its own jobs on it, so it is
+     * left alone and this returns {@code false}; standby it from the application if that is what draining means there.
+     */
+    @Override
+    public boolean pauseFiring() {
+        if (!ownsScheduler) {
+            LOGGER.info("Not pausing borrowed Quartz scheduler — it belongs to the application; fires reaching AIMON"
+                    + " are refused by the task manager instead");
+            return false;
+        }
+        if (!running.get()) {
+            return false;
+        }
+        try {
+            scheduler.standby();
+            LOGGER.info("Quartz task scheduler in standby: this node no longer acquires triggers");
+            return true;
+        } catch (SchedulerException e) {
+            throw new TaskSchedulerException("Failed to put the scheduler in standby", e);
+        }
+    }
+
+    @Override
+    public void resumeFiring() {
+        if (!ownsScheduler || !running.get()) {
+            return;
+        }
+        try {
+            if (scheduler.isInStandbyMode()) {
+                scheduler.start();
+                LOGGER.info("Quartz task scheduler resumed from standby");
+            }
+        } catch (SchedulerException e) {
+            throw new TaskSchedulerException("Failed to resume the scheduler from standby", e);
+        }
+    }
+
+    /**
      * Registers the executor this scheduler dispatches to, refusing to displace another stack's.
      *
      * <p>

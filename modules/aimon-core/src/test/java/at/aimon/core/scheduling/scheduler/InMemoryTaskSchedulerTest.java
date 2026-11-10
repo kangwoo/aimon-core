@@ -50,6 +50,19 @@ class InMemoryTaskSchedulerTest {
     }
 
     @Test
+    void pausingFiringKeepsTriggersArmedAndResumes() {
+        scheduler.start();
+        final ScheduledTaskId id = ScheduledTaskId.of("paused");
+        scheduler.scheduleRecurrently(id, "* * * * *");
+
+        assertThat(scheduler.pauseFiring()).isTrue();
+        assertThat(scheduler.pauseFiring()).isTrue();
+        assertThat(scheduler.exists(id)).isTrue();
+        scheduler.resumeFiring();
+        assertThat(scheduler.exists(id)).isTrue();
+    }
+
+    @Test
     void schedulingBeforeStartIsRejected() {
         assertThatThrownBy(() -> scheduler.scheduleRecurrently(ScheduledTaskId.of("t"), "* * * * *"))
                 .isInstanceOf(TaskSchedulerException.class).hasMessageContaining("not running");
