@@ -170,10 +170,8 @@ public final class SkillPreflightScanner {
         // The channel-invocation guard requires a non-null agentRuntimeId because SkillApprovalChannel.requestApproval
         // is documented to receive a non-null agentRuntimeId (it scopes AgentApprovalStore writes). scan() itself
         // accepts a nullable agentRuntimeId for system/scheduled paths; in that case we skip the channel entirely and
-        // let
-        // the suspend path handle it — the SK-11.4 flow does not require a agentRuntimeId because the registry
-        // generates
-        // a fresh PendingTurnId on its own.
+        // let the suspend path handle it — the SK-11.4 flow does not require a agentRuntimeId because the registry
+        // generates a fresh PendingTurnId on its own.
         if (approvalChannel != null && agentRuntimeId != null) {
             // SK-11.6: resolve inline. The channel writes ALLOW/DENY through the AgentApprovalStore (or whatever
             // backing the policy chain consults), so by the time SkillTool.execute() runs the per-call check it sees

@@ -146,11 +146,28 @@ class AnthropicGatewayCredentialsTest {
     @Test
     @DisplayName("a gateway's 400 names the API version and Bedrock's limit, as a possibility")
     void aRefusedRequestNamesTheApiVersion() throws Exception {
-        try (AnthropicLlmClient client = new AnthropicLlmClient(config(serving(400, BAD_REQUEST)).build())) {
+        // A model without the binding flag, so the version hint is the only one.
+        try (AnthropicLlmClient client = new AnthropicLlmClient(
+                config(serving(400, BAD_REQUEST)).model("claude-haiku-4-5").build())) {
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmInvalidRequestException.class);
         }
 
         assertThat(warnings()).singleElement().asString().contains("anthropic-version: 2026-10-21").contains("Bedrock");
+    }
+
+    @Test
+    @DisplayName("a gateway's 400 to a request carrying the thinking-block binding names the opt-out flag, even when"
+            + " the message does not name the binding")
+    void aRefusedBindingBehindAGatewayNamesTheOptOut() throws Exception {
+        // The default model, claude-sonnet-5-5, states supportsThinkingBlockBinding: every request carries the beta.
+        try (AnthropicLlmClient client = new AnthropicLlmClient(config(serving(400, BAD_REQUEST)).build())) {
+            assertThatThrownBy(() -> send(client)).isInstanceOf(LlmInvalidRequestException.class);
+        }
+
+        assertThat(received).singleElement().satisfies(headers -> assertThat(headers.getFirst("anthropic-beta"))
+                .contains(AnthropicThinkingResolution.BLOCK_BINDING_BETA));
+        assertThat(warnings()).hasSize(2).anyMatch(w -> w.contains("anthropic-version: 2026-10-21"))
+                .anyMatch(w -> w.contains("supportsThinkingBlockBinding: false") && w.contains("Foundry"));
     }
 
     @Test
@@ -163,8 +180,10 @@ class AnthropicGatewayCredentialsTest {
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmInvalidRequestException.class);
         }
 
-        // Not gated on baseUrl like the gateway hint beside it: both are said.
-        assertThat(warnings()).hasSize(2).anyMatch(w -> w.contains("supportsThinkingBlockBinding"))
+        // Not gated on baseUrl like the gateway hint beside it: both are said, and the default model's request carried
+        // the binding, so the gateway may have refused that too.
+        assertThat(warnings()).hasSize(3).anyMatch(w -> w.contains("supportsThinkingBlockBinding: true"))
+                .anyMatch(w -> w.contains("supportsThinkingBlockBinding: false"))
                 .anyMatch(w -> w.contains("anthropic-version: 2026-10-21"));
     }
 

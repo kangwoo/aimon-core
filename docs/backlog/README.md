@@ -360,7 +360,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) · T-10 착수 (2026-10-06) | 10 | 2 | 8 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) · L-31 ~ L-36, `docs/design/llm/anthropic-default-model-sonnet-5-5.md` §7 (2026-11-10) | 36 | 11 | 25 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) · L-31 ~ L-36, `docs/design/llm/anthropic-default-model-sonnet-5-5.md` §7 (2026-11-10) | 36 | 9 | 27 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 3 | 6 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 0 | 2 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |

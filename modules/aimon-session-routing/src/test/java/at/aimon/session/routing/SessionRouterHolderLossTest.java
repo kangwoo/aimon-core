@@ -109,8 +109,7 @@ class SessionRouterHolderLossTest {
         assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HOLDER_LOST").hasMessageContaining("dead-node").hasMessageContaining(KEY);
         // Literal keys on purpose: this is the wire shape a peer decodes. No "turn" entry, because there is no turn id
-        // to
-        // put there — see the class comment.
+        // to put there — see the class comment.
         assertThat(announced).anySatisfy(payload -> assertThat(payload).containsEntry("outcome", "HOLDER_LOST")
                 .containsEntry("idem", KEY).doesNotContainKey("turn"));
     }

@@ -159,8 +159,8 @@ public final class BoundedFanoutDispatcher implements AutoCloseable {
         }
         // Absolute thread guard (reserve-before-flip, §6.2): reserve this batch's worst-case concurrent worker
         // count up front. If the reservation would exceed maxLiveFanoutThreads, roll it back and run sequentially on
-        // the
-        // calling thread — bounding the nested cached-pool footprint without a fixed-pool worker-starvation deadlock.
+        // the calling thread — bounding the nested cached-pool footprint without a fixed-pool worker-starvation
+        // deadlock.
         final int reserve = Math.min(config.getPerBatchMax(), items.size());
         final int now = reservedThreads.addAndGet(reserve);
         if (now > config.getMaxLiveFanoutThreads()) {

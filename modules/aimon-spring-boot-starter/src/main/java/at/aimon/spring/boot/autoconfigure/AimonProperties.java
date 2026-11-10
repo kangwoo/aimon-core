@@ -1372,6 +1372,11 @@ public class AimonProperties implements InitializingBean {
          * Total per-call ceiling for the vendor client, streaming included — the SDKs apply it to the whole HTTP call
          * and retry (billed) when it is hit. Null (the default) leaves each client's own default in place:
          * Anthropic 600s, OpenAI 60s.
+         *
+         * <p>
+         * The ceiling holds per attempt, and the SDK retries a timed-out attempt — twice by default — so a call that
+         * stalls can wait about three times this value before it fails: about 30 minutes at Anthropic's 600s. Lower
+         * this to shorten every attempt.
          */
         private Duration timeout;
 

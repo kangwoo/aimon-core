@@ -286,13 +286,15 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         Objects.requireNonNull(tools, "Tools cannot be null");
         Objects.requireNonNull(modelConfig, "Model config cannot be null");
 
+        // Outside the try so a failure can tell whether this request carried the thinking-block binding.
+        MessageCreateParams request = null;
         try {
             // Resolved once and threaded into both halves of the reasoning round trip. Reading it separately in the
             // request factory and in the response converter is how a subclass that overrides getProviderName() ends
             // up tagging a trace with one name and matching it against another, dropping every trace as foreign and
             // leaving the feature silently doing nothing. The model name is already resolved this way.
             final String providerName = getProviderName();
-            MessageCreateParams request = buildRequest(systemPrompt, messages, tools, modelConfig, providerName);
+            request = buildRequest(systemPrompt, messages, tools, modelConfig, providerName);
 
             // Call Anthropic API. When the caller set a per-request timeout, pass it through as a
             // RequestOptions override; otherwise keep the single-argument overload so the client-wide default timeout
@@ -311,7 +313,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         } catch (com.anthropic.errors.AnthropicException e) {
             log.error("Anthropic SDK error: {}", e.getMessage(), e);
             // Map to the neutral taxonomy (rate-limit/overload/etc.) so retry & fallback policies can act on it.
-            throw mapSdkFailure(e, "Anthropic API call failed");
+            throw mapSdkFailure(e, "Anthropic API call failed", request);
         } catch (Exception e) {
             log.error("Anthropic API call failed: {}", e.getMessage(), e);
             throw new LlmClientException("Anthropic API call failed: " + e.getMessage(), e);
@@ -430,7 +432,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             }
             log.error("Anthropic SDK streaming error: {}", e.getMessage(), e);
             // Map to the neutral taxonomy (rate-limit/overload/etc.) so retry & fallback policies can act on it.
-            throw mapSdkFailure(e, "Anthropic streaming call failed");
+            throw mapSdkFailure(e, "Anthropic streaming call failed", request);
         } catch (Exception e) {
             // A cut stream surfaces here as the SDK's I/O failure (caught above as the SDK exception it is), or as the
             // decorator's AnthropicCallAbortedException when it refused or cut an attempt; under a tripped token both
@@ -632,10 +634,16 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * The gateway's answer is the only sign, and it does not say that the header or the API version is why: the same
      * status has other causes, so these are hints beside the error rather than a change to it. Directly against the
      * Anthropic API neither applies, which takes both, so nothing is said.
+     *
+     * @param request
+     *            the request that failed, or {@code null} when it was never built — read only for whether it carried
+     *            the thinking-block binding
      */
-    private LlmClientException mapSdkFailure(com.anthropic.errors.AnthropicException failure, String messagePrefix) {
+    private LlmClientException mapSdkFailure(com.anthropic.errors.AnthropicException failure, String messagePrefix,
+            MessageCreateParams request) {
         final LlmClientException mapped = AnthropicExceptionMapper.map(failure, messagePrefix);
         reportIfThinkingBlockBindingRejected(mapped);
+        reportIfThinkingBlockBindingRefused(mapped, request);
         final String baseUrl = config.getBaseUrl();
         if (baseUrl == null || baseUrl.isEmpty()) {
             return mapped;
@@ -680,6 +688,44 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                         + "it, so stale blocks are dropped instead; or set replayThinkingBlocks(false) (CLI "
                         + "llm.anthropic.replayThinkingBlocks: false, Spring "
                         + "aimon.llm.anthropic.replay-thinking-blocks=false).");
+    }
+
+    /**
+     * Explains a 400 to a request that carried the thinking-block binding, where the deployment may not take it.
+     *
+     * <p>
+     * A model whose capability row states {@code supportsThinkingBlockBinding} gets
+     * {@code anthropic-beta: thinking-binding-controls-2026-08-01} and {@code thinking.block_binding} on every request.
+     * The Anthropic API documents both for those models; a gateway, Microsoft Foundry or another deployment in front of
+     * them may not pass an unknown beta or field (the vendor lists Foundry as unconfirmed), and then every request is a
+     * 400 where it used to work. Said when such a request is refused behind a {@code baseUrl}, whatever the message —
+     * a gateway's own 400 need not name the field — or, directly against the API, when the message names the binding.
+     * The exception is unchanged; the hint goes beside it, as the gateway hints do.
+     */
+    private void reportIfThinkingBlockBindingRefused(LlmClientException mapped, MessageCreateParams request) {
+        if (!(mapped instanceof LlmInvalidRequestException) || request == null
+                || !request._additionalHeaders().values(ANTHROPIC_BETA).stream()
+                        .anyMatch(value -> value.contains(AnthropicThinkingResolution.BLOCK_BINDING_BETA))) {
+            return;
+        }
+        final String message = mapped.getMessage() == null ? "" : mapped.getMessage();
+        final boolean gateway = config.getBaseUrl() != null && !config.getBaseUrl().isEmpty();
+        final boolean namesBinding = message.contains(AnthropicThinkingResolver.BLOCK_BINDING)
+                || message.contains("prefix_mismatch_behavior") || message.contains("thinking-binding-controls");
+        if (!gateway && !namesBinding) {
+            return;
+        }
+        final String model = request.model().asString();
+        reportDivergence("thinkingBlockBindingRefused@" + model,
+                "The request to {} was refused, and it carried the thinking-block binding its capability row states "
+                        + "(anthropic-beta: {} and thinking.block_binding). If the deployment in front of the model "
+                        + "(a gateway at baseUrl, Microsoft Foundry) does not accept that beta or field, declare "
+                        + "supportsThinkingBlockBinding: false for this model name (llm.modelCapabilities.<model> / "
+                        + "aimon.llm.model-capabilities.<model>) to stop sending it. Replayed thinking blocks then "
+                        + "meet the preserved-thinking prefix check unbound; if that is refused in turn, also set "
+                        + "replayThinkingBlocks(false) (CLI llm.anthropic.replayThinkingBlocks: false, Spring "
+                        + "aimon.llm.anthropic.replay-thinking-blocks=false).",
+                model, AnthropicThinkingResolution.BLOCK_BINDING_BETA);
     }
 
     /**

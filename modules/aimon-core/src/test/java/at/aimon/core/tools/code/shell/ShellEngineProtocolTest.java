@@ -265,6 +265,30 @@ class ShellEngineProtocolTest {
     }
 
     @Test
+    @DisplayName("TC-31: a temp root with a space in its name — java.io.tmpdir, read per run — is taken out whole")
+    void exitWithoutDoneScrubsATempRootWithASpace() throws Exception {
+        final Path spacedTemp = Files.createDirectories(realTempDir().resolve("tmp root").resolve("Jane Doe"));
+        final String previous = System.getProperty("java.io.tmpdir");
+        // Tests within a fork run serially (LocalShellOutputDrainTest does the same), so the property is ours here.
+        System.setProperty("java.io.tmpdir", spacedTemp.toString());
+        final Outcome crashed;
+        try {
+            crashed = run((runtime, listener) -> {
+                listener.onStderrLine("Traceback (most recent call last):");
+                listener.onStderrLine("  File \"" + spacedTemp + "/aimon-run-3/aimon_ptc.py\", line 40, in <module>");
+                listener.onStderrLine("PermissionError: [Errno 13] Permission denied while reading " + spacedTemp
+                        + "/aimon-run-3/my replies/1.json and " + spacedTemp + "/aimon-run-3/my notes.txt");
+                return new ShellCommandResult(1, "", "", Duration.ZERO);
+            });
+        } finally {
+            System.setProperty("java.io.tmpdir", previous);
+        }
+        assertThat(crashed.outcome.getLogs())
+                .isEqualTo("PermissionError: [Errno 13] Permission denied while reading <host path> and <host path>")
+                .doesNotContain("Doe").doesNotContain("replies").doesNotContain("notes");
+    }
+
+    @Test
     @DisplayName("TC-31: the scrub keeps URLs, relative paths and fractions, and replaces every absolute path")
     void modelVisibleStderr() {
         assertThat(ShellCodeExecutionEngine.modelVisibleStderr("", List.of())).isEmpty();
@@ -288,6 +312,29 @@ class ShellEngineProtocolTest {
                 .isEqualTo("in <host path> Doers/T/x");
         assertThat(ShellCodeExecutionEngine.modelVisibleStderr("in /a b/c d/x and /a b/y", List.of("/a b", "/a b/c d")))
                 .as("the longer root wins").isEqualTo("in <host path> and <host path>");
+    }
+
+    @Test
+    @DisplayName("TC-31: a path with a space below a known root, or in quotes anywhere, is taken out whole")
+    void modelVisibleStderrSpacedPaths() {
+        final List<String> roots = List.of("/w");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("OSError: cannot read /w/my dir/x", roots))
+                .as("a spaced name with a further segment").isEqualTo("OSError: cannot read <host path>");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("wrote /w/a/my notes.txt. Retry", roots))
+                .as("a spaced file name with an extension; the sentence's full stop stays")
+                .isEqualTo("wrote <host path>. Retry");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("in /w/x and then /w/y failed", roots))
+                .as("prose after a path is not swallowed").isEqualTo("in <host path> and then <host path> failed");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("at /w/a b c", roots))
+                .as("the documented limit: a spaced tail with neither shape").isEqualTo("at <host path> b c");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr(
+                "FileNotFoundError: [Errno 2] No such file or directory: '/home/Jane Doe/x y'", List.of()))
+                .as("quoted, outside every known root")
+                .isEqualTo("FileNotFoundError: [Errno 2] No such file or directory: '<host path>'");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("  File \"/opt/my app/x.py\", line 3", List.of()))
+                .isEqualTo("File \"<host path>\", line 3");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("can't open '//host/x' or 'a b'", List.of()))
+                .as("a quoted URL authority and a quoted non-path stay").isEqualTo("can't open '//host/x' or 'a b'");
     }
 
     @Test

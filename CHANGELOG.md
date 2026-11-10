@@ -25,7 +25,10 @@ current Sonnet, and the client is made to work with the 5.5 generation's breakin
   timeout is a **total** per-call ceiling (OkHttp `callTimeout`), streaming included, and a hit is retried by the SDK
   and billed. The CLI's shipped `llm.timeout: 60` is now commented out and Spring's `aimon.llm.timeout` no longer
   defaults to 60s, so each provider client's own default applies: Anthropic 600s, OpenAI 60s (unchanged). To restore
-  the old ceiling, set `llm.timeout: 60` / `aimon.llm.timeout=60s`.
+  the old ceiling, set `llm.timeout: 60` / `aimon.llm.timeout=60s`. The ceiling holds per SDK attempt, and the SDK
+  retries a timed-out attempt (twice by default), so a stalled call can wait about (1 + retries) × timeout before it
+  fails — about 30 minutes at the Anthropic defaults. `AnthropicConfig.maxRetries(0)` makes the timeout the whole
+  call's ceiling; from the CLI or Spring, a lower `timeout` shortens every attempt.
 - **Changed: preserved thinking on the 5.5 models.** On `claude-sonnet-5-5`, `claude-opus-5-5` and `claude-haiku-5-5`,
   with `replayThinkingBlocks: true` (the default), requests carry `thinking.block_binding.prefix_mismatch_behavior:
   drop_block` and the `thinking-binding-controls-2026-08-01` beta header. Those models check that the system prompt,

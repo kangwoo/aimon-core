@@ -109,6 +109,17 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
      * {@code /} or {@code .}, so a URL's {@code //host/p}, a relative {@code a/b} and a fraction stay as they are.
      */
     private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w:/.])" + PATH_SEGMENT + "+/?");
+    /**
+     * An absolute path between a pair of quotes, as Python quotes the paths it names ({@code File "..."},
+     * {@code '...'}): taken out to the closing quote, spaces and all. Not {@code //}, so a quoted URL authority stays.
+     */
+    private static final Pattern QUOTED_PATH = Pattern.compile("(['\"])/(?![\\s/'\"])[^'\"\\r\\n]*\\1");
+    /**
+     * What may follow a whitespace run and still belong to an unquoted path under a known root: a name with a further
+     * segment ({@code  dir/x}), or a file name with an extension ({@code  notes.txt}) that ends the path.
+     */
+    private static final String SPACED_TAIL = "(?:[ \\t]+(?:[^\\s/'\"():,;]+" + PATH_SEGMENT
+            + "+|[^\\s/'\"():,;.]+\\.[A-Za-z0-9]+(?![^\\s'\"():,;.])))";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String RUNTIME_RESOURCE = "aimon_ptc.py";
@@ -421,10 +432,15 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
      * (TC-31): the last non-blank line, with every absolute path replaced by {@value #HOST_PATH}.
      *
      * <p>
-     * A segment of {@link #ABSOLUTE_PATH} stops at whitespace, so a path under a directory with a space in its name
-     * ({@code /Users/Jane Doe/...}) would be taken out only up to the space. The directories this engine knows the
-     * runtime's files to be under — {@code knownRoots} — are therefore matched literally first, with whatever path
-     * follows them, longest first; the pattern then takes the paths left.
+     * A segment of {@link #ABSOLUTE_PATH} stops at whitespace, so a path with a space in it
+     * ({@code /Users/Jane Doe/...}) would be taken out only up to the space. Three passes close that, in order. A
+     * quoted absolute path — the way Python names a path in its messages and tracebacks — goes whole, to its closing
+     * quote ({@link #QUOTED_PATH}). Then the directories this engine knows the runtime's files to be under —
+     * {@code knownRoots} — are matched literally, longest first, with the path below them, which continues across a
+     * space while the next word has a further segment or is a file name with an extension ({@code /w/my dir/x},
+     * {@code /w/my notes.txt}). Then {@link #ABSOLUTE_PATH} takes the paths left. An unquoted path outside the known
+     * roots, or a spaced name below one that is neither of those shapes ({@code /w/a b c}), is still taken out only up
+     * to the first space: past it nothing tells a path from the prose after it.
      *
      * <p>
      * Unlike the runtime's {@code ERR} lines, this text is not the program's output — the runtime had not started it,
@@ -442,7 +458,8 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         final String[] lines = stderr.split("\\R");
         for (int i = lines.length - 1; i >= 0; i--) {
             if (!lines[i].isBlank()) {
-                String line = lines[i].strip();
+                String line = QUOTED_PATH.matcher(lines[i].strip())
+                        .replaceAll("$1" + Matcher.quoteReplacement(HOST_PATH) + "$1");
                 final Pattern known = knownRootPattern(knownRoots);
                 if (known != null) {
                     line = known.matcher(line).replaceAll(Matcher.quoteReplacement(HOST_PATH));
@@ -454,8 +471,9 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
     }
 
     /**
-     * The known roots as one pattern: each root literally, ending at a segment boundary, then any segments under it.
-     * Longest first, so a root under another root is taken out whole. {@code null} when no root is usable.
+     * The known roots as one pattern: each root literally, ending at a segment boundary, then any segments under it,
+     * spaced ones included ({@link #SPACED_TAIL}). Longest first, so a root under another root is taken out whole.
+     * {@code null} when no root is usable.
      */
     private static Pattern knownRootPattern(List<String> knownRoots) {
         final List<String> roots = new ArrayList<>();
@@ -474,7 +492,8 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         roots.sort(Comparator.comparingInt(String::length).reversed());
         final StringJoiner alternatives = new StringJoiner("|", "(?<![\\w:/.])(?:", ")");
         roots.forEach(root -> alternatives.add(Pattern.quote(root)));
-        return Pattern.compile(alternatives + "(?![^\\s/'\"():,;])" + PATH_SEGMENT + "*/?");
+        return Pattern
+                .compile(alternatives + "(?![^\\s/'\"():,;])" + "(?:" + PATH_SEGMENT + "|" + SPACED_TAIL + ")*/?");
     }
 
     /**

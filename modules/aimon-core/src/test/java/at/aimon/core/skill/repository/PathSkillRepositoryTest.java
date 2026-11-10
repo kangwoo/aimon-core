@@ -50,19 +50,8 @@ class PathSkillRepositoryTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        // Create skill directory structure:
-        // tempDir/
-        // commit/
-        // SKILL.md
-        // config.yaml (root file)
-        // scripts/
-        // run.sh
-        // references/
-        // guide.md
-        // assets/
-        // icon.png
-        // deploy/
-        // SKILL.md
+        // Create the skill directory structure: commit/{SKILL.md, config.yaml (root file), scripts/run.sh,
+        // references/guide.md, assets/icon.png} and deploy/SKILL.md under tempDir.
 
         final Path commitDir = Files.createDirectories(tempDir.resolve("commit"));
         Files.writeString(commitDir.resolve("SKILL.md"), "# Commit Skill");

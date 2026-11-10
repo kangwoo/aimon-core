@@ -112,8 +112,7 @@ class InboundMessageCodecTest {
         assertThat(codec.decode(wrap(payload, stamped)).getTurnId()).contains(TurnId.of("turn-42"));
 
         // An unstamped message writes an explicit null rather than omitting the key — either shape must decode to
-        // empty,
-        // because the holder mints its own id precisely when it can see none was sent.
+        // empty, because the holder mints its own id precisely when it can see none was sent.
         final InboundMessage bare = baseMessage().build();
         assertThat(codec.decode(wrap(codec.encodePayload(bare), bare)).getTurnId()).isEmpty();
     }

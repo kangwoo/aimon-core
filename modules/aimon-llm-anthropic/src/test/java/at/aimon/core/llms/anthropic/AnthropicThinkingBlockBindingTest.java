@@ -477,6 +477,30 @@ class AnthropicThinkingBlockBindingTest {
         }
 
         @Test
+        @DisplayName("the measured place: inside message_start's message, nothing on message_delta (claude-opus-5-5,"
+                + " 2026-11-10)")
+        void streamingDropsAtTheMeasuredPlace() {
+            final List<String> reported = new java.util.ArrayList<>();
+            final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(LlmStreamSink.discarding(),
+                    new at.aimon.core.llm.streaming.ChunkAggregator(), "Anthropic",
+                    (signature, message, args) -> reported.add(signature), false);
+
+            // The event shapes as the server sent them (ids and counters kept, text shortened), so a mapper that
+            // read only message_delta or the event's top level would report nothing here.
+            mapper.consume(java.util.stream.Stream.of(AnthropicFixtures.event("""
+                    {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgtUL9ecdkwJcA8EcBtLg",
+                     "type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,
+                     "usage":{"input_tokens":72,"output_tokens":1},
+                     "input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0",
+                     "reason":"prefix_binding_mismatch"}]}}"""), AnthropicFixtures.event("""
+                    {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},
+                     "usage":{"input_tokens":72,"output_tokens":29}}"""),
+                    AnthropicFixtures.event("{\"type\":\"message_stop\"}")));
+
+            assertThat(reported).containsExactly("thinkingBlocksDropped@claude-opus-5-5@prefix_binding_mismatch");
+        }
+
+        @Test
         @DisplayName("a stream whose only list is on message_delta is reported too")
         void streamingDeltaOnly() {
             final List<String> reported = new java.util.ArrayList<>();
@@ -540,6 +564,65 @@ class AnthropicThinkingBlockBindingTest {
                     () -> client.sendMessage("s", List.of(Message.user("hi")), List.of(), LlmModel.builder().build()))
                     .isInstanceOf(LlmInvalidRequestException.class);
             assertThat(warnings()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a 400 naming block_binding on a request that carried it names the opt-out flag, once")
+        void bindingRefusedNamesTheOptOut() {
+            failingWith("thinking.block_binding: Extra inputs are not permitted");
+            final AnthropicLlmClient client = new AnthropicLlmClient(
+                    config(SONNET_5_5, AnthropicThinkingMode.AUTO).build(), mockAnthropicClient);
+
+            for (int i = 0; i < 2; i++) {
+                assertThatThrownBy(() -> client.sendMessage("s", List.of(Message.user("hi")), List.of(),
+                        LlmModel.builder().build())).isInstanceOf(LlmInvalidRequestException.class)
+                        .hasMessageContaining("block_binding");
+            }
+
+            assertThat(warnings()).singleElement().asString().contains(SONNET_5_5)
+                    .contains(AnthropicThinkingResolution.BLOCK_BINDING_BETA)
+                    .contains("supportsThinkingBlockBinding: false").contains("replayThinkingBlocks(false)");
+        }
+
+        @Test
+        @DisplayName("an unknown-beta 400 names the opt-out flag too")
+        void unknownBetaNamesTheOptOut() {
+            failingWith("Unexpected value(s) `thinking-binding-controls-2026-08-01` for the `anthropic-beta` header");
+            final AnthropicLlmClient client = new AnthropicLlmClient(
+                    config(HAIKU_5_5, AnthropicThinkingMode.OFF).build(), mockAnthropicClient);
+
+            assertThatThrownBy(
+                    () -> client.sendMessage("s", List.of(Message.user("hi")), List.of(), LlmModel.builder().build()))
+                    .isInstanceOf(LlmInvalidRequestException.class);
+            assertThat(warnings()).singleElement().asString().contains("supportsThinkingBlockBinding: false");
+        }
+
+        @Test
+        @DisplayName("without baseUrl, a 400 that does not name the binding, or a request without it, says nothing")
+        void bindingHintNeedsTheBindingOnBothSides() {
+            failingWith("block_binding is not supported");
+            final AnthropicLlmClient unbound = new AnthropicLlmClient(
+                    config("claude-fable-5-1", AnthropicThinkingMode.OFF).build(), mockAnthropicClient);
+            assertThatThrownBy(
+                    () -> unbound.sendMessage("s", List.of(Message.user("hi")), List.of(), LlmModel.builder().build()))
+                    .isInstanceOf(LlmInvalidRequestException.class);
+
+            failingWith("max_tokens: too large");
+            final AnthropicLlmClient bound = new AnthropicLlmClient(
+                    config(SONNET_5_5, AnthropicThinkingMode.AUTO).build(), mockAnthropicClient);
+            assertThatThrownBy(
+                    () -> bound.sendMessage("s", List.of(Message.user("hi")), List.of(), LlmModel.builder().build()))
+                    .isInstanceOf(LlmInvalidRequestException.class);
+
+            assertThat(warnings()).isEmpty();
+        }
+
+        private void failingWith(String message) {
+            lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
+            lenient().when(mockMessageService.create(any(MessageCreateParams.class)))
+                    .thenThrow(BadRequestException.builder().headers(Headers.builder().build()).body(JsonValue.from(Map
+                            .of("type", "error", "error", Map.of("type", "invalid_request_error", "message", message))))
+                            .build());
         }
     }
 

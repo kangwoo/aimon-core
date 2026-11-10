@@ -542,6 +542,13 @@ allows none") 하나뿐이고, 그것도 서브에이전트 이름마다 JVM 에
 그대로, 그 아래 경로까지 지운다(긴 것부터, 세그먼트 경계에서만). 원격 셸의 실행 디렉터리는 엔진이 모르므로 정규식에 맡긴다. 검사:
 `ShellEngineProtocolTest#exitWithoutDoneScrubsAWorkingDirectoryWithASpace`, `#modelVisibleStderrKnownRoots`.
 
+**보강 2 (2026-11-10).** 알려진 루트 *아래* 의 세그먼트도 공백에서 멈춰, `/w/my dir/x` 가 `<host path> dir/x` 로 남았다. 이제 따옴표로
+감싼 절대 경로 — Python 이 메시지와 traceback 에서 경로를 적는 방식 — 는 루트와 상관없이 닫는 따옴표까지 통째로 지우고, 알려진 루트
+아래의 따옴표 없는 경로는 다음 낱말에 세그먼트가 더 있거나(`dir/x`) 확장자가 붙은 파일 이름(`notes.txt`)이면 공백을 넘어 이어 지운다.
+남는 한계: 알려진 루트 밖의 따옴표 없는 경로, 그리고 루트 아래라도 두 모양 어느 쪽도 아닌 공백 뒤 꼬리(`/w/a b c`)는 여전히 첫 공백까지만
+지워진다 — 그 너머는 경로와 뒤따르는 문장을 가를 단서가 없다. 검사: `#modelVisibleStderrSpacedPaths`, 그리고 공백이 든 `java.io.tmpdir`
+를 실행 중에 읽는 끝-끝 `#exitWithoutDoneScrubsATempRootWithASpace`.
+
 ## TC-32 — 인라인 스킬이 PTC 를 없앨 때 iteration span 이 이유를 싣지 않는다 · **닫힘** *(2026-11-10)*
 
 **무엇을.** 모델이 부른 인라인 스킬이 턴·포크·슬래시 스킬 루프의 프로그래매틱 설정을 "없음" 으로 좁혀 다음 iteration 부터

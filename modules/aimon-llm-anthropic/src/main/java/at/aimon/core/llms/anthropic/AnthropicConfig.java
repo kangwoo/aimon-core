@@ -197,6 +197,16 @@ public final class AnthropicConfig {
      * so a long streamed answer is cut when it is reached, and the SDK then retries (each attempt is billed). Size it
      * with {@link #getMaxTokens()} in mind. Defaults to 600 seconds.
      *
+     * <p>
+     * <strong>Per attempt, not per call.</strong> The SDK retries a timed-out attempt like any I/O failure, so a call
+     * whose server stalls waits up to {@code (1 + retries) × timeout} plus the backoff between attempts before it
+     * fails: with the SDK's default of two retries and the 600-second default, about 30 minutes. Nothing above the
+     * SDK can cut a blocking call short today (the abort lever exists only on the streaming path, and only for a
+     * cancellation). The knobs are {@link Builder#maxRetries(Integer) maxRetries(0)}, which makes this the whole call's
+     * ceiling, and a lower timeout, which shortens every attempt — the only one the CLI ({@code llm.timeout}) and the
+     * Spring starter ({@code aimon.llm.timeout}) expose, besides an agent definition's per-request
+     * {@code requestTimeout}.
+     *
      * @return The timeout duration (never null)
      */
     public Duration getTimeout() {
@@ -418,7 +428,9 @@ public final class AnthropicConfig {
 
         /**
          * Sets the request timeout: a total ceiling on each HTTP call, streaming included (OkHttp's
-         * {@code callTimeout}), retried by the SDK when hit. Defaults to 600 seconds.
+         * {@code callTimeout}), retried by the SDK when hit. Defaults to 600 seconds. Per attempt: with the SDK's
+         * retries a stalled call can wait about {@code (1 + retries) × timeout} — see
+         * {@link AnthropicConfig#getTimeout()}.
          *
          * @param timeout
          *            The timeout duration

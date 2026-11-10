@@ -118,6 +118,25 @@ class ExecuteCodeLiveFixtureTest {
     }
 
     @Test
+    @DisplayName("assertion 3: a program that printed the right hosts and then hit SCRIPT_ERROR does not pass")
+    void answerPrintedThenScriptErrorFails(@TempDir Path workspace) {
+        final ScriptedModel model = new ScriptedModel(JS_PROGRAM + "throw new Error('after the answer');\n", "Done.");
+        try (GraalJsEngineHolder holder = GraalJsEngineHolder.create();
+                Fixture fixture = ExecuteCodeLiveFixtures.start(model, Variant.JAVASCRIPT,
+                        new GraalJsCodeExecutionEngine(holder), workspace, null)) {
+            final OrcaAgentExecutionResult result = fixture.runTurn();
+
+            assertThat(fixture.executeCodeResults).singleElement().satisfies(
+                    program -> assertThat(program.getRenderPayload()).containsEntry("status", "SCRIPT_ERROR"));
+            assertThat(ExecuteCodeLiveFixtures.programPrinted(fixture.executeCodeResults))
+                    .as("non-vacuity: the hosts were printed").containsExactly(List.of("h2", "h3", "h5"));
+            assertThat(ExecuteCodeLiveFixtures.answerReached(fixture.executeCodeResults, result)).isFalse();
+            assertThatThrownBy(() -> ExecuteCodeLiveFixtures.assertAnswerReached(fixture, result))
+                    .isInstanceOf(AssertionError.class);
+        }
+    }
+
+    @Test
     @DisplayName("Python (shell engine, sandboxed local environment): offered, checks pass, and no runtime is left")
     void python(@TempDir Path workspace) throws Exception {
         assumeTrue(ExecuteCodeLiveFixtures.python3Available(), "python3 >= 3.8 is not on the path");

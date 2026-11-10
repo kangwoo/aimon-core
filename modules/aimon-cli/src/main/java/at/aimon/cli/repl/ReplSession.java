@@ -242,8 +242,7 @@ public class ReplSession {
             String carried = null;
             while (running) {
                 // Whether a wake took the prompt back. Decided — and the interrupt it sent cleared — on every way out
-                // of
-                // the read, including the exceptions: JLine re-raises a pending interrupt on its way out, and left
+                // of the read, including the exceptions: JLine re-raises a pending interrupt on its way out, and left
                 // standing it would cut off the next blocking call on this thread, such as a turn's approval prompt.
                 boolean woke = false;
                 try {

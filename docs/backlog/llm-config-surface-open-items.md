@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 36건 (열림 11 · 닫힘 25)
+# LLM 설정 표면 — 등록 항목 36건 (열림 9 · 닫힘 27)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -2070,6 +2070,21 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 
 **언제 다시 볼까.** Opus 5.5 를 쓰는 배포가 생기거나, 그 행의 400 보고가 올 때.
 
+### 닫힘 (2026-11-10)
+
+라이브로 쟀다 — 세 요청, 행이 말하는 세 사실 그대로다(#352 의 비차단 지적 정리 작업, 실제 API, 키는 출력·복사하지 않았다).
+
+- adaptive + `block_binding.prefix_mismatch_behavior: "drop_block"` + 베타 헤더 `thinking-binding-controls-2026-08-01`:
+  200(입력 57 · 출력 23 토큰, thinking 19), 서명된 thinking 블록 하나, 최상위 `input_transformations: []`.
+- 그 응답을 **바뀐 시스템 프롬프트** 아래 스트리밍으로 재전송: 200, `prefix_binding_mismatch` 로 블록 하나 드롭
+  (`messages.1.content.0`). 바인딩이 받아들여지고 검사가 돈다는 뜻이다. 장소는 L-36 이 적는다.
+- `{"type": "enabled", "budget_tokens": 1024}`: 400 *"`thinking.type.enabled` is not supported for this model. Use
+  `thinking.type.adaptive` and `output_config.effort`"* — budgeted 400, 행의 `ADAPTIVE` 방언 그대로.
+
+비용은 추정 $0.002(Opus 5.5 $4/$20). `AnthropicThinkingBindingLiveTest` 의 매개변수에는 더하지 않았다 — 그 테스트는 모델당
+네 ~ 여섯 요청이고, 위 세 요청이 행의 사실을 모두 덮는다. `InMemoryModelCapabilityRegistry.registerAnthropicDefaults` 의
+주석이 "카탈로그뿐" 에서 측정으로 바뀌었다.
+
 ## L-34 — Fable 5.1 · Mythos 5.1 도 prefix 검사를 하지만 블록 바인딩을 말하지 않는다
 
 *(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q6 (셋째 점), 그 문서 §8.3 이 이 항목으로 올렸다.)*
@@ -2128,6 +2143,15 @@ reportIfThinkingBlockBindingRejected`.
 **처방은 적용해 보지 않았다 (규칙 다섯).** `AnthropicThinkingBindingLiveTest` 의 case b 를 스트리밍으로 한 번 더 보내면 된다.
 
 **언제 다시 볼까.** 스트리밍 배포에서 드롭 WARN 이 한 번도 안 보인다는 보고가 오거나, 이 라이브 테스트를 다음에 돌릴 때.
+
+### 닫힘 (2026-11-10)
+
+쟀다 — `claude-opus-5-5`, 바뀐 시스템 프롬프트 아래의 스트리밍 재전송(L-33 닫힘의 둘째 요청). 목록은 **`message_start`
+이벤트의 `message` 객체** 안에 온다(`"input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0",
+"reason":"prefix_binding_mismatch"}]`). `message_delta` 에는 없고, 이벤트 최상위에도 없다. 블로킹 응답의 최상위 필드와 같은
+객체 모양이다. `AnthropicStreamingMapper.onMessageStart` 가 읽는 첫 자리(`event.message()._additionalProperties()`)가
+바로 그곳이라 코드는 바꾸지 않았다. 나머지 세 자리는 다른 모델·후속 버전을 위해 남긴다. 측정한 모양 그대로의 픽스처를
+`AnthropicThinkingBlockBindingTest#streamingDropsAtTheMeasuredPlace` 로 더했다.
 
 ## 관련 문서
 

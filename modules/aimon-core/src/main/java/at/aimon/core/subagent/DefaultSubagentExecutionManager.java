@@ -1499,8 +1499,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final SubagentLaunchContext launchContext = withTaskIdAttribute(requestedLaunchContext, taskId);
         final Instant startTime = Instant.now();
         // Anchored at launch: the wait for a worker counts against the deadline, and a task whose deadline passes in
-        // the
-        // queue does not start when a worker finally takes it.
+        // the queue does not start when a worker finally takes it.
         final PolicyRun policyRun = PolicyRun.anchor(launchContext);
 
         // Record a durable PENDING snapshot up front so the task is listable/queryable even while it waits for a

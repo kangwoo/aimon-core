@@ -194,9 +194,8 @@ class OrcaAgentExecutorTerminalSessionStateTest {
 
     @Test
     // Dispatch here is sequential (the file-local EchoTool leaves getConcurrencyBehavior() at SEQUENTIAL and the
-    // fixture
-    // keeps the executor's default sequential dispatcher); what is pinned is the result-for-result pairing and order
-    // invariant, which must hold for every dispatch shape. Parallel dispatch itself is covered by
+    // fixture keeps the executor's default sequential dispatcher); what is pinned is the result-for-result pairing and
+    // order invariant, which must hold for every dispatch shape. Parallel dispatch itself is covered by
     // DefaultParallelToolDispatcherTest and OrcaAgentExecutorParallelToolTest.
     @DisplayName("a multi-tool batch is answered result-for-result, in the model's original order")
     void multiToolBatchIsFullyAnswered() {

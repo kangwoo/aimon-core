@@ -340,12 +340,14 @@ class SlashSkillProgrammaticCeilingE2EIntegrationTest {
         assertThat(names(llmClient.skillTools.get(0))).contains(ExecuteCodeTool.TOOL_NAME);
         assertThat(names(llmClient.skillTools.get(1))).contains("Read", "Grep")
                 .doesNotContain(ExecuteCodeTool.TOOL_NAME);
-        final List<TraceSpan> reported = store.bySession(sessionId.value()).stream()
-                .filter(span -> span.getType() == SpanType.ITERATION)
-                .filter(span -> span.getAttributes().containsKey(CodeSpanAttributes.UNAVAILABLE_REASON)).toList();
-        assertThat(reported).isNotEmpty()
-                .allSatisfy(span -> assertThat(span.getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
-                        .isEqualTo(NO_KEYS_REASON.formatted("probe")));
+        // By position, as cases 2 and 13: the skill loop's iteration before the inline skill says nothing, the one
+        // after it says why. The slash loop's spans carry no subagent attribute, and a slash command runs no main
+        // loop iteration of its own, so these are exactly the skill loop's two.
+        final List<TraceSpan> skillIterations = iterations(store, sessionId, null);
+        assertThat(skillIterations).hasSize(2);
+        assertThat(skillIterations.get(0).getAttributes()).doesNotContainKey(CodeSpanAttributes.UNAVAILABLE_REASON);
+        assertThat(skillIterations.get(1).getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
+                .isEqualTo(NO_KEYS_REASON.formatted("probe"));
     }
 
     /** What an iteration span says once an inline skill without programmatic keys emptied the execution's PTC. */

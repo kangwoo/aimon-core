@@ -230,8 +230,7 @@ class DenyTurnCommandTest {
 
         DenyTurnCommand command = new DenyTurnCommand(registry);
         // Simulate user pasting a copied line: "turn-7 context=ctx-a skills=[commit]" — the command should still
-        // resolve
-        // turn-7 cleanly.
+        // resolve turn-7 cleanly.
         CommandExecutionResult result = command.execute(createContext(),
                 DirectCommandExecutionRequest.of("turn-7 context=ctx-a skills=[commit]"));
 

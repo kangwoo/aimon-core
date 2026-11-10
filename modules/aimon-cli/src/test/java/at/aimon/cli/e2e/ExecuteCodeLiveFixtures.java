@@ -389,12 +389,18 @@ final class ExecuteCodeLiveFixtures {
     }
 
     /**
-     * Assertion 3: the turn reached the right answer — a program printed exactly the expected hosts, or the final
-     * answer names exactly them. The prompt asks the program to <i>print</i> the names, and a model that did so often
-     * ends with "the names have been printed" without repeating them; judging only the final answer then reported
-     * {@code answerMatches=false} for a correct run (both OpenAI models on JavaScript, 2026-11-07 and 2026-11-10). The
-     * host table is fixed and the filter is one comparison per host, so a wrong set here is a wrong run — data lost or
-     * garbled on its way through the nested calls, or a model that did not do the task — not variance to log past.
+     * Assertion 3: the turn reached the right answer — a program that completed printed exactly the expected hosts, or
+     * the final answer names exactly them. The prompt asks the program to <i>print</i> the names, and a model that did
+     * so often ends with "the names have been printed" without repeating them; judging only the final answer then
+     * reported {@code answerMatches=false} for a correct run (both OpenAI models on JavaScript, 2026-11-07 and
+     * 2026-11-10). The host table is fixed and the filter is one comparison per host, so a wrong set here is a wrong
+     * run — data lost or garbled on its way through the nested calls, or a model that did not do the task — not
+     * variance to log past.
+     *
+     * <p>
+     * A program counts only when it ended {@code COMPLETED}: one that printed the right hosts and then hit
+     * {@code SCRIPT_ERROR} did not do what it was written to do, and printing the names before the line that failed is
+     * luck, not an answer.
      */
     static void assertAnswerReached(Fixture fixture, OrcaAgentExecutionResult result) {
         assertThat(answerReached(fixture.executeCodeResults, result)).as(
@@ -404,7 +410,7 @@ final class ExecuteCodeLiveFixtures {
                 sorted(hostsNamed(finalAnswer(result))), diagnostics(fixture, result)).isTrue();
     }
 
-    /** Whether a program printed, or the final answer named, exactly the expected hosts. */
+    /** Whether a program that completed printed, or the final answer named, exactly the expected hosts. */
     static boolean answerReached(List<ToolUseResult> programs, OrcaAgentExecutionResult result) {
         return answerLooksRight(result) || programPrintedAnswer(programs);
     }
@@ -414,9 +420,15 @@ final class ExecuteCodeLiveFixtures {
         return hostsNamed(finalAnswer(result)).equals(EXPECTED_ANSWER);
     }
 
-    /** Whether one program's stdout names exactly the expected hosts. */
+    /** Whether one program ended {@code COMPLETED} with stdout that names exactly the expected hosts. */
     static boolean programPrintedAnswer(List<ToolUseResult> programs) {
-        return programs.stream().anyMatch(program -> hostsNamed(stdoutOf(program)).equals(EXPECTED_ANSWER));
+        return programs.stream()
+                .anyMatch(program -> completed(program) && hostsNamed(stdoutOf(program)).equals(EXPECTED_ANSWER));
+    }
+
+    private static boolean completed(ToolUseResult program) {
+        return "COMPLETED"
+                .equals(String.valueOf(Optional.ofNullable(program.getRenderPayload()).orElse(Map.of()).get("status")));
     }
 
     /** The host names each program printed, in program order: {@code [[h2, h3, h5]]} for one correct program. */
