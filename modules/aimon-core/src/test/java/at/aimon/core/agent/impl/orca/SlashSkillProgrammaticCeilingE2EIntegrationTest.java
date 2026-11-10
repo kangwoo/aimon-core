@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -67,6 +68,7 @@ import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.tools.code.CodeSpanAttributes;
 import at.aimon.core.tools.code.ExecuteCodeTool;
 import at.aimon.core.tools.code.ScriptedEngine;
 import at.aimon.core.tools.code.shell.ShellCodeExecutionEngine;
@@ -190,8 +192,10 @@ class SlashSkillProgrammaticCeilingE2EIntegrationTest {
 
     @Test
     @DisplayName("2: model-called inline Skill(probe) without programmatic keys narrows the rest of the turn — the"
-            + " fork the main loop then spawns is ceilinged by the skill and not offered ExecuteCode (TC-26)")
+            + " fork the main loop then spawns is ceilinged by the skill and not offered ExecuteCode (TC-26); the"
+            + " main loop's iteration span after the skill says why (TC-30)")
     void modelCalledInlineSkill_NarrowsTheTurn_ForkCeilingedByTheSkill() {
+        final InMemoryTraceSpanStore store = tracing();
         // SkillTool's INLINE path returns the rendered instructions to the main loop and narrows the turn's
         // inline-skill ceiling; from the next iteration the main loop dispatches through its dispatcher narrowed to
         // the skill, which publishes the skill's programmatic settings (none) as the ceiling of the fork Task spawns.
@@ -201,7 +205,11 @@ class SlashSkillProgrammaticCeilingE2EIntegrationTest {
         llmClient.mainScript = List.of(List.of(ToolUse.of("m-1", SkillTool.TOOL_NAME, Map.of("skill", "probe"))),
                 List.of(taskCall("m-2")));
 
-        assertThat(executor.execute(runtime(READ_GREP), request("please probe")).isSuccess()).isTrue();
+        final SessionId sessionId = SessionId.generate();
+        assertThat(executor
+                .execute(runtime(READ_GREP),
+                        OrcaAgentExecutionRequest.builder().userInput("please probe").sessionId(sessionId).build())
+                .isSuccess()).isTrue();
 
         assertThat(llmClient.skillCalls).isZero();
         assertThat(llmClient.forkTools).hasSize(1);
@@ -211,6 +219,12 @@ class SlashSkillProgrammaticCeilingE2EIntegrationTest {
         assertThat(names(llmClient.mainTools.get(0))).contains(ExecuteCodeTool.TOOL_NAME);
         assertThat(names(llmClient.mainTools.get(1))).doesNotContain(ExecuteCodeTool.TOOL_NAME);
         assertThat(ceilingWarnings()).hasSize(1);
+        // Before, the main loop's own iterations said nothing: none() reads as an agent that never opted in.
+        final List<TraceSpan> mainIterations = iterations(store, sessionId, null);
+        assertThat(mainIterations).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(mainIterations.get(0).getAttributes()).doesNotContainKey(CodeSpanAttributes.UNAVAILABLE_REASON);
+        assertThat(mainIterations.get(1).getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
+                .isEqualTo(NO_KEYS_REASON.formatted("probe"));
     }
 
     @Test
@@ -268,6 +282,89 @@ class SlashSkillProgrammaticCeilingE2EIntegrationTest {
         assertThat(names(llmClient.forkTools.get(0))).contains(ExecuteCodeTool.TOOL_NAME, "Read", "Grep",
                 SkillTool.TOOL_NAME);
         assertThat(names(llmClient.forkTools.get(1))).containsExactly("Read");
+    }
+
+    @Test
+    @DisplayName("13: a fork whose model calls an inline skill without programmatic keys loses ExecuteCode from its"
+            + " next iteration, and that iteration's span says why (TC-30)")
+    void forkLoopInlineSkillWithoutPtcReportsTheReason() {
+        final InMemoryTraceSpanStore store = tracing();
+        skillRegistry.add(probe(ProgrammaticToolSettings.none()));
+        toolRegistry.register(new SkillTool(skillRegistry));
+        final String skilled = readerName + "-probing";
+        subagentRegistry.register(Subagent.builder().name(skilled).systemPrompt(FORK_PROMPT).maxIterations(3)
+                .tools(List.of(ExecuteCodeTool.TOOL_NAME, "Read", "Grep", SkillTool.TOOL_NAME)).programmatic(READ_GREP)
+                .build());
+        llmClient.mainScript = List.of(List.of(ToolUse.of("m-1", "Task",
+                Map.of("subagent_name", skilled, "prompt", "read the notes", "description", "read notes"))));
+        llmClient.forkScript = List.of(List.of(ToolUse.of("f-1", SkillTool.TOOL_NAME, Map.of("skill", "probe"))));
+        final SessionId sessionId = SessionId.generate();
+
+        assertThat(executor
+                .execute(runtime(READ_GREP),
+                        OrcaAgentExecutionRequest.builder().userInput("delegate").sessionId(sessionId).build())
+                .isSuccess()).isTrue();
+
+        assertThat(llmClient.forkTools).hasSize(2);
+        assertThat(names(llmClient.forkTools.get(0))).contains(ExecuteCodeTool.TOOL_NAME);
+        assertThat(names(llmClient.forkTools.get(1))).contains("Read", "Grep")
+                .doesNotContain(ExecuteCodeTool.TOOL_NAME);
+        final List<TraceSpan> forkIterations = iterations(store, sessionId, skilled);
+        assertThat(forkIterations).hasSize(2);
+        assertThat(forkIterations.get(0).getAttributes()).doesNotContainKey(CodeSpanAttributes.UNAVAILABLE_REASON);
+        assertThat(forkIterations.get(1).getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
+                .isEqualTo(NO_KEYS_REASON.formatted("probe"));
+    }
+
+    @Test
+    @DisplayName("12: inside a user-typed slash skill, an inline skill without programmatic keys empties the skill"
+            + " loop's PTC — the iteration span that follows says why (TC-30)")
+    void inlineSkillInSlashLoopReportsTheReason() {
+        final InMemoryTraceSpanStore store = tracing();
+        skillRegistry.add(Skill.builder().name("ptc-probe")
+                .metadata(SkillMetadata.builder().name("ptc-probe").description("e2e fixture — ptc probe")
+                        .invokePolicy(InvokePolicy.of(true, true)).maxIterations(3)
+                        .allowedTools("Read Grep ExecuteCode Skill").programmatic(READ_GREP).build())
+                .content(SkillContent.of("PTC probe: $ARGUMENTS")).build());
+        skillRegistry.add(probe(ProgrammaticToolSettings.none()));
+        toolRegistry.register(new SkillTool(skillRegistry));
+        llmClient.skillScript = List.of(ToolUse.of("s-1", SkillTool.TOOL_NAME, Map.of("skill", "probe")));
+        final SessionId sessionId = SessionId.generate();
+
+        assertThat(executor
+                .execute(runtime(READ_GREP),
+                        OrcaAgentExecutionRequest.builder().userInput("/ptc-probe look").sessionId(sessionId).build())
+                .isSuccess()).isTrue();
+
+        assertThat(llmClient.skillTools).hasSize(2);
+        assertThat(names(llmClient.skillTools.get(0))).contains(ExecuteCodeTool.TOOL_NAME);
+        assertThat(names(llmClient.skillTools.get(1))).contains("Read", "Grep")
+                .doesNotContain(ExecuteCodeTool.TOOL_NAME);
+        final List<TraceSpan> reported = store.bySession(sessionId.value()).stream()
+                .filter(span -> span.getType() == SpanType.ITERATION)
+                .filter(span -> span.getAttributes().containsKey(CodeSpanAttributes.UNAVAILABLE_REASON)).toList();
+        assertThat(reported).isNotEmpty()
+                .allSatisfy(span -> assertThat(span.getAttributes().get(CodeSpanAttributes.UNAVAILABLE_REASON))
+                        .isEqualTo(NO_KEYS_REASON.formatted("probe")));
+    }
+
+    /** What an iteration span says once an inline skill without programmatic keys emptied the execution's PTC. */
+    private static final String NO_KEYS_REASON = "inline skill '%s' sets no programmatic-tools, and an activated "
+            + "skill's programmatic settings narrow the execution's, so no tool is open to code";
+
+    /** Traces the main loop and its forks into a fresh store. */
+    private InMemoryTraceSpanStore tracing() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final DefaultTracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        executor.tracer = tracer;
+        subagentManager.withTracer(tracer);
+        return store;
+    }
+
+    /** The iteration spans of the main loop ({@code subagent == null}) or of the named fork, in order. */
+    private static List<TraceSpan> iterations(InMemoryTraceSpanStore store, SessionId sessionId, String subagent) {
+        return store.bySession(sessionId.value()).stream().filter(span -> span.getType() == SpanType.ITERATION)
+                .filter(span -> Objects.equals(subagent, span.getAttributes().get("subagent"))).toList();
     }
 
     @Test

@@ -166,7 +166,8 @@ class ShellRuntimeProgramTest {
     }
 
     @Test
-    @DisplayName("the unraisable header keeps CPython's shape for both err_msg forms, with one colon, on any interpreter")
+    @DisplayName("the unraisable header keeps CPython's shape for both err_msg forms, with one colon,"
+            + " on any interpreter")
     void unraisableHeaderShapes() throws IOException {
         // Calls the installed hook directly, so the 3.14 form (object None) is exercised on an older interpreter too.
         final CodeExecutionOutcome outcome = run(ScriptedToolCallBridge.succeedingWith("ok"),

@@ -562,7 +562,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 소스 줄이 200 자를 넘으면(압축된 코드) 메시지 줄만 싣는다. 규칙은 코어에 있고 엔진을 가리지 않는다. Python 런타임은 잡히지 않은 예외를
 프로그램 자신의 프레임만으로 로그에 남기므로([셸 엔진](programmatic-tool-calling-shell.md) §6), `[logs]` 에 런타임 프레임이나 호스트
 경로가 실리지 않는다. 런타임이 `DONE` 을 보내기 전에 죽어 보낸 로그도 없으면 셸 자신의 stderr 가 남는데, 그 꼬리 전체는 호스트 로그(WARN)에만
-남고 `[logs]` 에는 마지막 비어 있지 않은 줄만, 절대 경로를 `<host path>` 로 바꿔 싣는다 — 출력기를 설치하기 전에 난 traceback 은 런타임
+남고 `[logs]` 에는 마지막 비어 있지 않은 줄만, 절대 경로를 `<host path>` 로 바꿔 싣는다(엔진이 아는 작업 디렉터리와 임시 루트는 공백이 있어도 통째로) — 출력기를 설치하기 전에 난 traceback 은 런타임
 프레임뿐이고, 원인은 마지막 줄(예외 줄이나 `python3` 의 메시지)이 말한다([TC-31](../../backlog/tool-contract-open-items.md)).
 `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
 `notRetryable` 이다.
@@ -578,7 +578,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 | 대상 | 무엇이 남는가 |
 |---|---|
 | 트레이스 | 중첩 호출마다 TOOL span. 부모는 `ExecuteCode` span, 속성 `tool.path=code`·`ptc.parent_tool_use_id`·`ptc.language`, 출력은 요약(`isError`·`contentChars`)에 더해, 실행기의 페이로드 정책이 내용 기록을 켰으면 잘린 결과 내용 — 정책은 도구 문맥 키 `TRACE_PAYLOAD_POLICY`(write-once, `TRACER` 옆에 실행기의 정책으로 묶인다)가 나르고, 없으면 요약만이다. 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 TOOL span(`ptc.refused=<거절 종류>`, 오류). 직접 호출의 TOOL span 은 `tool.path=direct`. `ExecuteCode` span 에 `ptc.language`, 범위에 묶인 엔진이면 실효 `ptc.tool_scope`. `programmatic-tools` 를 둔 에이전트의 iteration span 에 `ExecuteCode` 를 제안하지 못한 이유 `ptc.unavailable_reason` — 자기 정의는
-`programmatic-tools` 를 두었는데 호출자의 설정이 그것을 "없음" 으로 좁힌 포크도 같은 속성에 그 이유를 싣는다. 슬래시 스킬 루프도 COMMAND span 아래에 LLM 호출마다 ITERATION span(`invokerType=MAIN_AGENT`, `skill=<이름>`)과 호출마다 TOOL span 을 남기므로, 그 스킬의 `ExecuteCode` 중첩 호출은 그 호출의 TOOL span 아래에 붙는다 |
+`programmatic-tools` 를 두었는데 호출자의 설정이 그것을 "없음" 으로 좁힌 포크도, 모델이 부른 인라인 스킬이 설정을 "없음" 으로 좁힌 턴·포크·슬래시 스킬 루프도 같은 속성에 그 이유를 싣는다([TC-32](../../backlog/tool-contract-open-items.md)). 슬래시 스킬 루프도 COMMAND span 아래에 LLM 호출마다 ITERATION span(`invokerType=MAIN_AGENT`, `skill=<이름>`)과 호출마다 TOOL span 을 남기므로, 그 스킬의 `ExecuteCode` 중첩 호출은 그 호출의 TOOL span 아래에 붙는다 |
 | 훅 | 중첩 호출마다 PreTool/PostTool (경로 포함) |
 | UI | `ExecuteCode` 결과의 `renderPayload` 에 코드와 중첩 호출 목록(이름, 입력 요약, 결과 길이, 오류 여부). LLM 으로 직렬화되지 않는다 |
 | 트랜스크립트 | `ExecuteCode` 의 tool_use(코드 포함)와 §12.1 의 관찰 |
@@ -872,3 +872,5 @@ PTC 마무리([TC-30](../../backlog/tool-contract-open-items.md) · [TC-31](../.
 | `DONE` 없는 종료는 셸 stderr 꼬리를 `[logs]` 로 싣는다(§12.1) | 꼬리 전체는 호스트 WARN, 모델에게는 마지막 비어 있지 않은 줄의 절대 경로를 `<host path>` 로 바꿔서([TC-31](../../backlog/tool-contract-open-items.md)) | 이 텍스트는 프로그램 출력이 아니라 런타임이 시작하기 전(또는 주변)에 셸이 쓴 것이라, 다시 쓰여도 프로그램 데이터가 사라지지 않는다 — TC-29 가 `[logs]` 의 정규식 정리를 기각한 이유가 여기에는 해당하지 않는다. `python3` 이 없을 때의 원인(마지막 줄)은 그대로 간다 |
 | 인라인 스킬 결과의 "Allowed Tools:" 는 스킬이 선언한 목록 | 천장으로 좁힌 목록(`InlineSkillCeiling` 스냅숏). 천장이 묶이지 않은 곳은 선언 그대로 | "only these tools" 바로 위의 목록이 이미 거절될 도구를 보여 주면 모델이 그것을 부르고 거절을 겪는다 |
 | 좁혀진 턴의 승인 필요 스킬은 "ask for it again in a new turn"(§7.2) | 그 조언은 승인 채널이 있는 메인 루프 턴(SK-11.4 사전 검사기)에만. 포크·슬래시 스킬 루프·헤드리스 턴은 좁혀졌어도 "no approval channel is available" 그대로(`InlineSkillCeiling.isApprovalInNewTurn()`) | 그 루프들에는 어느 턴에도 승인 채널이 없다 — 다시 물으라는 조언은 오지 않을 승인을 쫓게 한다 |
+| 인라인 스킬이 PTC 를 "없음" 으로 좁혀도 iteration span 은 말하지 않는다(위 TC-30 행은 호출자 천장만) | `InlineSkillCeiling.narrow` 가 비운 순간의 이유를 스냅숏에 두고(`Snapshot.getProgrammaticReason()`), 메인 루프·포크·슬래시 스킬 루프가 그것을 제안 문맥의 이유로 싣는다([TC-32](../../backlog/tool-contract-open-items.md)) | 스킬이 무엇을 선언했고 그 전에 무엇이 있었는지는 좁히는 순간에만 함께 보인다. 나중의 `none()` 으로는 어느 쪽인지 알 수 없다 |
+| `DONE` 없는 종료의 경로 정리는 정규식 하나(위 TC-31 행) | 엔진이 아는 디렉터리 — 작업 디렉터리, JVM 임시 루트 — 를 먼저 글자 그대로 지운다([TC-31](../../backlog/tool-contract-open-items.md) 보강) | 정규식 세그먼트는 공백에서 멈춰 `/Users/Jane Doe/...` 가 반만 지워졌다 |

@@ -251,13 +251,43 @@ class ShellEngineProtocolTest {
     }
 
     @Test
+    @DisplayName("TC-31: a working directory with a space in its name is taken out whole, not up to the space")
+    void exitWithoutDoneScrubsAWorkingDirectoryWithASpace() throws Exception {
+        final Path spaced = Files.createDirectories(realTempDir().resolve("Jane Doe"));
+        final Outcome crashed = run(bridge, (runtime, listener) -> {
+            listener.onStderrLine("OSError: [Errno 28] No space left on device: '" + runtime.runDirectory
+                    + "/r/1.json' while writing " + spaced + "/notes.txt");
+            return new ShellCommandResult(1, "", "", Duration.ZERO);
+        }, CodeExecutionLimits.defaults(), scripted, spaced);
+        assertThat(crashed.outcome.getLogs())
+                .isEqualTo("OSError: [Errno 28] No space left on device: '<host path>' while writing <host path>")
+                .doesNotContain("Doe").doesNotContain(".aimon-ptc");
+    }
+
+    @Test
     @DisplayName("TC-31: the scrub keeps URLs, relative paths and fractions, and replaces every absolute path")
     void modelVisibleStderr() {
-        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("")).isEmpty();
-        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("a\n\n  \n")).isEqualTo("a");
-        assertThat(ShellCodeExecutionEngine
-                .modelVisibleStderr("OSError: see https://x.org/a/b and a/b, 1/2 from /usr/lib/x.so and /opt/y/"))
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("", List.of())).isEmpty();
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("a\n\n  \n", List.of())).isEqualTo("a");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr(
+                "OSError: see https://x.org/a/b and a/b, 1/2 from /usr/lib/x.so and /opt/y/", List.of()))
                 .isEqualTo("OSError: see https://x.org/a/b and a/b, 1/2 from <host path> and <host path>");
+    }
+
+    @Test
+    @DisplayName("TC-31: a known root with a space (a temp root) is replaced literally, with the path under it")
+    void modelVisibleStderrKnownRoots() {
+        final List<String> roots = List.of("/var/folders/Jane Doe/T/", "/", "relative/dir", "");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr(
+                "python3: can't open file '/var/folders/Jane Doe/T/aimon-run-7/aimon_ptc.py': [Errno 2] No such file",
+                roots)).isEqualTo("python3: can't open file '<host path>': [Errno 2] No such file");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("at /var/folders/Jane Doe/T and /usr/bin/x", roots))
+                .as("the root itself, and paths outside it, go too").isEqualTo("at <host path> and <host path>");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("in /var/folders/Jane Doers/T/x", roots))
+                .as("a root ends at a segment boundary: no match inside a longer name")
+                .isEqualTo("in <host path> Doers/T/x");
+        assertThat(ShellCodeExecutionEngine.modelVisibleStderr("in /a b/c d/x and /a b/y", List.of("/a b", "/a b/c d")))
+                .as("the longer root wins").isEqualTo("in <host path> and <host path>");
     }
 
     @Test
@@ -369,8 +399,13 @@ class ShellEngineProtocolTest {
 
     private Outcome run(ToolCallBridge callBridge, Scenario scenario, CodeExecutionLimits limits,
             ScriptedToolCallBridge signalOwner) {
+        return run(callBridge, scenario, limits, signalOwner, realTempDir());
+    }
+
+    private Outcome run(ToolCallBridge callBridge, Scenario scenario, CodeExecutionLimits limits,
+            ScriptedToolCallBridge signalOwner, Path workingDirectory) {
         final ScriptedShell shell = new ScriptedShell(scenario);
-        final SandboxedLocalEnvironment environment = new SandboxedLocalEnvironment(realTempDir(), shell);
+        final SandboxedLocalEnvironment environment = new SandboxedLocalEnvironment(workingDirectory, shell);
         final CodeExecutionRequest request = CodeExecutionRequest.builder().toolUseId("toolu_1").code("pass")
                 .tools(List.of(ToolDefinition.of("Echo", "Echoes.", Map.of("type", "object")))).limits(limits)
                 .wallClock(Duration.ofSeconds(20)).cancellation(signalOwner.signal()).build();

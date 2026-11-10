@@ -84,10 +84,10 @@ configurations {
 // them and skips them even when a provider key is exported. Untagged on purpose: a tag would have to be a gate task
 // (ReleaseGateMatchesCiGateTest.everyTestTagIsGated), and running in CI is exactly what this tier must not do.
 // The key reaches the test JVM through the environment the build runs in (OPENAI_KEY / OPENAI_KEY_FILE /
-// ANTHROPIC_KEY); nothing here copies it.
-//     OPENAI_KEY_FILE=<path to a file holding the key> ./gradlew :aimon-cli:llmTest
+// ANTHROPIC_KEY / ANTHROPIC_KEY_FILE); nothing here copies it.
+//     OPENAI_KEY_FILE=<path to a file holding the key> ANTHROPIC_KEY_FILE=<path> ./gradlew :aimon-cli:llmTest
 val llmTest by tasks.registering(Test::class) {
-    description = "Runs ExecuteCode against a real model (needs OPENAI_KEY/OPENAI_KEY_FILE and/or ANTHROPIC_KEY). " +
+    description = "Runs ExecuteCode against a real model (needs OPENAI_KEY/OPENAI_KEY_FILE and/or ANTHROPIC_KEY/ANTHROPIC_KEY_FILE). " +
         "Not part of check, checkAll or CI."
     group = "verification"
     testClassesDirs = sourceSets.test.get().output.classesDirs

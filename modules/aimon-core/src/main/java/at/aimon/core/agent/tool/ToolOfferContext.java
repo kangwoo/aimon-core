@@ -389,7 +389,9 @@ public final class ToolOfferContext {
 
     /**
      * Returns why a ceiling above the agent emptied its programmatic settings although its own definition opts in — a
-     * fork whose caller allows none of its {@code programmatic-tools} (TC-30). {@link #getProgrammatic()} is then
+     * fork whose caller allows none of its {@code programmatic-tools} (TC-30), or a model-invoked inline skill that
+     * narrowed a turn, a fork or a slash skill's loop to nothing
+     * ({@link InlineSkillCeiling.Snapshot#getProgrammaticReason()}). {@link #getProgrammatic()} is then
      * {@link ProgrammaticToolSettings#none()}, which by itself reads as an agent that never opened tools to code, so
      * {@code ExecuteCode} reports this reason instead of staying silent.
      *

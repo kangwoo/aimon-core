@@ -81,8 +81,10 @@ final class ExecuteCodePlan {
             return computed;
         }
         if (!offer.getProgrammatic().isEnabled()) {
-            // A fork whose own definition opts in but whose caller allows none of it arrives with none(): told why on
-            // the span too (TC-30). The execution manager already logged it, once per subagent, so no WARN here.
+            // A fork whose own definition opts in but whose caller allows none of it arrives with none(), and so does
+            // an
+            // execution an inline skill emptied: told why on the span too (TC-30). The execution manager logged the
+            // first once per subagent, and the skill's activation is in the transcript, so no WARN here.
             return offer.getProgrammaticCeilingReason()
                     .map(reason -> new ExecuteCodePlan(null, List.of(), Set.of(), reason, null, true)).orElse(computed);
         }

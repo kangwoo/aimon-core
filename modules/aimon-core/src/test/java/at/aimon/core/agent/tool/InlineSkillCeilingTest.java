@@ -138,6 +138,50 @@ class InlineSkillCeilingTest {
         assertThat(ceiling.snapshot().getSkills()).hasSize(15);
     }
 
+    @Test
+    @DisplayName("TC-30: a skill that empties enabled programmatic settings records why — no keys, engine conflict,"
+            + " no tool in common — and later skills keep the first reason")
+    void programmaticReason() {
+        final InlineSkillCeiling noKeys = InlineSkillCeiling.startingAt(List.of(), READ_GREP);
+        assertThat(noKeys.snapshot().getProgrammaticReason()).isEmpty();
+        noKeys.narrow("plain", List.of(), ProgrammaticToolSettings.none());
+        assertThat(noKeys.snapshot().getProgrammaticReason()).hasValue("inline skill 'plain' sets no "
+                + "programmatic-tools, and an activated skill's programmatic settings narrow the execution's, so no "
+                + "tool is open to code");
+        noKeys.narrow("later", tools("Read"), READ);
+        assertThat(noKeys.snapshot().getProgrammaticReason()).as("kept: nothing narrows none() back")
+                .hasValueSatisfying(reason -> assertThat(reason).contains("'plain'"));
+
+        final InlineSkillCeiling conflict = InlineSkillCeiling.startingAt(List.of(), ProgrammaticToolSettings.builder()
+                .tools(List.of("Read")).engine(ProgrammaticEngineChoice.PYTHON).build());
+        conflict.narrow("js", List.of(), ProgrammaticToolSettings.builder().tools(List.of("Read"))
+                .engine(ProgrammaticEngineChoice.JAVASCRIPT).build());
+        assertThat(conflict.snapshot().getProgrammaticReason())
+                .hasValue("inline skill 'js' sets programmatic-engine javascript, but the execution uses python");
+
+        final InlineSkillCeiling disjoint = InlineSkillCeiling.startingAt(List.of(), READ);
+        disjoint.narrow("grep", List.of(), ProgrammaticToolSettings.builder().tools(List.of("Grep")).build());
+        assertThat(disjoint.snapshot().getProgrammaticReason()).hasValue(
+                "inline skill 'grep' sets programmatic-tools [Grep], but the execution allows none of them (it allows "
+                        + "[Read])");
+    }
+
+    @Test
+    @DisplayName("TC-30: no reason while settings remain, or when the execution started without any")
+    void noProgrammaticReason() {
+        final InlineSkillCeiling narrowed = InlineSkillCeiling.startingAt(List.of(), READ_GREP);
+        narrowed.narrow("reader", List.of(), READ);
+        assertThat(narrowed.snapshot().getProgrammatic()).isEqualTo(READ);
+        assertThat(narrowed.snapshot().getProgrammaticReason()).isEmpty();
+
+        final InlineSkillCeiling never = InlineSkillCeiling.startingAt(tools("Read", "Grep"),
+                ProgrammaticToolSettings.none());
+        never.narrow("plain", tools("Read"), ProgrammaticToolSettings.none());
+        assertThat(never.snapshot().isNarrowed()).isTrue();
+        assertThat(never.snapshot().getProgrammaticReason()).as("a ceiling above it emptied it, or it never opted in")
+                .isEmpty();
+    }
+
     private static List<AllowedTool> tools(String... names) {
         return java.util.Arrays.stream(names).map(AllowedTool::parse).toList();
     }

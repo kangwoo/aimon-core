@@ -889,7 +889,9 @@ public class OrcaAgentExecutor
      * @param toolCallDispatcher
      *            the turn's dispatcher, bound under the write-once {@link ToolContextKeys#TOOL_CALL_DISPATCHER}
      * @param approvalChannel
-     *            whether the turn can suspend for skill approval (a pre-flight scanner is configured)
+     *            whether the turn can suspend for skill approval (a pre-flight scanner is configured). Read as "this
+     *            is a main-loop turn" by {@link InlineSkillCeiling#isApprovalInNewTurn()}: any execution of an executor
+     *            with a scanner counts, as on the pre-flight path's own headless check
      * @return The tool context (never null)
      */
     // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
@@ -1886,6 +1888,8 @@ public class OrcaAgentExecutor
                                             .ceiling(maxSideEffectLevel)
                                             .programmatic(InlineSkillNarrowing.programmatic(
                                                     scope.getAgent().getMetadata().getProgrammatic(), ceilingSnapshot))
+                                            .programmaticCeilingReason(InlineSkillNarrowing
+                                                    .programmaticCeilingReason(null, ceilingSnapshot))
                                             .agentName(scope.getAgent().getName()),
                                     toolContext, InlineSkillNarrowing.factsAllowList(scope.getAgent().getAllowedTools(),
                                             ceilingSnapshot))

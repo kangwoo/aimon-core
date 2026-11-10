@@ -587,7 +587,8 @@ public class LlmSkillExecutor implements SkillExecutor {
             SkillExecutionContext context) {
         final List<AllowedTool> effectiveAllowed = InlineSkillNarrowing.factsAllowList(allowedTools, snapshot);
         final ToolOfferContext offerContext = offerContextOf(effectiveAllowed,
-                InlineSkillNarrowing.programmatic(programmatic, snapshot), skill, context);
+                InlineSkillNarrowing.programmatic(programmatic, snapshot),
+                InlineSkillNarrowing.programmaticCeilingReason(null, snapshot), skill, context);
         return new SkillOffer(snapshot.getVersion(), effectiveAllowed, offerContext,
                 offeredTools(skill, effectiveAllowed, context, offerContext), narrowing.dispatcherFor(snapshot));
     }
@@ -625,18 +626,21 @@ public class LlmSkillExecutor implements SkillExecutor {
      *
      * <p>
      * The skill's effective programmatic settings and the environment's static facts let {@code ExecuteCode} describe
-     * itself for this offer; the {@code Bash} fact reads the same effective allow-list. The agent name is
-     * {@code skill:<name>}, so an operator warning names the skill.
+     * itself for this offer; the {@code Bash} fact reads the same effective allow-list. When an inline skill emptied
+     * those settings, its reason rides along so the span says so. The agent name is {@code skill:<name>}, so an
+     * operator warning names the skill.
      */
     private ToolOfferContext offerContextOf(List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic,
-            Skill skill, SkillExecutionContext context) {
+            String programmaticCeilingReason, Skill skill, SkillExecutionContext context) {
         final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
                 .collect(Collectors.toSet());
-        return CodeOfferKeys.putEnvironmentFacts(ToolOfferContext.builder().registry(context.getToolRegistry())
-                .admission(
-                        tool -> allowedToolNames.isEmpty() || allowedToolNames.contains(tool.getDefinition().getName()))
-                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).programmatic(programmatic)
-                .agentName("skill:" + skill.getName()), context.getToolContext(), allowedTools).build();
+        return CodeOfferKeys.putEnvironmentFacts(
+                ToolOfferContext.builder().registry(context.getToolRegistry())
+                        .admission(tool -> allowedToolNames.isEmpty()
+                                || allowedToolNames.contains(tool.getDefinition().getName()))
+                        .ceiling(toolExecutionManager.getMaxSideEffectLevel()).programmatic(programmatic)
+                        .programmaticCeilingReason(programmaticCeilingReason).agentName("skill:" + skill.getName()),
+                context.getToolContext(), allowedTools).build();
     }
 
     /**

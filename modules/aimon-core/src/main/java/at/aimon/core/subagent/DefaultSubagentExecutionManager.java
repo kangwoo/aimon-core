@@ -1337,6 +1337,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             return Optional.of("the subagent sets programmatic-engine " + own.getEngine().wireName()
                     + ", but its caller uses " + callerProgrammatic.getEngine().wireName());
         }
+        // "allows none of them" is right only because narrowedBy has no way to disable shared tools other than the
+        // engine conflict above. A new disabling case there needs its own wording here, or it is reported as this.
         return Optional.of("the subagent sets programmatic-tools " + own.getTools() + ", but its caller allows none of "
                 + "them (caller allows " + callerProgrammatic.getTools() + ")");
     }

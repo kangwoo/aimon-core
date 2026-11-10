@@ -7,6 +7,27 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: PTC last polish — inline-skill span reason, spaced host paths, live E2E answer check
+
+Closes backlog TC-32 (registered and closed here) and the PTC wrap-up review's remaining non-blocking findings. No
+breaking change: the new methods are additions.
+
+- **Changed: an inline skill that empties an execution's programmatic settings says so on its trace.** After a
+  model-invoked skill narrows a turn, a fork or a slash skill's loop to no programmatic tools, each following
+  `ITERATION` span carries `ptc.unavailable_reason` (for example "inline skill 'probe' sets no programmatic-tools, …"),
+  as a fork emptied by its caller's ceiling already did. New: `InlineSkillCeiling.Snapshot.getProgrammaticReason()` and
+  `InlineSkillNarrowing.programmaticCeilingReason(String, Snapshot)` (backlog TC-32, closed).
+- **Changed (model-visible): host paths with spaces are scrubbed whole.** When a shell-engine run ends without `DONE`,
+  the environment's working directory and the JVM's temp root are replaced literally, with the path under them, before
+  the path pattern runs, so `/Users/Jane Doe/…` no longer leaves `Doe/…/aimon_ptc.py` in `[logs]` (backlog TC-31,
+  follow-up).
+- **Build only:** the real-model `ExecuteCode` E2E accepts `ANTHROPIC_KEY_FILE` like `OPENAI_KEY_FILE`, asserts that a
+  program printed (or the final answer named) exactly the expected hosts, and prints `answer=CORRECT|WRONG
+  programPrinted=[…] finalAnswerMatches=…` instead of `answerMatches=`. The final answer alone had marked correct
+  JavaScript runs as wrong, because the model printed the names and only said so. The fixture's host tools now
+  describe their JSON object. Guarding comments and javadoc on the programmatic-ceiling reasons and the
+  approval-channel flag; two over-width test lines split.
+
 ### Changed: PTC wrap-up — fork span reason, no-`DONE` stderr, skill-result text
 
 Closes backlog TC-30 and TC-31 and the non-blocking findings left by the PTC leftovers PRs. No breaking change: the
