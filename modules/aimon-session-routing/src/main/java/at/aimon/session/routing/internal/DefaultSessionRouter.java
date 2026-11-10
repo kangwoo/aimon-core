@@ -79,12 +79,17 @@ import at.aimon.core.base.Principal;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.subagent.task.codec.UserInputCodec;
 import at.aimon.session.routing.ClusterSessionStatus;
+import at.aimon.session.routing.DrainHandle;
+import at.aimon.session.routing.DrainSnapshot;
 import at.aimon.session.routing.LiveSessionCache;
 import at.aimon.session.routing.LiveSessionCache.SessionEntry;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.admission.TurnAdmission;
+import at.aimon.session.routing.admission.TurnAdmissionPermit;
+import at.aimon.session.routing.exception.NodeDrainingException;
 import at.aimon.session.routing.exception.TurnNotRunException;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
@@ -266,6 +271,37 @@ public final class DefaultSessionRouter implements SessionRouter {
      */
     private final AtomicBoolean shutdownForced = new AtomicBoolean();
 
+    /**
+     * Set once by {@link #beginDrain()}: start no new pass on this node, keep running the ones already counted, and
+     * hand sessions over (routing.md §8.4).
+     *
+     * <p>
+     * Distinct from {@link #acceptingSubmits} because the two answer different questions.
+     * {@code acceptingSubmits=false} means the router is closing — submits throw and a forced close may follow.
+     * Draining keeps the router fully alive: leases renew, results persist, interrupts land, and nothing is ever torn
+     * down because of this flag.
+     *
+     * <p>
+     * <b>The race with a starting pass.</b> Every pass is counted in {@link #inFlightTurns} <em>before</em> this flag
+     * is read for the last time on the way in, and {@link #beginDrain()} writes this flag before anything reads the
+     * counter. Both are sequentially consistent atomics, so of a pass starting and a drain beginning at least one sees
+     * the other: either the pass reads {@code true} and defers, or every later read of the counter includes it. That is
+     * what makes "no turn starts uncounted after {@code beginDrain} returns" hold without a lock.
+     */
+    private final AtomicBoolean draining = new AtomicBoolean();
+
+    /** The node-local gate consulted at the same boundary as {@link #draining}; see {@link #admitHere}. */
+    private final TurnAdmission turnAdmission;
+
+    /**
+     * What a draining node does with a submit it will not run: forward it to the inbox ({@code DISTRIBUTED}) or refuse
+     * it with {@link NodeDrainingException} ({@code SINGLE_NODE}, where no peer would ever collect it).
+     */
+    private final boolean forwardSubmitsWhileDraining;
+
+    /** The one handle every {@link #beginDrain()} call returns. */
+    private final DrainHandle drainHandle = new DefaultDrainHandle();
+
     // @formatter:off
     private final ConcurrentMap<SessionId, SessionSignalBus.Subscription> subscriptions
             = new ConcurrentHashMap<>();
@@ -433,6 +469,8 @@ public final class DefaultSessionRouter implements SessionRouter {
         this.rawSegments = config.segmentStore();
         this.fencedSegments = rawSegments == null ? null : store.segments(rawSegments);
         this.lifecycleListeners = config.lifecycleListeners();
+        this.turnAdmission = Objects.requireNonNull(config.turnAdmission(), "turnAdmission must not be null");
+        this.forwardSubmitsWhileDraining = config.forwardSubmitsWhileDraining();
 
         // The close listener is how a held lease gets back to the cluster: every way a session can end — idle TTL, LRU,
         // an explicit release, an EVICT signal, shutdown — ends in a close, and none of them knows about leases.
@@ -485,6 +523,10 @@ public final class DefaultSessionRouter implements SessionRouter {
 
         final SessionId convId = request.getSessionId();
         final String requestedAgent = request.getAgentRef();
+        if (draining.get() && !forwardSubmitsWhileDraining) {
+            // Before any I/O: nothing has been reserved or queued, so the caller can take this input elsewhere.
+            throw new NodeDrainingException(nodeId, convId);
+        }
 
         // Subscribe before any I/O, not after the disposition is known (routing.md §7.1 F0). The moment this submission
         // touches the inbox a peer can drain it and announce the result, and a subscription armed after that point
@@ -544,57 +586,113 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
 
         boolean turnStarted = false;
+        OncePermit permit = null;
         try {
-            final HeldLease held = holdOrClaim(convId, requestedAgent, request.getOwner().orElse(null), idem,
-                    acquireStart);
-            if (held == null) {
-                return forwardToInbox(request, turnId, idem);
-            }
-
-            final CompletableFuture<AgentExecutionResult> future = new CompletableFuture<>();
-            inFlightTurns.incrementAndGet();
-            // closeGracefully sets acceptingSubmits=false then waits for inFlightTurns to drain. We must observe a
-            // post-increment view of the gate so a submit that started before the gate flipped does not race the
-            // executor's shutdownNow. AtomicBoolean.get() is a volatile read, ordered after the AtomicInteger.cas.
-            if (!acceptingSubmits.get()) {
-                inFlightTurns.decrementAndGet();
-                if (idem.acquiredKey != null) {
-                    safeCompareAndReset(idem.acquiredKey, reserverId);
+            // Drain and admission are decided here, at one boundary: with the gate held, before any lease is claimed
+            // and before anything is collected, so a deferral costs nothing and loses nothing (routing.md §8.4).
+            permit = admitHere(convId, TurnAdmission.Path.SUBMIT);
+            if (permit != null) {
+                final HeldLease held = holdOrClaim(convId, requestedAgent, request.getOwner().orElse(null), idem,
+                        acquireStart);
+                if (held == null) {
+                    return forwardToInbox(request, turnId, idem);
                 }
-                returnLeaseIfUnowned(convId, held);
-                throw new IllegalStateException("SessionRouter is shutting down — refusing new submit");
-            }
-            try {
-                turnExecutor.execute(() -> {
-                    try {
-                        runTurnLoop(request, turnId, held, idem, future);
-                    } finally {
-                        inFlightTurns.decrementAndGet();
-                    }
-                });
-            } catch (RuntimeException e) {
-                // The task never started, so runTurnLoop's finally will never run: this is the only place that can undo
-                // the increment and the lease. Leaving either behind is worse than the rejection itself — a stuck
-                // inFlightTurns makes every subsequent closeGracefully time out, and a lease nobody renews pins the
-                // session to this node until it expires. Releasing here is safe precisely because no turn is
-                // executing; the gate goes back in the finally below, which is what stops the session from being
-                // refused forever.
-                inFlightTurns.decrementAndGet();
-                if (idem.acquiredKey != null) {
-                    safeCompareAndReset(idem.acquiredKey, reserverId);
+                final SubmitDisposition outcome = startLocalTurn(request, turnId, held, idem, permit);
+                if (outcome != null) {
+                    turnStarted = true;
+                    return outcome;
                 }
-                returnLeaseIfUnowned(convId, held);
-                throw e;
             }
-            turnStarted = true;
-            final SubmitDisposition outcome = SubmitDisposition.executedLocally(turnId, future);
-            recordOutcome(outcome);
-            return outcome;
         } finally {
             if (!turnStarted) {
+                if (permit != null) {
+                    permit.release();
+                }
                 endTurnAndSettleLeaseReturn(convId);
             }
         }
+        // Deferred — draining, or the admission gate said not now. Outside the gate, so the doorbell the delivery rings
+        // can be answered here (a gate with capacity again) or by the hand-off, both of which take the gate themselves.
+        return deferSubmit(request, turnId, idem);
+    }
+
+    /**
+     * Counts and dispatches the turn {@link #submit} decided to run here. Called with the turn gate held and the permit
+     * granted.
+     *
+     * @return the {@code EXECUTED_LOCALLY} disposition, or {@code null} when draining began between the admission check
+     *         and the count — the turn did not start, and the caller defers it instead
+     */
+    private SubmitDisposition startLocalTurn(SubmitRequest request, TurnId turnId, HeldLease held,
+            IdempotencyDecision idem, OncePermit permit) {
+        final SessionId convId = request.getSessionId();
+        final String reserverId = idem.reserverId;
+        final CompletableFuture<AgentExecutionResult> future = new CompletableFuture<>();
+        inFlightTurns.incrementAndGet();
+        // closeGracefully sets acceptingSubmits=false then waits for inFlightTurns to drain. We must observe a
+        // post-increment view of the gate so a submit that started before the gate flipped does not race the executor's
+        // shutdownNow. AtomicBoolean.get() is a volatile read, ordered after the AtomicInteger.cas.
+        if (!acceptingSubmits.get()) {
+            inFlightTurns.decrementAndGet();
+            if (idem.acquiredKey != null) {
+                safeCompareAndReset(idem.acquiredKey, reserverId);
+            }
+            returnLeaseIfUnowned(convId, held);
+            throw new IllegalStateException("SessionRouter is shutting down — refusing new submit");
+        }
+        // The same post-increment re-read for draining (see the field's note): admitHere's read came before this turn
+        // was counted, so a beginDrain in between would otherwise neither see it nor stop it.
+        if (draining.get()) {
+            inFlightTurns.decrementAndGet();
+            returnLeaseIfUnowned(convId, held);
+            return null;
+        }
+        try {
+            turnExecutor.execute(() -> {
+                try {
+                    runTurnLoop(request, turnId, held, idem, future, permit);
+                } finally {
+                    // Normally already released inside runTurnLoop, before its doorbell re-ring; this is the backstop
+                    // for a loop that never got that far. OncePermit makes the second call a no-op.
+                    permit.release();
+                    inFlightTurns.decrementAndGet();
+                }
+            });
+        } catch (RuntimeException e) {
+            // The task never started, so runTurnLoop's finally will never run: this is the only place that can undo the
+            // increment and the lease. Leaving either behind is worse than the rejection itself — a stuck inFlightTurns
+            // makes every subsequent closeGracefully time out, and a lease nobody renews pins the session to this node
+            // until it expires. Releasing here is safe precisely because no turn is executing; the gate goes back in
+            // submit's finally, which is what stops the session from being refused forever.
+            inFlightTurns.decrementAndGet();
+            if (idem.acquiredKey != null) {
+                safeCompareAndReset(idem.acquiredKey, reserverId);
+            }
+            returnLeaseIfUnowned(convId, held);
+            throw e;
+        }
+        final SubmitDisposition outcome = SubmitDisposition.executedLocally(turnId, future);
+        recordOutcome(outcome);
+        return outcome;
+    }
+
+    /**
+     * A submit this node decided not to run — it is draining, or its admission gate deferred. Nothing runs here: the
+     * input goes to the inbox, and the doorbell that delivery rings hands the session to a node that will collect it.
+     *
+     * @return the {@code FORWARDED} disposition
+     * @throws NodeDrainingException
+     *             when draining and no peer can be relied on to collect it ({@code SINGLE_NODE}); the reservation is
+     *             reset first, so the caller may resubmit the same key elsewhere
+     */
+    private SubmitDisposition deferSubmit(SubmitRequest request, TurnId turnId, IdempotencyDecision idem) {
+        if (draining.get() && !forwardSubmitsWhileDraining) {
+            if (idem.acquiredKey != null) {
+                safeCompareAndReset(idem.acquiredKey, idem.reserverId);
+            }
+            throw new NodeDrainingException(nodeId, request.getSessionId());
+        }
+        return forwardToInbox(request, turnId, idem);
     }
 
     /**
@@ -1135,9 +1233,12 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            the idempotency decision taken at submit time
      * @param future
      *            completed with the result of {@code request}'s own turn
+     * @param permit
+     *            the admission permit this pass runs under; released in the {@code finally}, before the doorbell is
+     *            re-rung, so a gate that counts sees this pass's capacity back before it is asked about the next one
      */
     private void runTurnLoop(SubmitRequest request, TurnId turnId, HeldLease held, IdempotencyDecision idem,
-            CompletableFuture<AgentExecutionResult> future) {
+            CompletableFuture<AgentExecutionResult> future, OncePermit permit) {
         final SessionId convId = request.getSessionId();
         final String requestedAgent = request.getAgentRef();
         ScheduledFuture<?> statusTask = null;
@@ -1236,6 +1337,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // state instead of lingering on the last in-flight RUNNING snapshot. Still before unpin, so the session
                 // is guaranteed alive here even if it was evicted mid-turn.
                 publishStatusSnapshot(convId, entry.getSession());
+                evictIfDraining(convId);
                 // Inside the gate, and before the lease decision below. Unpinning is what performs a mid-turn
                 // eviction's deferred close, so until it returns this session may still have a live session — and
                 // once it returns, whether one is left is exactly what decides the lease.
@@ -1251,8 +1353,10 @@ public final class DefaultSessionRouter implements SessionRouter {
             // rule it declined to apply, applied by the thread it left it to. A close that lands after this line is
             // too late to be covered that way, which is what endTurnAndSettleLeaseReturn exists to catch.
             returnLeaseIfUnowned(convId, held);
+            permit.release();
             endTurnAndSettleLeaseReturn(convId);
             rerunDoorbellIfRung(convId);
+            relayQueuedWorkIfDraining(convId);
         }
     }
 
@@ -1391,11 +1495,12 @@ public final class DefaultSessionRouter implements SessionRouter {
                 }
             }
 
-            if (!acceptingSubmits.get()) {
-                // Draining: take nothing *new* out of the at-most-once inbox. Collecting here would make this node the
-                // only one that can run those messages at the moment it is least able to, and would let each re-collect
-                // stretch the shutdown by another turn. Left in the inbox they stay every peer's to run, and the
-                // doorbell this pass's finally re-rings is what tells a peer to look — see handOverForDrain.
+            if (!acceptingSubmits.get() || draining.get()) {
+                // Closing or draining: take nothing *new* out of the at-most-once inbox. Collecting here would make
+                // this node the only one that can run those messages at the moment it is least able to, and would let
+                // each re-collect stretch the shutdown by another turn. Left in the inbox they stay every peer's to
+                // run, and the doorbell this pass's finally re-rings is what tells a peer to look — see
+                // handOverForDrain.
                 continue;
             }
             final List<InboundMessage> extra = collectPending(convId);
@@ -1430,8 +1535,10 @@ public final class DefaultSessionRouter implements SessionRouter {
      * @param held
      *            the session lease to drain under, and the turn gate: this method releases the gate in its
      *            {@code finally}, and the lease only if no session took it over
+     * @param permit
+     *            the admission permit this pass runs under, released in the {@code finally} before the doorbell re-ring
      */
-    private void runDrainOnly(SessionId convId, HeldLease held) {
+    private void runDrainOnly(SessionId convId, HeldLease held, OncePermit permit) {
         SessionEntry entry = null;
         final Deque<InboundMessage> pendingQueue = new ArrayDeque<>();
 
@@ -1518,6 +1625,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             if (entry != null) {
                 turnSessions.remove(convId, entry.getSession());
                 publishStatusSnapshot(convId, entry.getSession());
+                evictIfDraining(convId);
                 entry.unpin();
             }
             // The overwhelmingly common exit is the one where no session was opened at all: the inbox was already
@@ -1526,8 +1634,10 @@ public final class DefaultSessionRouter implements SessionRouter {
             //
             // Unpin first, then this, then endTurn — see runTurnLoop's finally for why that order is load-bearing.
             returnLeaseIfUnowned(convId, held);
+            permit.release();
             endTurnAndSettleLeaseReturn(convId);
             rerunDoorbellIfRung(convId);
+            relayQueuedWorkIfDraining(convId);
         }
     }
 
@@ -1627,20 +1737,20 @@ public final class DefaultSessionRouter implements SessionRouter {
             // the first may relay.
             doorbellRelayOwed.add(sessionId);
         }
-        if (!acceptingSubmits.get()) {
+        if (!acceptingSubmits.get() || draining.get()) {
             handOverForDrain(sessionId);
             return;
         }
         try {
             turnExecutor.execute(() -> {
+                // Counted before draining is read, never after — the ordering beginDrain's race argument rests on.
                 inFlightTurns.incrementAndGet();
                 try {
-                    if (acceptingSubmits.get()) {
+                    if (acceptingSubmits.get() && !draining.get()) {
                         tryDrainOnce(sessionId);
                     } else {
-                        // Draining started between the ring and this task. Same answer as the synchronous check above:
-                        // do not start a pass that closeGracefully is about to tear down, hand the session over
-                        // instead.
+                        // Closing or draining started between the ring and this task. Same answer as the synchronous
+                        // check above: do not start a pass, hand the session over instead.
                         handOverForDrain(sessionId);
                     }
                 } finally {
@@ -1670,7 +1780,8 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
-     * Give a session up because this node is draining, so a peer that is still serving traffic collects its inbox.
+     * Give a session up because this node will not drain it — it is closing, draining ({@link #beginDrain()}), or its
+     * admission gate deferred — so a peer that is still serving traffic collects its inbox.
      *
      * <p>
      * Without this, a doorbell that arrives once {@code closeGracefully} has flipped {@link #acceptingSubmits} reaches
@@ -1798,22 +1909,36 @@ public final class DefaultSessionRouter implements SessionRouter {
             // the doorbell outlives the turn and rings again.
             return;
         }
+        // Asked before the lease and, above all, before the collect: a deferral here leaves the inbox exactly as it
+        // was, so nothing is removed, acknowledged or lost (routing.md §8.4). The caller counted this pass in
+        // inFlightTurns before reading draining, so admitHere's draining read is the post-increment one beginDrain
+        // relies on.
+        final OncePermit permit = admitHere(sessionId, TurnAdmission.Path.INBOX);
+        if (permit == null) {
+            endTurnAndSettleLeaseReturn(sessionId);
+            // Hands over only what this node was holding when the doorbell rang; a node that never held the session
+            // adds nothing to the rail, which is what keeps two deferring nodes from volleying one announcement.
+            handOverForDrain(sessionId);
+            return;
+        }
         final HeldLease held;
         try {
             held = holdOrAcquire(sessionId);
         } catch (RuntimeException e) {
             log.warn("Doorbell lease acquire failed for session {}: {}", sessionId, e.toString());
+            permit.release();
             endTurnAndSettleLeaseReturn(sessionId);
             return;
         }
         if (held == null) {
             // A peer is holding the session, and its post-turn re-collect will pick this up. If the message
             // arrived too late for that, the doorbell outlives their pass and they re-ring on release.
+            permit.release();
             endTurnAndSettleLeaseReturn(sessionId);
             return;
         }
-        // Takes over both the lease and the gate, and releases the gate in its own finally.
-        runDrainOnly(sessionId, held);
+        // Takes over the lease, the gate and the permit, and releases the gate and the permit in its own finally.
+        runDrainOnly(sessionId, held, permit);
     }
 
     /**
@@ -3146,6 +3271,199 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
         throw new IllegalStateException(
                 "Could not acquire session " + sessionId + " for deleteSession within " + releaseInterruptTimeout);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Drain mode and node turn admission (routing.md §8.4)
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The flag flips first and the hand-overs follow on worker threads, so this returns without waiting on any session
+     * close (a close runs the session's end hooks, which are deployment code). Each session this node holds is handed
+     * over through {@link #handOverOnDrain}; one with a running turn is handed over by that turn's own exit.
+     */
+    @Override
+    public DrainHandle beginDrain() {
+        if (draining.compareAndSet(false, true)) {
+            log.info("Node {} is draining: no new turn starts here; {} held session(s) are being handed over", nodeId,
+                    heldLeases.size());
+            for (SessionId sessionId : List.copyOf(heldLeases.keySet())) {
+                dispatchLeaseTeardown(sessionId, () -> handOverOnDrain(sessionId));
+            }
+        }
+        return drainHandle;
+    }
+
+    @Override
+    public boolean isDraining() {
+        return draining.get();
+    }
+
+    /**
+     * Hands one session this node holds to the cluster because the node began draining.
+     *
+     * <p>
+     * {@link #yieldSession}, not {@link #releaseSession}: the session is not going away, it is about to run somewhere
+     * else. So the inbox is kept rather than purged, forwards stay pending, approvals survive, observers keep their
+     * streams, and no {@code EVICT} goes out. When a turn holds the gate the lease return is declined and left to that
+     * turn's exit, which by then also finds {@link #draining} set and evicts before it decides the lease.
+     *
+     * <p>
+     * The lease return itself is fenced by the store: {@code SessionLeaseStore#release} matches on the lease's token,
+     * so a return that arrives after the lease expired and a peer re-acquired the session releases nothing of the
+     * peer's.
+     *
+     * @param sessionId
+     *            the session to hand over
+     */
+    private void handOverOnDrain(SessionId sessionId) {
+        yieldSession(sessionId);
+        relayQueuedWorkIfDraining(sessionId);
+    }
+
+    /**
+     * Drops the cached live session at the end of a pass on a draining node, so the lease decision that follows returns
+     * the lease rather than keeping it for a next turn that will never start here. Called inside the gate, before the
+     * unpin: the eviction removes the entry and the unpin performs its close.
+     */
+    private void evictIfDraining(SessionId sessionId) {
+        if (draining.get()) {
+            sessionCache.evict(sessionId);
+        }
+    }
+
+    /**
+     * On a draining node that has just stopped holding {@code sessionId}, announce its inbox again when it still has
+     * work, so a peer that is not draining collects it.
+     *
+     * <p>
+     * The doorbell relay ({@link #handOverForDrain}) already covers every message whose doorbell this node heard as
+     * holder. This covers the rest: a message delivered while this node held the session but whose announcement it
+     * missed, or one queued before {@link #beginDrain()} for an idle session nobody had rung for. It may duplicate the
+     * relay, which costs a peer one empty collect. It never volleys: a draining peer that hears it holds nothing, owes
+     * nothing, and adds nothing to the rail.
+     */
+    private void relayQueuedWorkIfDraining(SessionId sessionId) {
+        if (!draining.get() || heldLeases.containsKey(sessionId) || activeTurns.contains(sessionId)) {
+            return;
+        }
+        if (mayHaveQueuedWork(sessionId)) {
+            republishDoorbell(sessionId);
+        }
+    }
+
+    /**
+     * The single boundary at which this node decides whether to start a pass: draining first, then the host's
+     * {@link TurnAdmission}. Called with the session's turn gate held and before anything is claimed or collected.
+     *
+     * @param sessionId
+     *            the session the pass would run for
+     * @param path
+     *            which entry point is asking
+     * @return the permit to run under, or {@code null} to defer — when draining, when the gate declines, and when the
+     *         gate throws (a broken gate must cost this node its work, never a message)
+     */
+    private OncePermit admitHere(SessionId sessionId, TurnAdmission.Path path) {
+        if (draining.get()) {
+            return null;
+        }
+        final Optional<TurnAdmissionPermit> granted;
+        try {
+            granted = turnAdmission.tryAdmit(sessionId, path);
+        } catch (RuntimeException e) {
+            log.warn("TurnAdmission threw for session {} ({}); deferring: {}", sessionId, path, e.toString());
+            return null;
+        }
+        if (granted == null || granted.isEmpty()) {
+            log.debug("TurnAdmission deferred session {} ({})", sessionId, path);
+            return null;
+        }
+        return new OncePermit(granted.get());
+    }
+
+    /**
+     * Re-attempts the relay of doorbells this node owes for sessions it no longer holds — a relay whose publish failed
+     * leaves its marks standing, and on a draining node no later lease return would come along to try again.
+     */
+    private void retryOwedHandOvers() {
+        for (SessionId sessionId : List.copyOf(doorbellRelayOwed)) {
+            if (heldLease(sessionId) == null && !activeTurns.contains(sessionId)) {
+                handOverForDrain(sessionId);
+            }
+        }
+    }
+
+    /** What {@link #beginDrain()} hands out; reads the router's live counters. */
+    private final class DefaultDrainHandle implements DrainHandle {
+
+        /** How long {@link #awaitQuiescence} sleeps between two looks. */
+        private static final long POLL_MS = 25L;
+
+        /** Every how many looks a failed doorbell relay is retried — about once a second. */
+        private static final int RETRY_EVERY = 40;
+
+        @Override
+        public boolean awaitQuiescence(Duration timeout) {
+            Objects.requireNonNull(timeout, "timeout must not be null");
+            if (timeout.isNegative()) {
+                throw new IllegalArgumentException("timeout must not be negative: " + timeout);
+            }
+            final long deadline = System.nanoTime() + timeout.toNanos();
+            int looks = 0;
+            while (true) {
+                if (snapshot().isQuiescent()) {
+                    return true;
+                }
+                final long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                if (++looks % RETRY_EVERY == 0) {
+                    retryOwedHandOvers();
+                }
+                try {
+                    Thread.sleep(Math.max(1L, Math.min(POLL_MS, TimeUnit.NANOSECONDS.toMillis(remaining))));
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return snapshot().isQuiescent();
+                }
+            }
+        }
+
+        @Override
+        public DrainSnapshot snapshot() {
+            return DrainSnapshot.builder().draining(draining.get()).inFlightTurns(inFlightTurns.get())
+                    .activeSessions(activeTurns.size()).heldLeases(heldLeases.size())
+                    .pendingHandOvers(doorbellRelayOwed.size()).pendingForwards(forwardsByTurn.size()).build();
+        }
+    }
+
+    /**
+     * A {@link TurnAdmissionPermit} the router releases exactly once, however many exits reach it — the success path,
+     * the failure path, and the backstop in the dispatching task all call {@link #release()}. A release that throws is
+     * logged; the turn it belonged to is already over.
+     */
+    private static final class OncePermit {
+        private final TurnAdmissionPermit delegate;
+        private final AtomicBoolean released = new AtomicBoolean();
+
+        private OncePermit(TurnAdmissionPermit delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "permit must not be null");
+        }
+
+        void release() {
+            if (!released.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                delegate.release();
+            } catch (RuntimeException e) {
+                log.warn("TurnAdmissionPermit.release threw: {}", e.toString());
+            }
+        }
     }
 
     @Override

@@ -1,8 +1,8 @@
 # 세션 라우팅 — sticky 없이 세션을 직렬화한다
 
 **Status**: IMPLEMENTED — `aimon-session-routing`. 공개 표면은 `SessionRouter` · `SubmitRequest` · `SubmitDisposition` ·
-`LiveSessionCache` · `LiveSessionOpener` · `ClusterSessionStatus` · `DeploymentMode` · `SessionRouterBuilder` · `SessionMetrics` 이고,
-나머지는 `at.aimon.session.routing.internal` 에 있다. 라우터가 쓰는 SPI 는 `aimon-core` 에 있다([`session-store.md`](session-store.md) §1).
+`LiveSessionCache` · `LiveSessionOpener` · `ClusterSessionStatus` · `DeploymentMode` · `SessionRouterBuilder` · `SessionMetrics` ·
+`DrainHandle` · `DrainSnapshot` · `admission.TurnAdmission` 이고, 나머지는 `at.aimon.session.routing.internal` 에 있다. 라우터가 쓰는 SPI 는 `aimon-core` 에 있다([`session-store.md`](session-store.md) §1).
 남은 것은 [마지막 절](#남은-것).
 
 이 문서는 라우터 자체를 다룬다. 라우터가 기대는 두 계약 — 크로스 노드 우편함과 멱등 원장 — 은 각자 문서가 있다:
@@ -162,6 +162,7 @@ routing 없이** 세션의 턴을 클러스터 전체에서 하나씩만 돌게 
 | `deleteSession(id)` | 이력까지 삭제. 홀더만 할 수 있다(§9) |
 | `status(id)` | `ClusterSessionStatus` — best-effort 관측, **제어 게이트 아님** |
 | `fencedRecordStore(fence)` / `fencedSegmentStore(fence)` | 이 라우터의 `SessionStore` 가 주는 펜스 뷰([`session-store.md`](session-store.md) §5.2) |
+| `beginDrain()` / `isDraining()` | 새 턴을 이 노드에서 시작하지 않고, 진행 중 턴은 끝까지 돌리고, 세션을 피어에 넘긴다. 아무것도 닫지 않는다(§8.4) |
 | `close()` / `closeGracefully(timeout)` | 노드 로컬 자원만. `AgentRuntime` 은 건드리지 않는다 |
 
 `interrupt` 의 두 형태는 의도적으로 다르다. `TurnId` 를 준 쪽은 "내가 보고 있던 그 턴" 을 겨냥했으므로 활성 턴이 이미 다음 턴으로
@@ -422,6 +423,65 @@ delete 와 피어의 `EVICT` 수신도 같은 일을 한다.
 `extend` 가 실패하면(펜싱 토큰 불일치 = 리스가 이미 넘어감) `onExtendFailed` 가 정확히 한 번 발화하고 라우터가 턴을
 `interrupt(LEASE_LOST)` 로 끊는다. 이후 틱은 `lostLease` 래치로 no-op 이다. 이것은 `ExecutionBudget` 의 시간 상한과 별개의 그물이다.
 예산이 먼저고 리스는 분산 쪽 그물이다.
+
+### 8.4 드레인과 노드 턴 승인
+
+API 서버와 에이전트 워커를 나누어 워커를 굴리거나 줄이려면 "새 일은 받지 않되, 돌고 있는 턴은 끝까지 돌리고, 시한이 지나도 노드를
+살려 둔다" 가 필요하다. `closeGracefully` 는 이것을 못 한다 — 시한이 지나면 남은 턴을 끊고 닫는다(§8.2 C). 드레인은 그 앞 단계를
+떼어 낸 것이고, 노드 턴 승인은 같은 경계에 호스트가 꽂는 용량 게이트다.
+
+**경계는 하나다.** 이 노드에서 턴을 시작하는 입구는 둘뿐이다 — 로컬에서 돌 `submit`(사용자 턴, 콜드 오픈, idle-wake 는 모두
+`submit` 을 거친다)과 초인종·전달 재울림이 여는 인박스 드레인 패스. 둘 다 턴 게이트를 쥔 직후, **리스를 얻기 전이고 인박스를
+collect 하기 전**에 `admitHere` 한 곳에서 묻는다: 드레인 중인가, 그다음 `TurnAdmission.tryAdmit` 이 허락하는가. 어느 쪽이든 아니면
+연기(defer)다. collect 뒤에 묻지 않으므로 연기는 메시지를 지우지도, 확인하지도, 잃지도 않는다. 인박스 SPI 는 바뀌지 않는다 —
+`collect` 는 여전히 원자적 제거(at-most-once)다.
+
+**연기하면 넘긴다.** 연기된 `submit` 은 인박스로 배달되고(`FORWARDED`) 초인종을 울린다. 연기된 드레인 패스는 인박스를 그대로 두고
+세션을 넘긴다. 넘기는 길은 §7.3 의 hand-off 와 같다 — `yieldSession` 이 캐시에서 내리고 리스를 반납하며(인박스·승인·구독자 보존,
+`EVICT` 없음, 전달 future 그대로), 이 노드가 홀더로서 들은 초인종만 한 번 다시 울린다(`doorbellRelayOwed`). 홀더가 아니었던 노드는
+아무것도 울리지 않으므로 드레인·연기 중인 두 노드가 초인종을 주고받지 않는다. 받아 줄 피어가 없으면 전달을 기다리는 노드의 폴링이
+주기마다 다시 울리고 게이트가 다시 질문받는다 — 연기는 거절이 아니라 back-pressure 다.
+
+**드레인 — `beginDrain()`.** 멱등이고 되돌릴 수 없다. 플래그를 세우는 순간 승인이 멈춘다.
+
+| 대상 | 동작 |
+|---|---|
+| 진행 중 턴 | 끝까지 돈다. 리스 갱신, 결과·트랜스크립트 영속, 인터럽트·승인 처리 모두 평소대로. 이미 collect 한 메시지도 돈다 |
+| 진행 중 패스의 재-collect | 하지 않는다. 남은 메시지는 피어 몫으로 인박스에 둔다 |
+| 유휴로 쥔 세션 | 즉시 넘긴다(작업 스레드에서). 인박스가 비어 있지 않으면 초인종을 다시 울린다 |
+| 턴이 도는 세션 | 그 턴이 끝날 때 넘긴다 — 패스의 `finally` 가 리스 결정 전에 캐시에서 내리므로 리스가 반납된다 |
+| 새 `submit` (`DISTRIBUTED`) | 인박스로 배달, `FORWARDED`. 드레인 중이 아닌 피어가 collect 한다 |
+| 새 `submit` (`SINGLE_NODE`) | `NodeDrainingException`. 아무것도 예약·배달하지 않았으므로 호출자가 다른 노드로 재시도할 수 있다 |
+| 이후 `close()` / `closeGracefully()` | 지금과 똑같다 |
+
+드레인과 시작하는 턴의 경합은 락 없이 닫힌다. 모든 패스는 들어오는 길에 `inFlightTurns` 를 **먼저** 올리고 **그다음** 드레인 플래그를
+마지막으로 읽는다. `beginDrain` 은 플래그를 쓴 **다음** 카운터를 읽는다. 둘 다 순차 일관 atomic 이므로 적어도 한쪽은 다른 쪽을 본다 —
+패스가 플래그를 보고 연기하거나, 드레인의 카운터 읽기가 그 패스를 포함한다. 그래서 `beginDrain` 이 돌아온 뒤 세지지 않은 채 시작하는
+턴은 없다. `submit` 은 승인 검사를 카운트 전에 하므로 카운트 직후 플래그를 한 번 더 읽고, 그때 드레인이면 방금 얻은 리스를 내려놓고
+연기한다.
+
+리스 반납은 펜스가 걸려 있다. `SessionLeaseStore.release` 는 토큰이 다르면 조용히 무시하므로, 리스가 만료되어 피어가 다시 얻은 뒤에
+늦게 도착한 반납은 피어의 리스를 풀지 못한다.
+
+**`DrainHandle`.** `awaitQuiescence(timeout)` 은 기다리기만 한다 — 시한이 지나면 `false` 를 돌려줄 뿐 아무것도 끊거나 닫지 않는다.
+`snapshot()` 은 in-flight 턴, 쥔 턴 게이트, 쥔 리스, 아직 넘기지 못한 초인종(`pendingHandOvers`), 기다리는 전달(`pendingForwards`)을
+센다. 정지(quiescent)는 앞의 넷이 모두 0 인 상태다. 전달은 다른 노드가 도는 턴을 기다리는 호출자이므로 세기만 하고 정지를 막지 않는다
+— 닫으면 지금처럼 실패한다. 재울림 publish 가 실패해 남은 빚은 기다리는 동안 약 1초마다 다시 시도한다.
+
+**정지가 덮지 않는 것.** 라우터가 모르는 일은 셀 수 없다. 턴보다 오래 사는 백그라운드 서브에이전트 태스크, 스크립트 워크플로, 모니터,
+그 밖에 `AgentRuntime` 이 소유한 활동, 그리고 호스트가 라우터를 거치지 않고 직접 모는 `LiveSession` 은 `inFlightTurns` 에 없다.
+idle-wake 는 `IdleSessionWaker` 가 `submit` 을 부르므로 덮이지만, 깨울 알림을 만드는 백그라운드 작업은 덮이지 않는다. 그런 일을 돌리는
+호스트는 프로세스를 내리기 전에 자기 in-flight 상태를 이 정지와 합쳐야 한다.
+
+**노드 턴 승인 — `TurnAdmission`.** `SessionRouterBuilder.turnAdmission(...)` 으로 꽂는 선택 SPI 이고 기본값
+`TurnAdmission.alwaysAdmit()` 는 모두 허락한다(이전 동작 그대로). `tryAdmit(sessionId, path)` 는 블록하면 안 되고, 던지면 연기로
+취급한다 — 고장 난 게이트는 이 노드의 일을 잃게 할 뿐 메시지를 잃게 하지 않는다.
+
+허가(permit)는 턴 하나가 아니라 **패스** 하나를 덮는다. 패스는 한 세션에 대해 턴 게이트를 쥔 동안 한 노드가 직렬로 도는 턴들이다 —
+제출된 턴과, 패스가 끝나기 전에 collect 한 큐 메시지. 패스는 한 번에 턴 하나만 돌리므로 허가 N 개는 동시 실행 턴 N 개의 상한이다.
+메시지마다 묻지 않는 까닭은 이미 collect 한 메시지는 연기할 수 없기 때문이다 — 인박스 밖으로 나온 메시지를 거절하면 아무도 다시 돌릴 수
+없다. 라우터는 받은 허가를 정확히 한 번 반납한다: 패스가 끝날 때(초인종 재울림 **전** 이라서 게이트가 다음 질문을 받기 전에 용량이 돌아온다),
+실패할 때, 턴을 시작하기 전에 포기할 때(리스가 피어 것, agent 바인딩 충돌, 그 사이 드레인 시작). 반납은 `OncePermit` 가 한 번으로 묶는다.
 
 ---
 
@@ -693,6 +753,10 @@ split-brain 이 되기 때문이다.
 | 시그널 페이로드 | 평평한 원시값 코덱 셋 | **타입 객체를 싣기** — in-process 버스에서만 참이고 실제 버스에서는 크로스 노드 `events()` 가 아무것도 전달하지 않는다 |
 | 세션 이동 | `YIELD` | **`INTERRUPT`** — 홀더가 리스를 놓지 않는다. **`EVICT`** — 대기 중인 호출자에게 삭제됐다고 거짓말을 한다 |
 | 비홀더에 들어온 턴 | hand-off | **`NOT_HOLDER` 응답** — 호출자가 할 수 있는 일이 대기뿐이면 프로토콜이 대신 기다린다 |
+| 드레인 중 들어온 `submit` | `DISTRIBUTED` 는 인박스로 전달, `SINGLE_NODE` 는 `NodeDrainingException` | **언제나 거절** — 클러스터에서는 받아 줄 피어가 있는데 호출자에게 재시도를 떠넘긴다. **언제나 전달** — 단일 노드에서는 아무도 collect 하지 않아 전달 TTL 까지 매달린다 |
+| 드레인 시한 | 기다리기만 하는 `awaitQuiescence` | **시한 뒤 인터럽트** — 그것은 이미 `closeGracefully` 이고, 노드를 살려 둔 채 기다리는 길이 없어진다 |
+| 승인 검사 위치 | collect·리스 획득 전 | **collect 뒤** — 연기가 at-most-once 인박스에서 메시지를 꺼낸 뒤라 잃거나 `NOT_HOLDER` 로 거짓 실패시킨다 |
+| 허가 단위 | 패스 | **메시지마다** — collect 한 메시지는 연기할 수 없으므로 묻는 의미가 없다 |
 | 홀더 유실 회복 | 턴 스코프 | **세션 스코프 `EVICT`** — 죽은 턴 하나 때문에 살아 있는 세션을 헌다([`idempotency.md`](idempotency.md) §6) |
 | 제출 결과 타입 | `SubmitDisposition` 별도 | **`SubmitOutcome` 재사용** — 축이 다르다 |
 | 오버플로 | 세 등급, 구조 프레임 보존 | **델타 둘을 같은 등급으로** — 숙고 폭주가 답 텍스트를 밀어낸다 |
@@ -714,6 +778,9 @@ split-brain 이 되기 때문이다.
 - **`sessionClosedListener` 를 Caffeine 의 `removalListener` 로 바꾸지 않는다.** pin 된 채 축출된 세션의 리스가 턴 도중 반납된다
 - **삭제 리스너 안에서 지우는 중인 세션에 대해 `SessionRouter` 를 부르지 않는다**
 - **삭제 리스너를 무겁게 만들지 않는다.** 그 세션의 제출을 막는다
+- **승인 게이트를 `inbox.collect` 뒤로 옮기지 않는다.** 연기가 메시지를 잃는다
+- **드레인을 위해 `releaseSession` 을 쓰지 않는다.** 인박스를 purge 하고 `EVICT` 를 보내 대기 중인 호출자에게 삭제됐다고 말한다
+- **`awaitQuiescence` 가 `true` 라고 프로세스를 바로 내리지 않는다.** 라우터 밖의 백그라운드 작업은 세지 않았다
 
 ---
 
@@ -724,6 +791,7 @@ split-brain 이 되기 때문이다.
 | 이벤트 replay | 라이브만. 진행 중 재시도로 붙은 구독자는 이미 흘러간 프레임을 못 본다 — 최종 결과는 멱등 원장으로 안전하다. UI 가 progressive rendering 을 요구하면 그때 버퍼 정책을 정한다 |
 | 같은 세션의 다중 구독자(collaboration) | `events()` 는 멀티 구독자지만, 여러 사용자가 한 세션을 동시에 보는 UX 는 웹 어댑터 설계 사안이다 |
 | 분산 서브에이전트 | 범위 밖(§7.5) |
+| 드레인 중 재-collect 와 패스 길이 | 승인 허가는 패스 단위라 허가를 쥔 패스는 드레인 전까지 계속 재-collect 한다. 패스 길이 상한이 필요해지면 재-collect 앞에서 게이트를 다시 묻는 안을 검토한다 |
 | `YIELD` shim 제거 | 클러스터 전 노드가 이 kind 를 이해하게 되면 레거시 `INTERRUPT(SESSION_RELEASED)` 동반 발행을 걷어낸다 |
 | 다른 노드의 삭제 통지 · `onCreated` | 백로그 [SO-3 · SO-4](../../backlog/session-owner-open-items.md) |
 | 멱등·홀더 유실 쪽 | [`idempotency.md`](idempotency.md) 의 남은 것 |
@@ -744,6 +812,7 @@ split-brain 이 되기 때문이다.
 | 이벤트 (§6) | [`SessionEventRelay`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/SessionEventRelay.java), [`InProcessEventPublisher`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/InProcessEventPublisher.java), [`EventSink`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/EventSink.java) |
 | 페이로드 코덱 (§6.3) | [`AgentExecutionEventPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/AgentExecutionEventPayload.java), [`TurnResultPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/TurnResultPayload.java), [`StatusSnapshotPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/StatusSnapshotPayload.java), [`PayloadValues`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/PayloadValues.java) |
 | 삭제 리스너 (§9) | [`SessionLifecycleListener`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/SessionLifecycleListener.java), [`SessionDeletedEvent`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/SessionDeletedEvent.java) |
+| 드레인·승인 (§8.4) | [`DrainHandle`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/DrainHandle.java), [`DrainSnapshot`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/DrainSnapshot.java), [`TurnAdmission`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/admission/TurnAdmission.java), [`TurnAdmissionPermit`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/admission/TurnAdmissionPermit.java), [`NodeDrainingException`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/exception/NodeDrainingException.java) |
 | 관측 | [`ClusterSessionStatus`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/ClusterSessionStatus.java), [`StatusProjection`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/StatusProjection.java), [`SessionMetrics`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/metrics/SessionMetrics.java) |
 | 세션 계약 | [`LiveSession`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/LiveSession.java), [`TranscriptManager`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/TranscriptManager.java) |
 

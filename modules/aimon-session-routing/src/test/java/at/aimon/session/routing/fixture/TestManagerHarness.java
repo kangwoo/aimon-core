@@ -28,6 +28,7 @@ import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
+import at.aimon.session.routing.admission.TurnAdmission;
 import at.aimon.session.routing.internal.DefaultSessionRouter;
 import at.aimon.session.routing.internal.SessionRouterConfig;
 import at.aimon.session.routing.metrics.SessionMetrics;
@@ -165,6 +166,8 @@ public final class TestManagerHarness implements AutoCloseable {
         private SessionApprovalStore sessionApprovals;
         private SessionLogSegmentStore segmentStore;
         private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
+        private TurnAdmission turnAdmission = TurnAdmission.alwaysAdmit();
+        private boolean forwardSubmitsWhileDraining = true;
 
         private Builder() {
         }
@@ -326,6 +329,31 @@ public final class TestManagerHarness implements AutoCloseable {
             return lifecycleListener(SessionLifecycleListener.whenDeleted(onDeleted));
         }
 
+        /**
+         * Installs the node-local admission gate (routing.md §8.4).
+         *
+         * @param v
+         *            the gate (must not be null)
+         * @return this builder
+         */
+        public Builder turnAdmission(TurnAdmission v) {
+            this.turnAdmission = Objects.requireNonNull(v);
+            return this;
+        }
+
+        /**
+         * What a draining node does with a submit: forward it ({@code true}, the {@code DISTRIBUTED} default here) or
+         * refuse it with {@code NodeDrainingException} ({@code false}, what a {@code SINGLE_NODE} router does).
+         *
+         * @param v
+         *            whether to forward submits while draining
+         * @return this builder
+         */
+        public Builder forwardSubmitsWhileDraining(boolean v) {
+            this.forwardSubmitsWhileDraining = v;
+            return this;
+        }
+
         public Builder sessionApprovals(SessionApprovalStore v) {
             this.sessionApprovals = v;
             return this;
@@ -346,7 +374,8 @@ public final class TestManagerHarness implements AutoCloseable {
                     .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                     .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
                     .metrics(metrics).sessionApprovalStore(sessionApprovals).segmentStore(segmentStore)
-                    .lifecycleListeners(lifecycleListeners).build();
+                    .lifecycleListeners(lifecycleListeners).turnAdmission(turnAdmission)
+                    .forwardSubmitsWhileDraining(forwardSubmitsWhileDraining).build();
             final SessionRouter manager = new DefaultSessionRouter(opener, config);
             return new TestManagerHarness(manager, leaseStore, signalBus, inbox, idempotencyStore, repository,
                     sessionApprovals, sessions, openedRuntimeIds);

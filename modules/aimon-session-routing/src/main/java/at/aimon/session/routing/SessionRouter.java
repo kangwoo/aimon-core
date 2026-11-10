@@ -240,6 +240,52 @@ public interface SessionRouter extends AutoCloseable {
     }
 
     /**
+     * Stop starting new turns on this node, keep running the ones already in flight, and hand idle sessions to peers —
+     * without closing anything (routing.md §8.4).
+     *
+     * <p>
+     * Admission stops atomically: once this returns, every turn that starts on this node was already counted by the
+     * returned handle, and no submit, inbox drain pass, cold open or idle-wake turn starts here afterwards. Turns
+     * already running keep running to completion — renewing their leases, persisting their results, and honouring
+     * interrupts and approvals as usual. Sessions this node holds while idle hand their lease back right away (queued
+     * inbox messages, approvals and event subscribers are kept; no {@code EVICT} is sent) and their doorbell is re-rung
+     * when their inbox is not empty, so a node that is not draining collects them. A session with a running turn hands
+     * over the same way when that turn ends.
+     *
+     * <p>
+     * A submit that reaches a draining node does not run here. A {@code DISTRIBUTED} router delivers it to the shared
+     * inbox and returns {@code FORWARDED}, so a peer that is not draining runs it; a {@code SINGLE_NODE} router, where
+     * no peer exists, throws {@link at.aimon.session.routing.exception.NodeDrainingException} so the caller can retry
+     * elsewhere.
+     *
+     * <p>
+     * Idempotent: every call returns a handle on the same drain. There is no way back — a drained node is meant to be
+     * closed once the host has seen it go quiet; {@link #close()} and {@link #closeGracefully(Duration)} work exactly
+     * as they do without draining.
+     *
+     * <p>
+     * The default throws {@link UnsupportedOperationException} so existing implementations and test doubles remain
+     * source-compatible.
+     *
+     * @return a handle to wait on and inspect the drain (never null)
+     */
+    default DrainHandle beginDrain() {
+        throw new UnsupportedOperationException("beginDrain is not implemented by " + getClass().getName());
+    }
+
+    /**
+     * Whether {@link #beginDrain()} has been called on this router.
+     *
+     * <p>
+     * The default returns {@code false}, matching implementations that cannot drain.
+     *
+     * @return {@code true} once draining has begun
+     */
+    default boolean isDraining() {
+        return false;
+    }
+
+    /**
      * Close the manager. Local sessions are closed; application-scoped collaborators (factory, executor, repository,
      * scheduling components) are not.
      */

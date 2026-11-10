@@ -7,6 +7,35 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: drain mode and node turn admission on `SessionRouter`
+
+A host can now stop a node from taking new agent turns without killing the turns it is running and without closing it —
+what splitting API servers from agent workers and rolling or shrinking the workers needs. Until now the only exit was
+`closeGracefully(timeout)`, which interrupts every surviving turn and closes the router when the timeout runs out. Both
+additions are in `aimon-session-routing` and change nothing unless used. Design: `docs/design/session/routing.md` §8.4.
+
+- **`SessionRouter.beginDrain()` → `DrainHandle`.** Idempotent. New turns stop at once — every turn that starts after it
+  returns was already counted (a lock-free race closed by counting before the last read of the drain flag). Running
+  turns keep running, renewing their leases and persisting results. Sessions held while idle hand their lease back right
+  away and turns hand over when they end: the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and
+  the doorbell is re-rung when the inbox still has work, so a node that is not draining collects it.
+  `DrainHandle.awaitQuiescence(timeout)` only waits — on timeout it returns `false` and interrupts nothing.
+  `snapshot()` counts in-flight turns, held turn gates, held leases, owed hand-overs and pending forwards. `close()` and
+  `closeGracefully()` behave exactly as before, drained or not.
+- **A submit that reaches a draining node does not run there.** A `DISTRIBUTED` router delivers it to the shared inbox
+  (`FORWARDED`); a `SINGLE_NODE` router throws the new `exception.NodeDrainingException` (an `IllegalStateException`)
+  before reserving or queuing anything, so the caller can retry elsewhere.
+- **Quiescence covers only what the router sees.** Background subagent tasks, workflows, monitors and other
+  `AgentRuntime`-owned work that outlives a turn, and `LiveSession`s driven outside the router, are not counted; a host
+  running them must combine its own in-flight state before stopping the process.
+- **`admission.TurnAdmission` (new SPI) via `SessionRouterBuilder.turnAdmission(...)`.** A node-local gate asked before a
+  pass would start here — on a local submit and on an inbox drain pass — always before the inbox is collected and
+  before a lease is claimed, at the same boundary as the drain flag. A deferral loses nothing: a deferred submit goes to
+  the inbox and the session is handed over, a deferred drain pass leaves the inbox untouched. A permit covers one pass
+  (the serial turns one session runs while it holds the turn gate) and is released exactly once, including on failure
+  and on abandonment before the first turn. A gate that throws counts as a deferral. The default `alwaysAdmit()` keeps
+  today's behaviour.
+
 ### Changed (breaking default): Anthropic default model `claude-sonnet-4-5` → `claude-sonnet-5-5`
 
 `claude-sonnet-4-5` is deprecated and retires on **2026-11-30**; from then on every deployment that names no Anthropic
