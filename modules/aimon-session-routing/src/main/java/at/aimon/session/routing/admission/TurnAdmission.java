@@ -26,10 +26,26 @@ import at.aimon.core.agent.session.SessionId;
  *
  * <p>
  * <b>What a deferral does.</b> Nothing is run here and nothing is lost. A deferred submit is delivered to the inbox
- * (the caller gets a {@code FORWARDED} disposition) and this node hands the session over if it holds it; a deferred
- * drain pass leaves the inbox untouched and hands the session over. A peer with capacity collects it on the doorbell
- * this node re-rings; when no peer does, the forward's polling fallback re-rings it and this gate is asked again, so a
- * deferral is back-pressure, not a refusal.
+ * (the caller gets a {@code FORWARDED} disposition), and that delivery announces the message to the cluster; a deferred
+ * drain pass leaves the inbox untouched. Either way, a node that <em>held</em> the session hands it over and relays
+ * the doorbell it heard as holder, once; a node that did not hold it announces nothing, which is what keeps two full
+ * nodes from volleying one announcement. A peer with capacity at that moment collects the message.
+ *
+ * <p>
+ * <b>When no peer has capacity at that moment.</b> The node whose caller is waiting on the message — the forward's
+ * origin — re-checks once per forward poll interval while the message is still queued: it asks this gate again, and if
+ * it still defers (or the node is draining) it re-announces the message to the cluster, so a peer that freed capacity
+ * since the first announcement runs it. A deferral is therefore back-pressure, not a refusal, bounded by the poll
+ * interval rather than the forward TTL. A message nobody is waiting on — delivered to the inbox outside
+ * {@code submit} — has no origin polling for it and waits for the session's next doorbell.
+ *
+ * <p>
+ * <b>The cost of deferring on a holder.</b> A node that holds a session idle and whose gate is full at the moment a
+ * message for it arrives gives the session up: the cached live session is evicted (its end hooks run) and the lease is
+ * returned, so a peer with capacity can take it. That is deliberate — keeping the session would pin its queued message
+ * to a node that cannot run it — but a gate that is only momentarily full turns warm sessions into cold opens on
+ * whichever node runs them next. Size the gate so a holder is rarely full, or accept that churn as the price of the
+ * back-pressure.
  *
  * <p>
  * <b>Contract for implementations.</b> {@link #tryAdmit} is called on submit threads and turn threads and must not

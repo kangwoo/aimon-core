@@ -15,16 +15,23 @@ what splitting API servers from agent workers and rolling or shrinking the worke
 additions are in `aimon-session-routing` and change nothing unless used. Design: `docs/design/session/routing.md` §8.4.
 
 - **`SessionRouter.beginDrain()` → `DrainHandle`.** Idempotent. New turns stop at once — every turn that starts after it
-  returns was already counted (a lock-free race closed by counting before the last read of the drain flag). Running
-  turns keep running, renewing their leases and persisting results. Sessions held while idle hand their lease back right
-  away and turns hand over when they end: the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and
-  the doorbell is re-rung when the inbox still has work, so a node that is not draining collects it.
-  `DrainHandle.awaitQuiescence(timeout)` only waits — on timeout it returns `false` and interrupts nothing.
-  `snapshot()` counts in-flight turns, held turn gates, held leases, owed hand-overs and pending forwards. `close()` and
-  `closeGracefully()` behave exactly as before, drained or not.
+  returns was already counted: a pass counts itself before its last read of the drain flag, and `beginDrain` only sets
+  the flag, so any later snapshot sees the counter. Running turns keep running, renewing their leases and persisting
+  results. Sessions held while idle hand their lease back right away (on a worker thread) and turns hand over when they
+  end: the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and the doorbell is re-rung when the
+  inbox still has work, so a node that is not draining collects it. `DrainHandle.awaitIdle(timeout)` only waits — on
+  timeout it returns `false` and interrupts nothing; it throws `InterruptedException` if the waiting thread is
+  interrupted (the same shape as `SchedulingEngine.awaitIdle`), and a timeout too long for nanoseconds waits instead of
+  overflowing. `snapshot()` counts in-flight turns, held turn gates, held leases, owed hand-overs, queued drain
+  hand-overs and pending forwards. `close()` and `closeGracefully()` behave exactly as before, drained or not — a
+  `closeGracefully` before the drain is idle may cut off a queued hand-over's doorbell relay (leases still go back via
+  `closeAll`). `docs/design/session/routing.md` §8.4 has a worker-drain recipe that sequences this with
+  `SchedulingEngine.pauseFires()` / `awaitIdle`.
 - **A submit that reaches a draining node does not run there.** A `DISTRIBUTED` router delivers it to the shared inbox
   (`FORWARDED`); a `SINGLE_NODE` router throws the new `exception.NodeDrainingException` (an `IllegalStateException`)
-  before reserving or queuing anything, so the caller can retry elsewhere.
+  before reserving or queuing anything, so the caller can retry elsewhere. A draining `SINGLE_NODE` router still runs
+  every message already queued in its inbox (behind a running turn, or deferred by its admission gate), and its
+  forwards count toward idleness (`DrainSnapshot.isForwardsRunHere()`), since no peer could run them.
 - **Quiescence covers only what the router sees.** Background subagent tasks, workflows, monitors and other
   `AgentRuntime`-owned work that outlives a turn, and `LiveSession`s driven outside the router, are not counted; a host
   running them must combine its own in-flight state before stopping the process.
@@ -34,7 +41,14 @@ additions are in `aimon-session-routing` and change nothing unless used. Design:
   the inbox and the session is handed over, a deferred drain pass leaves the inbox untouched. A permit covers one pass
   (the serial turns one session runs while it holds the turn gate) and is released exactly once, including on failure
   and on abandonment before the first turn. A gate that throws counts as a deferral. The default `alwaysAdmit()` keeps
-  today's behaviour.
+  today's behaviour. When every node defers at the moment a message is announced, the node waiting on it (the forward's
+  origin) re-asks its gate once per forward poll interval and, if it still defers or is draining, re-announces the
+  message to the cluster, so a peer that frees capacity runs it well before the forward TTL. Trade-off: a holder whose
+  gate is momentarily full gives its idle session up (evicted, lease returned) so a peer can run it — warm sessions can
+  turn into cold opens; size the gate accordingly.
+- **Migration note:** `SessionRouter.beginDrain()` is a default method that throws `UnsupportedOperationException`, and
+  `isDraining()` defaults to `false`. A decorator or delegating `SessionRouter` must forward both explicitly, or the
+  delegate's drain is unreachable through it.
 
 ### Changed (breaking default): Anthropic default model `claude-sonnet-4-5` → `claude-sonnet-5-5`
 

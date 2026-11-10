@@ -256,7 +256,9 @@ public interface SessionRouter extends AutoCloseable {
      * A submit that reaches a draining node does not run here. A {@code DISTRIBUTED} router delivers it to the shared
      * inbox and returns {@code FORWARDED}, so a peer that is not draining runs it; a {@code SINGLE_NODE} router, where
      * no peer exists, throws {@link at.aimon.session.routing.exception.NodeDrainingException} so the caller can retry
-     * elsewhere.
+     * elsewhere. A {@code SINGLE_NODE} router still runs, to completion and counted by the handle, every message that
+     * was already queued in its inbox when the drain began — behind a running turn or an admission deferral — since no
+     * peer could collect it.
      *
      * <p>
      * Idempotent: every call returns a handle on the same drain. There is no way back — a drained node is meant to be
@@ -265,7 +267,8 @@ public interface SessionRouter extends AutoCloseable {
      *
      * <p>
      * The default throws {@link UnsupportedOperationException} so existing implementations and test doubles remain
-     * source-compatible.
+     * source-compatible. A decorator or delegating router must forward this method and {@link #isDraining()}
+     * explicitly; inheriting the defaults hides the delegate's drain.
      *
      * @return a handle to wait on and inspect the drain (never null)
      */

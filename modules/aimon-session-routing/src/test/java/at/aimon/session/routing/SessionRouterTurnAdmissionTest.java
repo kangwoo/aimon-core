@@ -133,6 +133,61 @@ class SessionRouterTurnAdmissionTest {
     }
 
     @Test
+    @DisplayName("when every node is full, the origin's poll re-announces the message and a peer that frees capacity runs it")
+    void originReannouncesWhenAPeerFreesCapacity() throws Exception {
+        final RecordingAdmission originGate = new RecordingAdmission();
+        originGate.allow.set(false);
+        final RecordingAdmission peerGate = new RecordingAdmission();
+        peerGate.allow.set(false);
+        final TestManagerHarness origin = pollingNode("node-A", originGate);
+        final TestManagerHarness peer = pollingNode("node-B", peerGate);
+        final SessionId id = SessionId.of("c-all-full");
+        peer.manager().events(id);
+
+        final SubmitDisposition d = origin.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
+        assertThat(d.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        // The original announcement reached the peer while it was full: it deferred, and as a non-holder it has
+        // nothing to relay. Without the origin's re-announcement nobody would ever tell it again.
+        awaitTrue(() -> peerGate.paths.contains(TurnAdmission.Path.INBOX), "the peer heard the first announcement");
+        assertThat(peer.session(id)).isNull();
+
+        peerGate.allow.set(true);
+        final long freedAt = System.nanoTime();
+        final TestLiveSession taken = awaitSession(peer, id);
+        completeWhenReady(taken, TestLiveSession.ok("hello-done"));
+        assertThat(d.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("hello-done");
+        assertThat(Duration.ofNanos(System.nanoTime() - freedAt))
+                .as("answered within a few poll intervals, far inside the 60s forward TTL")
+                .isLessThan(Duration.ofSeconds(10));
+        assertThat(taken.submittedTurnIds()).containsExactly(d.getTurnId());
+        assertThat(origin.session(id)).as("the full origin ran nothing").isNull();
+        assertThat(originGate.granted).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a draining origin's poll re-announces its queued message so a peer runs it")
+    void drainingOriginReannounces() throws Exception {
+        final RecordingAdmission peerGate = new RecordingAdmission();
+        peerGate.allow.set(false);
+        final TestManagerHarness origin = pollingNode("node-A", TurnAdmission.alwaysAdmit());
+        final TestManagerHarness peer = pollingNode("node-B", peerGate);
+        final SessionId id = SessionId.of("c-draining-origin");
+        peer.manager().events(id);
+
+        origin.manager().beginDrain();
+        final SubmitDisposition d = origin.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
+        assertThat(d.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        awaitTrue(() -> peerGate.paths.contains(TurnAdmission.Path.INBOX), "the peer heard the first announcement");
+
+        peerGate.allow.set(true);
+        completeWhenReady(awaitSession(peer, id), TestLiveSession.ok("hello-done"));
+        assertThat(d.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("hello-done");
+        assertThat(origin.session(id)).isNull();
+    }
+
+    @Test
     @DisplayName("a gate that throws is a deferral, not a lost message")
     void throwingGateDefers() throws Exception {
         final TestManagerHarness broken = node("node-A", (sessionId, path) -> {
@@ -210,6 +265,16 @@ class SessionRouterTurnAdmissionTest {
     private TestManagerHarness node(String nodeId, TurnAdmission admission) {
         final TestManagerHarness harness = TestManagerHarness.builder().nodeId(nodeId).leaseStore(leaseStore)
                 .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .turnAdmission(admission).build();
+        nodes.add(harness);
+        return harness;
+    }
+
+    /** A node whose forward poll runs every second (half the secondary TTL), with a forward TTL far beyond it. */
+    private TestManagerHarness pollingNode(String nodeId, TurnAdmission admission) {
+        final TestManagerHarness harness = TestManagerHarness.builder().nodeId(nodeId).leaseStore(leaseStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .idempotencySecondaryTtl(Duration.ofSeconds(2)).idempotencyForwardTtl(Duration.ofSeconds(60))
                 .turnAdmission(admission).build();
         nodes.add(harness);
         return harness;

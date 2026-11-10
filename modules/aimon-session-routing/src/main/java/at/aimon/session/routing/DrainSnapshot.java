@@ -6,7 +6,7 @@ package at.aimon.session.routing;
  * <p>
  * Counts are read one after another without a common lock, so a snapshot taken while work is finishing may be
  * momentarily inconsistent (a turn already uncounted whose lease is not yet returned). {@link #isQuiescent()} is
- * {@code true} only when all four blocking counts read zero.
+ * {@code true} only when every blocking count reads zero.
  */
 public final class DrainSnapshot {
 
@@ -15,7 +15,9 @@ public final class DrainSnapshot {
     private final int activeSessions;
     private final int heldLeases;
     private final int pendingHandOvers;
+    private final int queuedHandOvers;
     private final int pendingForwards;
+    private final boolean forwardsRunHere;
 
     private DrainSnapshot(Builder builder) {
         this.draining = builder.draining;
@@ -23,7 +25,9 @@ public final class DrainSnapshot {
         this.activeSessions = builder.activeSessions;
         this.heldLeases = builder.heldLeases;
         this.pendingHandOvers = builder.pendingHandOvers;
+        this.queuedHandOvers = builder.queuedHandOvers;
         this.pendingForwards = builder.pendingForwards;
+        this.forwardsRunHere = builder.forwardsRunHere;
     }
 
     /**
@@ -70,24 +74,48 @@ public final class DrainSnapshot {
     }
 
     /**
-     * @return forwarded turns this node is waiting on for its callers; informational, not part of quiescence
+     * @return drain hand-overs (a held session's lease return and doorbell relay) dispatched to a worker thread and not
+     *         finished yet
+     */
+    public int getQueuedHandOvers() {
+        return queuedHandOvers;
+    }
+
+    /**
+     * @return forwarded turns this node is waiting on for its callers; part of quiescence only when
+     *         {@link #isForwardsRunHere()}
      */
     public int getPendingForwards() {
         return pendingForwards;
     }
 
     /**
-     * @return {@code true} when draining and no turn, gate, lease or owed hand-over remains
+     * Whether the forwards in {@link #getPendingForwards()} are turns this node itself still has to run — {@code true}
+     * on a {@code SINGLE_NODE} router, where no peer exists and every forward is a message queued in this node's inbox.
+     * In that case they block quiescence; on a {@code DISTRIBUTED} router they are callers waiting on turns other nodes
+     * run, and do not.
+     *
+     * @return whether pending forwards count toward quiescence
+     */
+    public boolean isForwardsRunHere() {
+        return forwardsRunHere;
+    }
+
+    /**
+     * @return {@code true} when draining and no turn, gate, lease, owed or queued hand-over — nor, when
+     *         {@link #isForwardsRunHere()}, forward — remains
      */
     public boolean isQuiescent() {
-        return draining && inFlightTurns == 0 && activeSessions == 0 && heldLeases == 0 && pendingHandOvers == 0;
+        return draining && inFlightTurns == 0 && activeSessions == 0 && heldLeases == 0 && pendingHandOvers == 0
+                && queuedHandOvers == 0 && (!forwardsRunHere || pendingForwards == 0);
     }
 
     @Override
     public String toString() {
         return "DrainSnapshot{draining=" + draining + ", inFlightTurns=" + inFlightTurns + ", activeSessions="
                 + activeSessions + ", heldLeases=" + heldLeases + ", pendingHandOvers=" + pendingHandOvers
-                + ", pendingForwards=" + pendingForwards + '}';
+                + ", queuedHandOvers=" + queuedHandOvers + ", pendingForwards=" + pendingForwards + ", forwardsRunHere="
+                + forwardsRunHere + '}';
     }
 
     /** Builder for {@link DrainSnapshot}. */
@@ -97,7 +125,9 @@ public final class DrainSnapshot {
         private int activeSessions;
         private int heldLeases;
         private int pendingHandOvers;
+        private int queuedHandOvers;
         private int pendingForwards;
+        private boolean forwardsRunHere;
 
         private Builder() {
         }
@@ -154,11 +184,31 @@ public final class DrainSnapshot {
 
         /**
          * @param v
+         *            drain hand-overs dispatched and not finished
+         * @return this builder
+         */
+        public Builder queuedHandOvers(int v) {
+            this.queuedHandOvers = v;
+            return this;
+        }
+
+        /**
+         * @param v
          *            forwarded turns still awaited
          * @return this builder
          */
         public Builder pendingForwards(int v) {
             this.pendingForwards = v;
+            return this;
+        }
+
+        /**
+         * @param v
+         *            whether pending forwards are turns this node runs itself (and so block quiescence)
+         * @return this builder
+         */
+        public Builder forwardsRunHere(boolean v) {
+            this.forwardsRunHere = v;
             return this;
         }
 

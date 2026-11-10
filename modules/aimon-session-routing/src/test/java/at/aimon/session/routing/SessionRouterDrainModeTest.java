@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -15,6 +16,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +44,7 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.base.Principal;
+import at.aimon.session.routing.admission.TurnAdmission;
 import at.aimon.session.routing.exception.NodeDrainingException;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
@@ -92,6 +95,7 @@ class SessionRouterDrainModeTest {
         final TestManagerHarness node = node("node-A");
         final Map<SessionId, SubmitDisposition> dispositions = new ConcurrentHashMap<>();
         final AtomicInteger local = new AtomicInteger();
+        final AtomicInteger forwardedCount = new AtomicInteger();
         final AtomicInteger seq = new AtomicInteger();
         final AtomicBoolean stop = new AtomicBoolean();
         final List<Thread> submitters = new ArrayList<>();
@@ -103,6 +107,8 @@ class SessionRouterDrainModeTest {
                     dispositions.put(id, d);
                     if (d.getKind() == SubmitDisposition.Kind.EXECUTED_LOCALLY) {
                         local.incrementAndGet();
+                    } else {
+                        forwardedCount.incrementAndGet();
                     }
                 }
             }, "submitter-" + t);
@@ -113,6 +119,9 @@ class SessionRouterDrainModeTest {
         awaitTrue(() -> local.get() >= 10, "some turns must start before the drain");
 
         final DrainHandle handle = node.manager().beginDrain();
+        // Keep submitting until the drain has visibly turned at least one submit away, so the assertions below never
+        // depend on how the scheduler happened to interleave the stop with the flag.
+        awaitTrue(() -> forwardedCount.get() >= 1, "some submit must reach the draining node");
         stop.set(true);
         for (Thread thread : submitters) {
             thread.join(TestLiveSession.DEFAULT_AWAIT_MS);
@@ -133,12 +142,12 @@ class SessionRouterDrainModeTest {
         }
         awaitTrue(() -> handle.snapshot().getInFlightTurns() == ranHere.size(),
                 "every started turn must be counted in flight");
-        assertThat(handle.awaitQuiescence(Duration.ofMillis(100))).isFalse();
+        assertThat(handle.awaitIdle(Duration.ofMillis(100))).isFalse();
 
         for (SessionId id : ranHere) {
             completeWhenReady(node.session(id), TestLiveSession.ok("done"));
         }
-        assertThat(handle.awaitQuiescence(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
         for (SessionId id : forwarded) {
             assertThat(node.session(id)).as("nothing may start here once the node is quiescent").isNull();
         }
@@ -148,11 +157,11 @@ class SessionRouterDrainModeTest {
     }
 
     @Test
-    @DisplayName("awaitQuiescence times out without interrupting; the turn completes, persists and keeps its lease")
+    @DisplayName("awaitIdle times out without interrupting; the turn completes, persists and keeps its lease")
     void quiescenceTimeoutDoesNotInterrupt() throws Exception {
         final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
                 .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
-                .lockLease(Duration.ofMillis(600)).lockExtendInterval(Duration.ofMillis(150)).build();
+                .lockLease(Duration.ofSeconds(2)).lockExtendInterval(Duration.ofMillis(300)).build();
         nodes.add(node);
         final SessionId id = SessionId.of("c-long");
         final SubmitDisposition d = node.manager().submit(SubmitRequest.builder().sessionId(id).agentRef("alpha")
@@ -161,9 +170,11 @@ class SessionRouterDrainModeTest {
         assertThat(session.awaitTurnStarted()).isTrue();
 
         final DrainHandle handle = node.manager().beginDrain();
-        assertThat(handle.awaitQuiescence(Duration.ofMillis(300))).isFalse();
-        // Past the lease's whole length: the turn's lease must still be renewed while the node drains.
-        Thread.sleep(800L);
+        assertThat(handle.awaitIdle(Duration.ofMillis(300))).isFalse();
+        // Past the lease's whole length (2s, renewed every 300ms): the turn's lease must still be renewed while the
+        // node
+        // drains.
+        Thread.sleep(2_500L);
         assertThat(leaseStore.findHolder(id).map(LeaseHolder::getHolderId)).contains("node-A");
         assertThat(session.recordedInterrupts()).as("waiting must never interrupt").isEmpty();
         assertThat(session.isClosed()).isFalse();
@@ -173,7 +184,7 @@ class SessionRouterDrainModeTest {
         completeWhenReady(session, TestLiveSession.ok("long-done"));
         assertThat(d.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
                 .isEqualTo("long-done");
-        assertThat(handle.awaitQuiescence(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
         assertThat(idempotency.find("k-long").map(IdempotencyEntry::getStatus)).as("the result is persisted as usual")
                 .contains(IdempotencyEntry.Status.DONE);
         assertThat(leaseStore.findHolder(id)).as("the lease goes back once the turn ends").isEmpty();
@@ -208,7 +219,7 @@ class SessionRouterDrainModeTest {
         assertThat(taken.awaitTurnStarted()).isTrue();
         completeWhenReady(taken, TestLiveSession.ok("queued-done"));
 
-        assertThat(handle.awaitQuiescence(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
         assertThat(taken.submittedInputs()).containsExactly("queued");
         assertThat(taken.submittedTurnIds()).containsExactly(queuedTurn);
         assertThat(held.submittedInputs()).as("the draining node ran nothing new").containsExactly("first");
@@ -234,7 +245,7 @@ class SessionRouterDrainModeTest {
         assertThat(queued.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
         Thread.sleep(200L);
         assertThat(successor.session(id)).as("the session is still node-A's while its turn runs").isNull();
-        assertThat(handle.awaitQuiescence(Duration.ZERO)).isFalse();
+        assertThat(handle.awaitIdle(Duration.ZERO)).isFalse();
 
         completeWhenReady(first, TestLiveSession.ok("running-done"));
         assertThat(running.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
@@ -246,7 +257,7 @@ class SessionRouterDrainModeTest {
         assertThat(queued.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
                 .isEqualTo("queued-done");
         assertThat(first.submittedInputs()).as("node-A did not collect the queued message").containsExactly("running");
-        assertThat(handle.awaitQuiescence(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
         assertThat(departing.manager().isDraining()).isTrue();
     }
 
@@ -272,19 +283,113 @@ class SessionRouterDrainModeTest {
 
     @Test
     @DisplayName("the SINGLE_NODE builder wires the refusing behaviour")
-    void singleNodeBuilderRefuses() {
+    void singleNodeBuilderRefuses() throws InterruptedException {
         final SessionRouter router = SessionRouter.builder()
                 .sessionOpener((id, runtime, options, attrs) -> new TestLiveSession(id))
                 .sessionRecordStore(new InMemorySessionRecordStore()).build();
         try {
             final DrainHandle handle = router.beginDrain();
             assertThat(router.beginDrain()).as("idempotent: the same handle").isSameAs(handle);
-            assertThat(handle.awaitQuiescence(Duration.ZERO)).isTrue();
+            assertThat(handle.awaitIdle(Duration.ZERO)).isTrue();
             assertThatThrownBy(() -> router.submit(RequestFixtures.submit(SessionId.of("c-b"), "alpha", "hi")))
                     .isInstanceOf(NodeDrainingException.class);
         } finally {
             router.close();
         }
+    }
+
+    @Test
+    @DisplayName("a drain that begins between admission and the count stops the submit: forwarded, permit released once")
+    void drainBetweenAdmissionAndCountDefers() throws Exception {
+        final AtomicReference<SessionRouter> router = new AtomicReference<>();
+        final List<AtomicInteger> releases = new CopyOnWriteArrayList<>();
+        // Admits, but begins the drain first — the one interleaving the post-count re-read exists for, made
+        // deterministic: admitHere has already read "not draining", and the turn is not counted yet.
+        final TurnAdmission drainingGate = (sessionId, path) -> {
+            router.get().beginDrain();
+            final AtomicInteger released = new AtomicInteger();
+            releases.add(released);
+            return Optional.of(released::incrementAndGet);
+        };
+        final TestManagerHarness node = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .turnAdmission(drainingGate).build();
+        nodes.add(node);
+        router.set(node.manager());
+        final SessionId id = SessionId.of("c-post-admit");
+
+        final SubmitDisposition d = node.manager().submit(RequestFixtures.submit(id, "alpha", "hi"));
+
+        assertThat(d.getKind()).as("the turn must not run here once draining is seen after the count")
+                .isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        assertThat(node.session(id)).as("nothing opened locally").isNull();
+        assertThat(releases).as("admitted exactly once").hasSize(1);
+        assertThat(releases.get(0).get()).as("the permit is released exactly once").isEqualTo(1);
+        assertThat(leaseStore.findHolder(id)).as("the lease claimed for the turn went back").isEmpty();
+        assertThat(inbox.isEmpty(id)).as("the input waits in the inbox for a peer").isFalse();
+        assertThat(node.manager().beginDrain().snapshot().getInFlightTurns()).isZero();
+    }
+
+    @Test
+    @DisplayName("a draining single node runs a message queued behind its running turn instead of stranding it")
+    void singleNodeRunsWorkQueuedBehindARunningTurn() throws Exception {
+        final TestManagerHarness node = singleNode(TurnAdmission.alwaysAdmit());
+        final SessionId id = SessionId.of("c-single-queued");
+
+        final SubmitDisposition running = node.manager().submit(RequestFixtures.submit(id, "alpha", "running"));
+        final TestLiveSession session = awaitSession(node, id);
+        assertThat(session.awaitTurnInFlight()).isTrue();
+        final SubmitDisposition queued = node.manager().submit(RequestFixtures.submit(id, "alpha", "queued"));
+        assertThat(queued.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        final DrainHandle handle = node.manager().beginDrain();
+        assertThatThrownBy(() -> node.manager().submit(RequestFixtures.submit(id, "alpha", "late")))
+                .as("new submits are still refused").isInstanceOf(NodeDrainingException.class);
+        session.completeCurrentTurn(TestLiveSession.ok("running-done"));
+
+        // The pass keeps collecting: the queued message runs here, in the same pass, because no peer exists to take it.
+        assertThat(session.awaitTurnCount(2)).as("the queued message runs here").isTrue();
+        assertThat(handle.awaitIdle(Duration.ofMillis(100))).as("a queued turn still running is not idle").isFalse();
+        completeWhenReady(session, TestLiveSession.ok("queued-done"));
+        assertThat(running.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("running-done");
+        assertThat(queued.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("queued-done");
+        assertThat(session.submittedInputs()).containsExactly("running", "queued");
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+        assertThat(inbox.isEmpty(id)).isTrue();
+    }
+
+    @Test
+    @DisplayName("a draining single node runs a message its gate deferred before the drain, once the gate frees")
+    void singleNodeRunsAdmissionDeferredWork() throws Exception {
+        final AtomicBoolean allow = new AtomicBoolean(false);
+        final TestManagerHarness node = singleNode((sessionId, path) -> allow.get() ? Optional.of(() -> {
+        }) : Optional.empty());
+        final SessionId id = SessionId.of("c-single-deferred");
+
+        final SubmitDisposition deferred = node.manager().submit(RequestFixtures.submit(id, "alpha", "deferred"));
+        assertThat(deferred.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        final DrainHandle handle = node.manager().beginDrain();
+        assertThat(handle.snapshot().isForwardsRunHere()).isTrue();
+        assertThat(handle.awaitIdle(Duration.ofMillis(200)))
+                .as("a queued turn only this node can run keeps a single node from being idle").isFalse();
+
+        allow.set(true);
+        // The forward's poll (1s here) asks the gate again and runs the message locally.
+        final TestLiveSession session = awaitSession(node, id);
+        completeWhenReady(session, TestLiveSession.ok("deferred-done"));
+        assertThat(deferred.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("deferred-done");
+        assertThat(handle.awaitIdle(Duration.ofSeconds(5))).as(String.valueOf(handle.snapshot())).isTrue();
+    }
+
+    @Test
+    @DisplayName("awaitIdle with a timeout too long for nanoseconds waits rather than throwing")
+    void hugeTimeoutDoesNotOverflow() throws Exception {
+        final TestManagerHarness node = node("node-A");
+        final DrainHandle handle = node.manager().beginDrain();
+        assertThat(handle.awaitIdle(Duration.ofSeconds(Long.MAX_VALUE))).isTrue();
     }
 
     // -------------------------------------------------------------------------------------------------------------
@@ -294,6 +399,15 @@ class SessionRouterDrainModeTest {
     private TestManagerHarness node(String nodeId) {
         final TestManagerHarness harness = TestManagerHarness.builder().nodeId(nodeId).leaseStore(leaseStore)
                 .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency).build();
+        nodes.add(harness);
+        return harness;
+    }
+
+    private TestManagerHarness singleNode(TurnAdmission admission) {
+        final TestManagerHarness harness = TestManagerHarness.builder().nodeId("node-A").leaseStore(leaseStore)
+                .signalBus(bus).inbox(inbox).repository(repository).idempotencyStore(idempotency)
+                .idempotencySecondaryTtl(Duration.ofSeconds(2)).forwardSubmitsWhileDraining(false)
+                .turnAdmission(admission).build();
         nodes.add(harness);
         return harness;
     }
