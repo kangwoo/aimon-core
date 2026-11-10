@@ -7,6 +7,8 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-10
+
 ### Added: drain mode and node turn admission on `SessionRouter`
 
 A host can now stop a node from taking new agent turns without killing the turns it is running and without closing it —
