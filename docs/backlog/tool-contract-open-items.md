@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 31건 (열림 18 · 닫힘 13)
+# 도구 계약 — 등록 항목 32건 (열림 18 · 닫힘 14)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -535,3 +535,33 @@ allows none") 하나뿐이고, 그것도 서브에이전트 이름마다 JVM 에
 런타임 프레임을 가르지 못한다 — 는 여기에 해당하지 않는다: 이 텍스트는 런타임이 프로그램을 시작하기 전(또는 그 주변)에 셸이 쓴 것이다.
 마지막 줄만 남겨도 원인은 남는다 — `ModuleNotFoundError: …`, `python3: can't open file '<host path>': …`, exit 127 의 `python3: not found`.
 검사: `ShellEngineProtocolTest#exitWithoutDoneScrubsHostPaths`, `#modelVisibleStderr`, `#exitWithoutDone`.
+
+**보강 (2026-11-10).** 경로 정규식의 세그먼트는 공백에서 멈추므로, 이름에 공백이 있는 디렉터리(`/Users/Jane Doe/...`) 아래 경로는
+공백까지만 지워져 나머지와 `aimon_ptc.py` 가 남았다. 이제 엔진이 런타임의 파일이 있다고 아는 디렉터리 — 환경의 작업 디렉터리
+(`.aimon-ptc/` 가 그 아래)와 이 JVM 의 임시 루트(`LocalShell` 이 실행 디렉터리를 두는 `java.io.tmpdir`) — 를 정규식보다 먼저 글자
+그대로, 그 아래 경로까지 지운다(긴 것부터, 세그먼트 경계에서만). 원격 셸의 실행 디렉터리는 엔진이 모르므로 정규식에 맡긴다. 검사:
+`ShellEngineProtocolTest#exitWithoutDoneScrubsAWorkingDirectoryWithASpace`, `#modelVisibleStderrKnownRoots`.
+
+## TC-32 — 인라인 스킬이 PTC 를 없앨 때 iteration span 이 이유를 싣지 않는다 · **닫힘** *(2026-11-10)*
+
+**무엇을.** 모델이 부른 인라인 스킬이 턴·포크·슬래시 스킬 루프의 프로그래매틱 설정을 "없음" 으로 좁혀 다음 iteration 부터
+`ExecuteCode` 가 제안되지 않을 때, 그 iteration span 에도 `ptc.unavailable_reason` 을 싣는다.
+
+**왜.** TC-30 은 호출자 천장이 포크를 비우는 경우만 다뤘다. 인라인 스킬의 천장([TC-26](#tc-26--모델이-부른-인라인-스킬에는-스킬-루프가-없다--닫힘-2026-11-07))
+이 비우면 제안 문맥은 `none()` 만 들어 opt-in 하지 않은 에이전트와 구별되지 않으므로 span 은 아무 말도 하지 않았다 — 메인 루프에서도
+포크에서도. PTC 마무리 리뷰(2026-11-10)의 비차단 지적이다.
+
+**어디.** `agent/tool/InlineSkillCeiling.java` 의 `narrow` · `Snapshot`, `toolinvocation/InlineSkillNarrowing.java`,
+`agent/impl/orca/OrcaAgentExecutor.java`, `subagent/execution/DefaultSubagentExecutor.java` 의 `offerContextOf`,
+`skill/execution/llm/LlmSkillExecutor.java` 의 `offerFor`. 2026-11-10 확인.
+
+**언제 다시 볼까.** 닫혔다.
+
+**어떻게 닫았나.** 이유는 천장이 좁혀지는 순간에만 정확히 말할 수 있으므로 `InlineSkillCeiling.narrow` 가 만든다 — 켜져 있던 설정을
+스킬이 `none()` 으로 만들면 세 경우(스킬에 프로그래매틱 키가 없음, 엔진 충돌, 겹치는 도구 없음)를 TC-30 과 같은 말투로 적어 스냅숏에
+둔다(`Snapshot.getProgrammaticReason()`). `none()` 은 다시 넓어지지 않으므로 이후 스킬은 첫 이유를 그대로 잇는다. 세 루프는
+`InlineSkillNarrowing.programmaticCeilingReason(loopReason, snapshot)` 을 제안 문맥의 `programmaticCeilingReason` 에 싣고 — 포크는
+관리자가 넘긴 TC-30 의 이유를 `loopReason` 으로 — `ExecuteCodePlan.of` 가 TC-30 과 같은 길로 보고한다. WARN 은 더하지 않았다: 스킬
+활성화는 트랜스크립트에 있다. 스킬의 허용 목록이 `ExecuteCode` 자체를 빼면 수용 필터가 먼저 거르므로 이유를 싣지 않는다 — 그때 이유는
+허용 목록이다. 검사: `InlineSkillCeilingTest#programmaticReason` · `#noProgrammaticReason`,
+`SlashSkillProgrammaticCeilingE2EIntegrationTest` 의 2(메인 루프)·12(슬래시 스킬 루프)·13(포크).

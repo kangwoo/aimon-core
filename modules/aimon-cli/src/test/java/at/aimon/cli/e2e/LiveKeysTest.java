@@ -92,4 +92,31 @@ class LiveKeysTest {
         env.put(LiveKeys.ANTHROPIC_KEY, "key-fake");
         assertThat(keys(dir).anthropicKey()).contains("key-fake");
     }
+
+    @Test
+    @DisplayName("ANTHROPIC_KEY_FILE is read in place, with ~/ expanded, below both direct variables")
+    void anthropicKeyFile(@TempDir Path home) throws IOException {
+        final Path file = Files.writeString(home.resolve(".anthropic-key"), FAKE + "\n");
+        env.put(LiveKeys.ANTHROPIC_KEY_FILE, "~/.anthropic-key");
+        assertThat(keys(home).anthropicKey()).contains(FAKE);
+        assertThat(Files.readString(file)).as("the file is not touched").isEqualTo(FAKE + "\n");
+
+        env.put(LiveKeys.ANTHROPIC_API_KEY, "api-fake");
+        assertThat(keys(home).anthropicKey()).contains("api-fake");
+        env.put(LiveKeys.ANTHROPIC_KEY, "key-fake");
+        assertThat(keys(home).anthropicKey()).contains("key-fake");
+    }
+
+    @Test
+    @DisplayName("a set but missing or empty ANTHROPIC_KEY_FILE fails, naming the variable and the path")
+    void anthropicKeyFileFails(@TempDir Path dir) throws IOException {
+        final Path missing = dir.resolve("nope");
+        env.put(LiveKeys.ANTHROPIC_KEY_FILE, missing.toString());
+        assertThatIllegalStateException().isThrownBy(() -> keys(dir).anthropicKey())
+                .withMessageContaining(LiveKeys.ANTHROPIC_KEY_FILE).withMessageContaining(missing.toString());
+
+        env.put(LiveKeys.ANTHROPIC_KEY_FILE, Files.writeString(dir.resolve("empty"), " \n").toString());
+        assertThatIllegalStateException().isThrownBy(() -> keys(dir).anthropicKey()).withMessageContaining("empty")
+                .withMessageNotContaining(FAKE);
+    }
 }

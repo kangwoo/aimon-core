@@ -66,6 +66,11 @@ public final class InlineSkillCeiling {
      * call it again in the next turn. A fork, a slash skill's loop or a headless turn has no approval channel in any
      * turn, so telling its model to ask again would send it after an approval that cannot come.
      *
+     * <p>
+     * "Main-loop turn with an approval channel" means a turn of an executor that has a pre-flight scanner: the flag is
+     * {@code skillPreflightScanner != null}. An executor with a scanner that also runs scheduled or rewake executions
+     * would say yes for those too — the same line the pre-flight path draws for "headless".
+     *
      * @param allowedTools
      *            the loop's effective allow-list; empty means unrestricted (must not be null)
      * @param programmatic
@@ -78,7 +83,7 @@ public final class InlineSkillCeiling {
             boolean approvalInNewTurn) {
         Objects.requireNonNull(allowedTools, "allowedTools cannot be null");
         Objects.requireNonNull(programmatic, "programmatic cannot be null");
-        return new InlineSkillCeiling(new Snapshot(List.copyOf(allowedTools), programmatic, List.of(), 0),
+        return new InlineSkillCeiling(new Snapshot(List.copyOf(allowedTools), programmatic, List.of(), 0, null),
                 approvalInNewTurn);
     }
 
@@ -126,8 +131,30 @@ public final class InlineSkillCeiling {
         }
         final List<String> skills = new ArrayList<>(current.skills);
         skills.add(skill);
-        current = new Snapshot(bounded.get(), programmatic, List.copyOf(skills), current.version + 1);
+        final String reason = current.programmatic.isEnabled() && !programmatic.isEnabled()
+                ? emptiedReason(skill, declaredProgrammatic, current.programmatic)
+                : current.programmaticReason;
+        current = new Snapshot(bounded.get(), programmatic, List.copyOf(skills), current.version + 1, reason);
         return Optional.empty();
+    }
+
+    /**
+     * Says why {@code skill}'s settings leave the execution no {@code ExecuteCode} although it had some — worded like
+     * the caller-ceiling reason of a fork (TC-30), with the skill in the caller's place.
+     */
+    private static String emptiedReason(String skill, ProgrammaticToolSettings declared,
+            ProgrammaticToolSettings before) {
+        if (!declared.isEnabled()) {
+            return "inline skill '" + skill + "' sets no programmatic-tools, and an activated skill's programmatic "
+                    + "settings narrow the execution's, so no tool is open to code";
+        }
+        if (declared.hasEngineConflict(before) && declared.getTools().stream().anyMatch(before.getTools()::contains)) {
+            return "inline skill '" + skill + "' sets programmatic-engine " + declared.getEngine().wireName()
+                    + ", but the execution uses " + before.getEngine().wireName();
+        }
+        // As in the manager's caller-ceiling reason: the engine conflict is narrowedBy's only other way to give none().
+        return "inline skill '" + skill + "' sets programmatic-tools " + declared.getTools()
+                + ", but the execution allows none of them (it allows " + before.getTools() + ")";
     }
 
     /**
@@ -145,13 +172,15 @@ public final class InlineSkillCeiling {
         private final ProgrammaticToolSettings programmatic;
         private final List<String> skills;
         private final int version;
+        private final String programmaticReason;
 
         private Snapshot(List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic, List<String> skills,
-                int version) {
+                int version, String programmaticReason) {
             this.allowedTools = allowedTools;
             this.programmatic = programmatic;
             this.skills = skills;
             this.version = version;
+            this.programmaticReason = programmaticReason;
         }
 
         /**
@@ -188,6 +217,17 @@ public final class InlineSkillCeiling {
          */
         public int getVersion() {
             return version;
+        }
+
+        /**
+         * Returns why an inline skill left this execution no {@code ExecuteCode}: present once a skill's settings
+         * turned enabled programmatic settings into {@link ProgrammaticToolSettings#none()}, and kept by later skills
+         * (nothing narrows {@code none()} back). What the iteration spans carry as {@code ptc.unavailable_reason}.
+         *
+         * @return the reason, or empty when the execution started without programmatic settings or still has some
+         */
+        public Optional<String> getProgrammaticReason() {
+            return Optional.ofNullable(programmaticReason);
         }
 
         /**

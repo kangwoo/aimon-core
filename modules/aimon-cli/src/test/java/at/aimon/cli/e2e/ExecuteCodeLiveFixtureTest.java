@@ -1,6 +1,7 @@
 package at.aimon.cli.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.file.Path;
@@ -74,6 +75,45 @@ class ExecuteCodeLiveFixtureTest {
             assertThat(nested.bestProgram).isEqualTo(10);
             assertThat(nested.total).isEqualTo(10);
             assertThat(ExecuteCodeLiveFixtures.answerLooksRight(result)).isTrue();
+            ExecuteCodeLiveFixtures.assertAnswerReached(fixture, result);
+        }
+    }
+
+    @Test
+    @DisplayName("assertion 3: a program that printed the right hosts passes although the final answer only says it"
+            + " printed them — the shape behind the old answerMatches=false")
+    void answerPrintedButNotRepeated(@TempDir Path workspace) {
+        final ScriptedModel model = new ScriptedModel(JS_PROGRAM, "The names have been printed as requested.");
+        try (GraalJsEngineHolder holder = GraalJsEngineHolder.create();
+                Fixture fixture = ExecuteCodeLiveFixtures.start(model, Variant.JAVASCRIPT,
+                        new GraalJsCodeExecutionEngine(holder), workspace, null)) {
+            final OrcaAgentExecutionResult result = fixture.runTurn();
+
+            assertThat(ExecuteCodeLiveFixtures.answerLooksRight(result)).isFalse();
+            assertThat(ExecuteCodeLiveFixtures.programPrinted(fixture.executeCodeResults))
+                    .containsExactly(List.of("h2", "h3", "h5"));
+            ExecuteCodeLiveFixtures.assertAnswerReached(fixture, result);
+            assertThat(ExecuteCodeLiveFixtures.resultLine("scripted", "scripted", Variant.JAVASCRIPT, "PASS", fixture,
+                    result)).contains("answer=CORRECT programPrinted=[[h2, h3, h5]] finalAnswerMatches=false");
+        }
+    }
+
+    @Test
+    @DisplayName("assertion 3: a program that printed the wrong hosts, and a final answer that names none, fail")
+    void wrongAnswerFails(@TempDir Path workspace) {
+        final String everyHost = "for (const h of ['h1', 'h2', 'h3', 'h4', 'h5']) {"
+                + " await tools.GetHostStatus({ host: h }); await tools.GetHostLoad({ host: h }); console.log(h); }";
+        final ScriptedModel model = new ScriptedModel(everyHost, "Done.");
+        try (GraalJsEngineHolder holder = GraalJsEngineHolder.create();
+                Fixture fixture = ExecuteCodeLiveFixtures.start(model, Variant.JAVASCRIPT,
+                        new GraalJsCodeExecutionEngine(holder), workspace, null)) {
+            final OrcaAgentExecutionResult result = fixture.runTurn();
+
+            ExecuteCodeLiveFixtures.assertCoreClaims(fixture, result);
+            assertThatThrownBy(() -> ExecuteCodeLiveFixtures.assertAnswerReached(fixture, result))
+                    .isInstanceOf(AssertionError.class).hasMessageContaining("programs printed [[h1, h2, h3, h4, h5]]");
+            assertThat(ExecuteCodeLiveFixtures.resultLine("scripted", "scripted", Variant.JAVASCRIPT, "FAIL", fixture,
+                    result)).contains("answer=WRONG");
         }
     }
 
@@ -96,6 +136,7 @@ class ExecuteCodeLiveFixtureTest {
                 assertThat(nested.bestProgram).isEqualTo(10);
                 assertThat(nested.total).isEqualTo(10);
                 assertThat(ExecuteCodeLiveFixtures.answerLooksRight(result)).isTrue();
+                ExecuteCodeLiveFixtures.assertAnswerReached(fixture, result);
                 // Non-vacuity: the pattern matched the live runtime while a nested call was pending.
                 assertThat(recorder.directories).as("run directories recorded while the runtime was alive").isNotEmpty()
                         .allMatch(dir -> dir.contains("aimon-run-"));
@@ -158,16 +199,25 @@ class ExecuteCodeLiveFixtureTest {
         assertThat(description).contains(ExecuteCodeLiveFixtures.STATUS_TOOL, ExecuteCodeLiveFixtures.LOAD_TOOL);
     }
 
-    /** First answers an {@code ExecuteCode} call with the program, then a final text built from its result. */
+    /**
+     * First answers an {@code ExecuteCode} call with the program, then a final text: the host lines of its result, or
+     * a fixed text when one is given.
+     */
     private static final class ScriptedModel implements LlmClient {
 
         private final String program;
+        private final String finalText;
         private final AtomicInteger calls = new AtomicInteger();
         private final List<String> seen = new CopyOnWriteArrayList<>();
         private volatile List<ToolDefinition> firstOffer;
 
         ScriptedModel(String program) {
+            this(program, null);
+        }
+
+        ScriptedModel(String program, String finalText) {
             this.program = program;
+            this.finalText = finalText;
         }
 
         @Override
@@ -180,6 +230,9 @@ class ExecuteCodeLiveFixtureTest {
             }
             final Message last = messages.get(messages.size() - 1);
             last.getToolUseResults().forEach(result -> seen.add(result.getContent()));
+            if (finalText != null) {
+                return LlmResponse.text(finalText);
+            }
             final String output = seen.isEmpty() ? "" : seen.get(0);
             return LlmResponse.text(output.lines().filter(line -> line.matches("h[1-5]")).reduce((a, b) -> a + "\n" + b)
                     .orElse("(nothing)"));

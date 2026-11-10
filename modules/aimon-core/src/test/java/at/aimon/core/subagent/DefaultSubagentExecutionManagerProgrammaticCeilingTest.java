@@ -175,8 +175,9 @@ class DefaultSubagentExecutionManagerProgrammaticCeilingTest {
         new DefaultSubagentExecutionManager(reactExecutor, bgPool, null, new InMemorySubagentBehaviorRegistry())
                 .execute(baseEnv().callerProgrammatic(ptc("Glob")).build(), subagent("reader", ptc("Read")), "go");
 
-        assertThat(capturedContext().getProgrammaticCeilingReason()).hasValue(
-                "the subagent sets programmatic-tools [Read], but its caller allows none of them (caller allows [Glob])");
+        assertThat(capturedContext().getProgrammaticCeilingReason())
+                .hasValue("the subagent sets programmatic-tools [Read], but its caller allows none of them "
+                        + "(caller allows [Glob])");
     }
 
     @Test

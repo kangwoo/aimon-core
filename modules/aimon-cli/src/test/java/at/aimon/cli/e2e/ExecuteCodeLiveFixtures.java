@@ -353,6 +353,7 @@ final class ExecuteCodeLiveFixtures {
             fixture = started;
             result = started.runTurn();
             assertCoreClaims(started, result);
+            assertAnswerReached(started, result);
             if (recorder != null) {
                 assertThat(recorder.directories).as("run directories recorded while the runtime was alive")
                         .isNotEmpty();
@@ -387,15 +388,62 @@ final class ExecuteCodeLiveFixtures {
         }
     }
 
-    /** Whether the final answer names exactly the expected hosts — logged, never asserted. */
+    /**
+     * Assertion 3: the turn reached the right answer — a program printed exactly the expected hosts, or the final
+     * answer names exactly them. The prompt asks the program to <i>print</i> the names, and a model that did so often
+     * ends with "the names have been printed" without repeating them; judging only the final answer then reported
+     * {@code answerMatches=false} for a correct run (both OpenAI models on JavaScript, 2026-11-07 and 2026-11-10). The
+     * host table is fixed and the filter is one comparison per host, so a wrong set here is a wrong run — data lost or
+     * garbled on its way through the nested calls, or a model that did not do the task — not variance to log past.
+     */
+    static void assertAnswerReached(Fixture fixture, OrcaAgentExecutionResult result) {
+        assertThat(answerReached(fixture.executeCodeResults, result)).as(
+                "a program printed, or the final answer named, exactly %s (programs printed %s; final answer names"
+                        + " %s)%n%s",
+                sorted(EXPECTED_ANSWER), programPrinted(fixture.executeCodeResults),
+                sorted(hostsNamed(finalAnswer(result))), diagnostics(fixture, result)).isTrue();
+    }
+
+    /** Whether a program printed, or the final answer named, exactly the expected hosts. */
+    static boolean answerReached(List<ToolUseResult> programs, OrcaAgentExecutionResult result) {
+        return answerLooksRight(result) || programPrintedAnswer(programs);
+    }
+
+    /** Whether the final answer names exactly the expected hosts. */
     static boolean answerLooksRight(OrcaAgentExecutionResult result) {
-        final String answer = Objects.requireNonNullElse(result.getFinalAnswer(), "");
+        return hostsNamed(finalAnswer(result)).equals(EXPECTED_ANSWER);
+    }
+
+    /** Whether one program's stdout names exactly the expected hosts. */
+    static boolean programPrintedAnswer(List<ToolUseResult> programs) {
+        return programs.stream().anyMatch(program -> hostsNamed(stdoutOf(program)).equals(EXPECTED_ANSWER));
+    }
+
+    /** The host names each program printed, in program order: {@code [[h2, h3, h5]]} for one correct program. */
+    static List<List<String>> programPrinted(List<ToolUseResult> programs) {
+        return programs.stream().map(program -> sorted(hostsNamed(stdoutOf(program)))).toList();
+    }
+
+    private static String finalAnswer(OrcaAgentExecutionResult result) {
+        return result == null ? "" : Objects.requireNonNullElse(result.getFinalAnswer(), "");
+    }
+
+    private static String stdoutOf(ToolUseResult program) {
+        return String
+                .valueOf(Optional.ofNullable(program.getRenderPayload()).orElse(Map.of()).getOrDefault("stdout", ""));
+    }
+
+    private static Set<String> hostsNamed(String text) {
         final Set<String> named = new LinkedHashSet<>();
-        final Matcher matcher = Pattern.compile("\\bh[1-5]\\b").matcher(answer);
+        final Matcher matcher = Pattern.compile("\\bh[1-5]\\b").matcher(text);
         while (matcher.find()) {
             named.add(matcher.group());
         }
-        return named.equals(EXPECTED_ANSWER);
+        return named;
+    }
+
+    private static List<String> sorted(Set<String> hosts) {
+        return hosts.stream().sorted().toList();
     }
 
     /** One program's nested calls that were dispatched (not refused) and answered without error. */
@@ -432,7 +480,8 @@ final class ExecuteCodeLiveFixtures {
      * The one-line outcome record; holds no key material. {@code nestedCallsBestProgram} is what assertion 1 judges —
      * the successful calls of the best single program that called both tools — and {@code nestedCallsAllPrograms} the
      * dispatched calls of every program together; {@code perProgram} lists each program's successful calls in order,
-     * whichever tools they hit.
+     * whichever tools they hit. {@code answer} is assertion 3's verdict; {@code programPrinted} (the hosts each program
+     * printed) and {@code finalAnswerMatches} say which side carried it.
      */
     static String resultLine(String provider, String model, Variant variant, String outcome, Fixture fixture,
             OrcaAgentExecutionResult result) {
@@ -451,7 +500,9 @@ final class ExecuteCodeLiveFixtures {
                 + " nestedCallsAllPrograms=" + counts.total + " perProgram=[" + perProgram + "] " + tokens
                 + (result == null
                         ? ""
-                        : " completion=" + result.getCompletionReason() + " answerMatches=" + answerLooksRight(result));
+                        : " completion=" + result.getCompletionReason() + " answer="
+                                + (answerReached(programs, result) ? "CORRECT" : "WRONG") + " programPrinted="
+                                + programPrinted(programs) + " finalAnswerMatches=" + answerLooksRight(result));
     }
 
     /** The conversation, the render payloads and the span tree, printed on failure; none of them carries a key. */
@@ -502,10 +553,12 @@ final class ExecuteCodeLiveFixtures {
 
         @Override
         public ToolDefinition getDefinition() {
+            // The shape is spelled out since the answer is asserted: "the status as JSON" alone also reads as the
+            // JSON string "down", and gpt-4o-mini compared the parsed object to "down" (2026-11-10).
             final String what = STATUS_TOOL.equals(name)
-                    ? "the status (up or down) of a host"
-                    : "the load (0.0 to 1.0) of a host";
-            return ToolDefinition.of(name, "Returns " + what + " as JSON.",
+                    ? "the status of a host as a JSON object: {\"host\": \"h1\", \"status\": \"up\" or \"down\", "
+                    : "the load of a host as a JSON object: {\"host\": \"h1\", \"load\": a number from 0.0 to 1.0, ";
+            return ToolDefinition.of(name, "Returns " + what + "\"details\": a long diagnostic string}.",
                     Map.of("type", "object", "properties",
                             Map.of("host", Map.of("type", "string", "description", "the host name, e.g. h1")),
                             "required", List.of("host"), "additionalProperties", false));

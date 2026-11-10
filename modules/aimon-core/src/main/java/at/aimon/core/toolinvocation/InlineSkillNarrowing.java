@@ -112,6 +112,22 @@ public final class InlineSkillNarrowing {
     }
 
     /**
+     * Returns why the offer has no {@code ExecuteCode} although the execution opted in, for the iteration's span
+     * ({@code ptc.unavailable_reason}): the snapshot's reason once an inline skill emptied the programmatic settings,
+     * else {@code loopReason} (TC-30, the caller's ceiling of a fork).
+     *
+     * @param loopReason
+     *            the loop's own reason; {@code null} when it has none
+     * @param snapshot
+     *            the ceiling read at the iteration's start (must not be null)
+     * @return the reason, or {@code null} when there is none
+     */
+    public static String programmaticCeilingReason(String loopReason, InlineSkillCeiling.Snapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot cannot be null");
+        return snapshot.getProgrammaticReason().orElse(loopReason);
+    }
+
+    /**
      * Returns the allow-list the environment facts are computed from. It alone decides whether {@code Bash} is
      * unconstrained, which is the shell engine's gate.
      *

@@ -8,16 +8,19 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.StringJoiner;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -98,11 +101,14 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
     /** What an absolute path in the shell's stderr becomes in the model's {@code [logs]} (TC-31). */
     static final String HOST_PATH = "<host path>";
 
+    /** A path segment with its {@code /}: no whitespace, slash, quote, parenthesis, colon, comma or semicolon. */
+    private static final String PATH_SEGMENT = "(?:/[^\\s/'\"():,;]+)";
+
     /**
      * An absolute POSIX path: {@code /} and a segment, any number of times. Not after a word character, {@code :},
      * {@code /} or {@code .}, so a URL's {@code //host/p}, a relative {@code a/b} and a fraction stay as they are.
      */
-    private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w:/.])(?:/[^\\s/'\"():,;]+)+/?");
+    private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w:/.])" + PATH_SEGMENT + "+/?");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String RUNTIME_RESOURCE = "aimon_ptc.py";
@@ -400,7 +406,7 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
                     "ExecuteCode: the shell engine's runtime ended without finishing (exit code {}); shell stderr:\n{}",
                     exit, stderr);
         }
-        final String modelLogs = logs.isEmpty() ? modelVisibleStderr(stderr) : logs;
+        final String modelLogs = logs.isEmpty() ? modelVisibleStderr(stderr, knownRoots(environment)) : logs;
         if (exit == 127) {
             probes.put(environment, EngineAvailability.unavailable("python3 is not installed"));
             return outcome(CodeExecutionStatus.SCRIPT_ERROR, stdout, modelLogs,
@@ -415,22 +421,76 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
      * (TC-31): the last non-blank line, with every absolute path replaced by {@value #HOST_PATH}.
      *
      * <p>
+     * A segment of {@link #ABSOLUTE_PATH} stops at whitespace, so a path under a directory with a space in its name
+     * ({@code /Users/Jane Doe/...}) would be taken out only up to the space. The directories this engine knows the
+     * runtime's files to be under — {@code knownRoots} — are therefore matched literally first, with whatever path
+     * follows them, longest first; the pattern then takes the paths left.
+     *
+     * <p>
      * Unlike the runtime's {@code ERR} lines, this text is not the program's output — the runtime had not started it,
      * or died around it — so rewriting it loses no data the model wrote. The traceback above the last line is the
      * runtime's own frames, of no use to the model; the last line is the exception or {@code python3}'s message.
      *
      * @param stderr
      *            the shell's stderr tail (must not be null)
+     * @param knownRoots
+     *            absolute directories to take out even where they hold whitespace (must not be null); an entry that
+     *            is not absolute, or is {@code /}, is skipped
      * @return the line to show, or {@code ""} when there is none
      */
-    static String modelVisibleStderr(String stderr) {
+    static String modelVisibleStderr(String stderr, List<String> knownRoots) {
         final String[] lines = stderr.split("\\R");
         for (int i = lines.length - 1; i >= 0; i--) {
             if (!lines[i].isBlank()) {
-                return ABSOLUTE_PATH.matcher(lines[i].strip()).replaceAll(HOST_PATH);
+                String line = lines[i].strip();
+                final Pattern known = knownRootPattern(knownRoots);
+                if (known != null) {
+                    line = known.matcher(line).replaceAll(Matcher.quoteReplacement(HOST_PATH));
+                }
+                return ABSOLUTE_PATH.matcher(line).replaceAll(HOST_PATH);
             }
         }
         return "";
+    }
+
+    /**
+     * The known roots as one pattern: each root literally, ending at a segment boundary, then any segments under it.
+     * Longest first, so a root under another root is taken out whole. {@code null} when no root is usable.
+     */
+    private static Pattern knownRootPattern(List<String> knownRoots) {
+        final List<String> roots = new ArrayList<>();
+        for (String root : knownRoots) {
+            String trimmed = root == null ? "" : root.strip();
+            while (trimmed.endsWith("/")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 1);
+            }
+            if (trimmed.startsWith("/") && !roots.contains(trimmed)) {
+                roots.add(trimmed);
+            }
+        }
+        if (roots.isEmpty()) {
+            return null;
+        }
+        roots.sort(Comparator.comparingInt(String::length).reversed());
+        final StringJoiner alternatives = new StringJoiner("|", "(?<![\\w:/.])(?:", ")");
+        roots.forEach(root -> alternatives.add(Pattern.quote(root)));
+        return Pattern.compile(alternatives + "(?![^\\s/'\"():,;])" + PATH_SEGMENT + "*/?");
+    }
+
+    /**
+     * The directories the runtime's files are under, as far as this engine knows them: the environment's working
+     * directory, which holds {@code .aimon-ptc/} (§5), and this JVM's temp root, under which {@code LocalShell} places
+     * the run directory with {@code aimon_ptc.py}. A remote shell's run directory is not known here; its paths are
+     * left to {@link #ABSOLUTE_PATH}.
+     */
+    private static List<String> knownRoots(ExecutionEnvironment environment) {
+        final List<String> roots = new ArrayList<>();
+        roots.add(environment.descriptor().workingDirectory());
+        final String temp = System.getProperty("java.io.tmpdir");
+        if (temp != null) {
+            roots.add(temp);
+        }
+        return roots;
     }
 
     /** How the shell call ended: a result, or one of its exceptions. */
