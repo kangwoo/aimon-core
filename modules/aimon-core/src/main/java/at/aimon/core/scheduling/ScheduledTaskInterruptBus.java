@@ -4,6 +4,8 @@
 
 package at.aimon.core.scheduling;
 
+import java.util.Objects;
+
 import at.aimon.core.agent.interrupt.InterruptReason;
 
 /**
@@ -80,6 +82,35 @@ public interface ScheduledTaskInterruptBus {
     void publish(ScheduledTaskId taskId, InterruptReason reason);
 
     /**
+     * Asks every node to stop the run of one occurrence of {@code taskId} — the run started for the fire whose
+     * {@link at.aimon.core.scheduling.scheduler.ScheduledFire#getOccurrenceKey() occurrence key} is
+     * {@code occurrenceKey} — and nothing else of the task. A node holding no run of that occurrence does nothing,
+     * which is the point: a request that arrives after its occurrence finished must not stop the next one (see
+     * {@link RoutineExecutor#interrupt(ScheduledTaskId, String, InterruptReason)}).
+     *
+     * <p>
+     * <b>The default widens to the task.</b> An implementation written before occurrences reached this interface has
+     * nowhere to carry the key, so the default publishes {@link #publish(ScheduledTaskId, InterruptReason)} — every run
+     * of the task stops, which is what such a bus has always done. Over-stopping is chosen over dropping: a stop that
+     * never arrives leaves running a routine somebody asked to end. An implementation that can carry the key overrides
+     * this and delivers it through
+     * {@link InterruptListener#onInterruptRequested(ScheduledTaskId, String, InterruptReason)}.
+     *
+     * @param taskId
+     *            the task (must not be null)
+     * @param occurrenceKey
+     *            the occurrence to stop (must not be null or blank — a blank key names no occurrence, and a receiver
+     *            would read it as task-wide; an implementation that carries the key throws
+     *            {@link IllegalArgumentException} for it)
+     * @param reason
+     *            why (must not be null)
+     */
+    default void publish(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+        Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        publish(taskId, reason);
+    }
+
+    /**
      * Registers a listener for stop requests published by any node, including possibly this one.
      *
      * @param listener
@@ -101,6 +132,27 @@ public interface ScheduledTaskInterruptBus {
          *            why (never null)
          */
         void onInterruptRequested(ScheduledTaskId taskId, InterruptReason reason);
+
+        /**
+         * Honours a stop request for one occurrence of {@code taskId} on this node, if that occurrence is running
+         * here.
+         *
+         * <p>
+         * The default treats it as a task-wide request
+         * ({@link #onInterruptRequested(ScheduledTaskId, InterruptReason)}), so a listener written as a lambda before
+         * occurrences existed keeps stopping what it always stopped. A listener that can address one occurrence — the
+         * engine's — overrides this.
+         *
+         * @param taskId
+         *            the task (never null)
+         * @param occurrenceKey
+         *            the occurrence to stop (never null)
+         * @param reason
+         *            why (never null)
+         */
+        default void onInterruptRequested(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+            onInterruptRequested(taskId, reason);
+        }
     }
 
     /** Handle to a single subscription. Closing it unregisters the listener. */

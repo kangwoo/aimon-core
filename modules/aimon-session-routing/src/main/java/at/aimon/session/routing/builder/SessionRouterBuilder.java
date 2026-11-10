@@ -26,6 +26,7 @@ import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
+import at.aimon.session.routing.admission.TurnAdmission;
 import at.aimon.session.routing.internal.DefaultSessionRouter;
 import at.aimon.session.routing.internal.SessionEventRelay;
 import at.aimon.session.routing.internal.SessionRouterConfig;
@@ -133,6 +134,7 @@ public final class SessionRouterBuilder {
     private SessionApprovalStore sessionApprovalStore;
     private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
     private SessionLogSegmentStore sessionLogSegmentStore;
+    private TurnAdmission turnAdmission = TurnAdmission.alwaysAdmit();
 
     /**
      * Configures the manager with a stateless {@link LiveSessionFactory}. Mutually exclusive with
@@ -547,6 +549,27 @@ public final class SessionRouterBuilder {
     }
 
     /**
+     * Sets the node-local gate the router consults immediately before it would start a pass on this node — on a submit
+     * that would run locally and on an inbox pass, always before the inbox is collected (routing.md §8.4).
+     *
+     * <p>
+     * A deferral never loses a message: a deferred submit is delivered to the inbox. In {@code DISTRIBUTED} mode a
+     * holder hands the session over so a node with capacity collects it; in {@code SINGLE_NODE} mode the session stays
+     * cached here. Either way the next permit released on this node re-rings a deferred session. The default
+     * {@link TurnAdmission#alwaysAdmit()} admits everything.
+     *
+     * @param v
+     *            the gate (must not be null)
+     * @return this builder
+     * @throws NullPointerException
+     *             if {@code v} is null
+     */
+    public SessionRouterBuilder turnAdmission(TurnAdmission v) {
+        this.turnAdmission = Objects.requireNonNull(v, "turnAdmission must not be null");
+        return this;
+    }
+
+    /**
      * Validates configuration and constructs a {@link SessionRouter}. In
      * {@link DeploymentMode#DISTRIBUTED} mode, fails fast if any SPI or {@code nodeId} is missing.
      *
@@ -612,7 +635,9 @@ public final class SessionRouterBuilder {
                 .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
                 .relayCloseDrainTimeout(relayCloseDrainTimeout).metrics(metrics)
                 .sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore)
-                .lifecycleListeners(List.copyOf(lifecycleListeners)).build();
+                .lifecycleListeners(List.copyOf(lifecycleListeners)).turnAdmission(turnAdmission)
+                // A draining SINGLE_NODE router has no peer to collect a forwarded submit, so it refuses instead.
+                .forwardSubmitsWhileDraining(mode == DeploymentMode.DISTRIBUTED).build();
 
         final DefaultSessionRouter manager;
         if (sessionOpener != null) {

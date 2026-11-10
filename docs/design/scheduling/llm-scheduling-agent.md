@@ -460,6 +460,17 @@ S 와 S+1 의 키가 달라 실행이 겹치고, 더 오래된 misfire 도 거�
 
 `InMemoryScheduledExecutionGuard` 는 여전히 taskId 로 겹침만 막는다. 한 노드에서는 그것이 위험의 전부다.
 
+**회차 키는 인터럽트의 주소이기도 하다.** `executeFire` 는 모든 발화를 — slot 이 없는 untimed 발화까지 —
+`RoutineExecutor.execute(task, fire)` 하나로 넘기고, slot 이 있는 실행은 `getOccurrenceKey()` 아래에 등록된다. 그래서 `ScheduledTaskManager.interrupt(taskId, occurrenceKey,
+principal)` 은 그 회차만 끊고, 늦게 도착한 취소가 다음 회차를 끊지 않는다
+([`interrupt.md` §12.8](../agent-execution/interrupt.md#128-회차-하나만-끊기--occurrence-key)).
+
+**호스트가 발화를 영속했다가 다시 만들 때.** 발화를 자기 큐에 넣고 나중에 워커에서 실행하는 호스트는 getter 세 개
+(`getTaskId()` · `getScheduledFireTime()` · `getSlot()`)만 저장하면 된다. 시각이 있으면 `ScheduledFire.of(taskId,
+scheduledFireTime, slot)`, 없으면 `ScheduledFire.untimed(taskId)` 로 다시 만들고 `executeFire` 에 넘긴다. 다시 만든
+발화는 원본과 `equals` 이고 회차 키도 같다 — `onGrid` 로 접힌 발화도 접힌 결과(slot)를 저장하므로 cron 식이 필요 없다.
+`ScheduledFireTest` 가 이 왕복을 고정한다.
+
 **일광 절약 시간.** 격자는 벽시계 시각이다. 시계가 뒤로 가는 날에는 같은 벽시계 시각이 두 번 오고, 스케줄러마다
 어느 쪽에 발화하는지가 다르다 — cron-utils(인메모리)는 첫 번째, Quartz 는 두 번째. 그래서
 `UnixCronExpression.previousOrSameExecution` 은 둘 다 격자 위로 보고(정시 발화는 자기 자신으로 접힌다), 늦은 발화는
@@ -674,9 +685,61 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 스택의 순차 teardown 이 각각 종료를 부르는 것이 정상 경로이므로, "이미 멈췄는가" 라는 상태를 엔진 옆
 한 자리에 둔 것이다.
 
-`stop` 이 timeout 을 받지 않는 것도 의도다 — `SchedulingEngine` 에는 `start()` 와 `close()` 밖에 없고
+`stop` 이 timeout 을 받지 않는 것도 의도다 — `SchedulingEngine` 의 수명 메서드는 `start()` 와 `close()` 뿐이고
 `close()` 는 각자 고정 시간을 기다리는 두 shutdown 이다. 넘겨받아도 무시할 수밖에 없는 인자를 받는 것은
-안 받는 것보다 나쁘다.
+안 받는 것보다 나쁘다. 시간을 정해 기다리는 일은 §7.6 의 드레인이 맡는다.
+
+### 7.6 노드 드레인 — 발화를 멈추고 끝나기를 기다린다
+
+API 서버와 워커를 나누고 워커를 하나씩 내리는 호스트는, 도는 루틴을 죽이지 않고 노드를 비울 수 있어야 한다.
+엔진은 그 일을 **수명과 분리된** 메서드들로 준다. 어느 것도 무언가를 닫거나 끊지 않는다 — 엔진은
+application-scoped 이고(§2.3) 일시정지는 `resumeFires()` 로 되돌릴 수 있다.
+
+| 메서드 | 하는 일 |
+|--------|--------|
+| `SchedulingEngine.pauseFires()` | ① `TaskScheduler.pauseFiring()` — 이 노드에서 트리거를 그만 쏜다. ② 매니저의 일시정지 — 그래도 들어오는 발화(호스트가 직접 부르는 `executeFire` 포함)를 guard 에 묻기 **전에** 거절한다. ①이 던져도 ②는 `finally` 에서 걸린다. 반환값은 ①이 실제로 멈췄는가다(`false` 의 뜻은 아래 표 뒤) |
+| `SchedulingEngine.resumeFires()` | 매니저를 다시 열고 스케줄러를 다시 쏘게 한다. `pauseFires()` 와 같은 엔진 락으로 직렬화된다 |
+| `SchedulingEngine.isAcceptingFires()` | `pauseFires()` 와 `resumeFires()` 사이에서 `false` |
+| `SchedulingEngine.inFlightRunCount()` | 이 노드에서 도는 루틴 실행 수(`RoutineExecutor.inFlightRunCount()`) |
+| `SchedulingEngine.awaitIdle(Duration)` | 받아들인 발화와 루틴 실행이 모두 끝나기를 기다린다. 타임아웃이면 `false` — **아무것도 끊지 않는다** |
+
+순서에 이유가 있다. 스케줄러를 먼저 멈추므로 클러스터 저장소의 Quartz 에서는 다른 노드가 트리거를 가져간다.
+매니저의 거절은 그 뒤에 걸리는 장벽이다 — `pauseFires()` 가 돌아온 뒤로는 어떤 발화도 받아들여지지 않고, 그 전에
+받아들여진 것은 `awaitIdle` 이 센다. 거절을 guard 앞에 두는 것은 거절한 회차를 이 노드가 차지하지 않게 하려는
+것이다(노드별 트리거라면 다른 노드가 같은 회차를 돌 수 있다). 매니저의 `pauseFires` · `resumeFires` ·
+`isAcceptingFires` · `awaitIdle` 은 패키지 전용이다 — 스케줄러를 멈추지 않고 매니저만 멈추면 클러스터 트리거가
+준 회차를 버리게 되므로, 엔진만 부른다.
+
+`pauseFires()` 는 `start()` 전에 불러도 된다. `start()` 는 그 일시정지를 지킨다 — 소유 Quartz 는 시작하지 않은
+standby 상태 그대로 남고(재개할 때 시작한다), 인메모리 스케줄러는 일시정지 플래그를 그대로 가진 채 시작한다.
+기억하지 못하는 스케줄러를 위해 엔진은 스케줄러를 시작한 직후 `pauseFiring()` 을 한 번 더 부른다. 그러지 않으면
+클러스터 저장소에서 트리거를 가져온 뒤 매니저가 거절해, 그 회차는 어디서도 돌지 않는다.
+
+| 스케줄러 | `pauseFiring()` |
+|---------|----------------|
+| `InMemoryTaskScheduler` | 트리거는 무장한 채, 일시정지 중에 온 회차는 건너뛰고 다음 회차를 건다. `true` |
+| `QuartzTaskScheduler` (소유) | `Scheduler.standby()` — 노드 로컬이다. `pauseJobs` 는 클러스터 저장소에서 일시정지 상태를 모든 노드와 공유하므로 쓰지 않는다. RAM 저장소에서는 재개할 때 misfire 정책(fire-and-proceed)대로 한 번 따라잡는다. `true` |
+| `QuartzTaskScheduler` (차용) | 애플리케이션의 스케줄러이므로 건드리지 않는다. `false` — 매니저의 거절만 남는다 |
+| 기본 구현(`TaskScheduler` default) | 멈출 수 없다. `false` |
+
+스케줄러가 멈추지 못하면(`false`) 클러스터 전체 트리거가 이 노드에 준 회차는 거절되어 **어디서도 돌지 않는다**.
+`pauseFires()` 가 그 `false` 를 그대로 돌려주므로 호스트는 로그가 아니라 코드로 이 경우를 안다. 차용 Quartz 라면
+애플리케이션이 직접 standby 해야 한다.
+
+`pauseFires()` 와 `resumeFires()` 는 한 엔진 락으로 직렬화된다. 각 반쪽(스케줄러, 매니저)은 따로 스레드 안전하지만
+둘을 묶은 짝은 아니어서, 일시정지와 재개가 반쪽씩 엇갈리면 스케줄러는 쏘는데 매니저는 모두 거절하는 상태가 남을 수
+있다 — 클러스터 트리거라면 그 회차들이 어디서도 돌지 않는다. `start()` 의 일시정지 재확인도 같은 락 안에서 한다.
+
+소유 Quartz 의 standby 도 빈틈없는 장벽은 아니다. Quartz 는 트리거를 새로 *가져오지* 않을 뿐이어서, 이미 가져온
+트리거 가운데 발화 시각이 Quartz 의 반환 임계값(수 ms — JDBC 저장소에서 약 70 ms, RAM 저장소에서는 더 짧다) 안에
+든 것과 이미 워커 스레드에 넘어간 잡은 standby 뒤에도 `executeFire` 에 닿는다. 매니저가 그것을 거절하지만 Quartz
+는 그 트리거를 발화한 것으로 세므로, 그 회차는 어디서도 돌지 않고 misfire 로 다시 시도되지도 않는다.
+
+전형적인 드레인은 `pauseFires()` → `awaitIdle(grace)` → `close()` 다. `close()` 는 예전처럼 트리거를 먼저 내리고
+그다음 `RoutineExecutor.shutdown()` 이 유예를 넘긴 실행을 `SYSTEM_SHUTDOWN` 으로 끊는다. 주의할 것 하나 —
+소유 Quartz 의 `shutdown` 은 기본으로 실행 중인 잡을 **기다리므로**, 유예를 넘긴 루틴이 남아 있으면 `close()` 는
+그 루틴이 끝날 때까지 막힌다. 유예 뒤에 끊는 쪽을 원하면 `QuartzTaskSchedulerBuilder.waitForJobsOnShutdown(false)`
+로 조립한다 — 드레인의 기다림은 이미 `awaitIdle` 이 했으므로 shutdown 이 한 번 더 기다릴 이유가 없다.
 
 ---
 
@@ -737,7 +800,8 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | `at/aimon/core/scheduling/ScheduledTaskManager.java` | 등록·취소·이력·토글의 소유자 검증과 `executeTask` 의 리스 획득 |
 | `at/aimon/core/scheduling/RoutineExecutor.java` | 툴 컨텍스트 구성(§3.2)·드리프트 로깅(§3.4)·순차 실행·재시도·타임아웃 |
 | `at/aimon/core/scheduling/ScheduledExecutionGuard.java` | 멱등성 심의 계약과 `ALLOW_ALL` (§6) |
-| `at/aimon/core/scheduling/scheduler/ScheduledFire.java` | 발화의 slot 과 접는 방향 (§6.1) |
+| `at/aimon/core/scheduling/scheduler/ScheduledFire.java` | 발화의 slot 과 접는 방향, 회차 키와 호스트 영속 왕복 (§6.1) |
+| `at/aimon/core/scheduling/SchedulingEngine.java` | 수명(`start` / `close`)과 수명 밖의 드레인(`pauseFires` / `awaitIdle`) (§7.5, §7.6) |
 | `modules/aimon-session-mongodb/.../MongoScheduledExecutionGuard.java` | 분산 guard — 원자 획득, heartbeat, 해제, 수명 (§6.5) |
 | `at/aimon/core/scheduling/ScheduledTaskPolicy.java`, `UnresolvableRuntimePolicy.java` | 호스트 정책과 발화 시점 미해석 정책 (§6.3, §6.4) |
 | `modules/aimon-scheduling-testkit/` | 저장소 · 이력 저장소 · guard · 인터럽트 버스의 계약 테스트 (배포 대상) |

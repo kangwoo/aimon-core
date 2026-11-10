@@ -44,6 +44,9 @@ public class InMemoryTaskScheduler implements TaskScheduler {
     private final Map<String, ScheduledTaskEntry> scheduledTasks = new ConcurrentHashMap<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
 
+    /** While set, a trigger that comes due skips its fire but still arms the next one, so resuming needs no rebuild. */
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+
     /**
      * Creates a new scheduler with the specified task executor and default thread pool size.
      *
@@ -125,6 +128,11 @@ public class InMemoryTaskScheduler implements TaskScheduler {
 
         final ScheduledFuture<?> future = scheduledExecutorService.schedule(() -> {
             try {
+                if (paused.get()) {
+                    log.info("Task '{}' came due while firing is paused on this node; this occurrence is skipped",
+                            entry.taskId);
+                    return;
+                }
                 log.debug("Executing task '{}'", entry.taskId);
                 // The fire is on the grid by construction, so the slot is the scheduled time itself.
                 final Instant scheduledFor = nextExecution.get().toInstant();
@@ -171,6 +179,27 @@ public class InMemoryTaskScheduler implements TaskScheduler {
         scheduledTasks.values().forEach(ScheduledTaskEntry::cancel);
         scheduledTasks.clear();
         log.info("Cleared all scheduled tasks");
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Triggers stay armed; one that comes due while paused skips that occurrence and arms the next. Always succeeds.
+     */
+    @Override
+    public boolean pauseFiring() {
+        if (paused.compareAndSet(false, true)) {
+            log.info("Task scheduler paused: triggers stay armed but do not fire");
+        }
+        return true;
+    }
+
+    @Override
+    public void resumeFiring() {
+        if (paused.compareAndSet(true, false)) {
+            log.info("Task scheduler resumed");
+        }
     }
 
     @Override

@@ -136,7 +136,7 @@ class ScheduledTaskManagerCollaboratorFailureTest {
                 .doesNotThrowAnyException();
         assertThatCode(() -> manager.executeTask(task.getId())).doesNotThrowAnyException();
 
-        verify(routine, never()).execute(any());
+        verify(routine, never()).execute(any(), any());
         assertThat(historyRepo.findByTaskId(task.getId())).isEmpty();
     }
 
@@ -149,7 +149,7 @@ class ScheduledTaskManagerCollaboratorFailureTest {
         final ScheduledTaskManager manager = managerBuilder().executionGuard(guard).build();
         manager.register(task);
         final Instant now = Instant.parse("2026-10-27T10:00:00Z");
-        when(routine.execute(any())).thenReturn(RoutineResult.success(task.getId(), List.of(), now, now));
+        when(routine.execute(any(), any())).thenReturn(RoutineResult.success(task.getId(), List.of(), now, now));
 
         assertThatCode(() -> manager.executeTask(task.getId())).doesNotThrowAnyException();
 

@@ -7,6 +7,125 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: drain mode and node turn admission on `SessionRouter`
+
+A host can now stop a node from taking new agent turns without killing the turns it is running and without closing it —
+what splitting API servers from agent workers and rolling or shrinking the workers needs. Until now the only exit was
+`closeGracefully(timeout)`, which interrupts every surviving turn and closes the router when the timeout runs out. Both
+additions are in `aimon-session-routing` and change nothing unless used. Design: `docs/design/session/routing.md` §8.4.
+
+- **`SessionRouter.beginDrain()` → `DrainHandle`.** Idempotent. No new submit runs here once it returns — every turn
+  that starts after it was already counted: a pass counts itself before its last read of the drain flag, a submit
+  counts itself before its first, and `beginDrain` only sets the flag, so any later snapshot sees the counter. On a
+  `DISTRIBUTED` router no inbox pass (the pass that collects a session's queued messages) starts here either. "Drain"
+  means only this node drain throughout. Running turns keep running, renewing their leases and persisting results.
+  Sessions held while idle hand their lease back right away (on a worker thread) and turns hand over when they end:
+  the inbox, approvals and event subscribers are kept, no `EVICT` is sent, and the doorbell is re-rung when the inbox
+  still has work, so a node that is not draining collects it. A doorbell relay whose publish fails is retried by the
+  router itself, about once a second on its own scheduler. `DrainHandle.awaitIdle(timeout)` and `snapshot()` only
+  watch — neither interrupts, returns a lease, publishes or closes anything, and how often a host calls them changes
+  nothing. On timeout `awaitIdle` returns `false`; it throws `InterruptedException` if the waiting thread is
+  interrupted (the same shape as `SchedulingEngine.awaitIdle`), and a timeout too long for nanoseconds waits instead
+  of overflowing. `DrainSnapshot` counts submits in progress (`getInFlightSubmits`), in-flight turns, held turn gates
+  (`getHeldTurnGates`), held leases, owed doorbell relays (`getOwedDoorbellRelays`), queued drain hand-overs
+  (`getQueuedHandOvers`) and pending forwards. `close()` and `closeGracefully()` behave exactly as before, drained or
+  not — a `closeGracefully` before the drain is idle may cut off a queued hand-over's doorbell relay (leases still go
+  back via `closeAll`), and a forward registered after closing began now fails at once instead of waiting forever.
+  `docs/design/session/routing.md` §8.4 has a worker-drain recipe that sequences this with
+  `SchedulingEngine.pauseFires()` / `awaitIdle`.
+- **A submit that reaches a draining node does not run there.** A `DISTRIBUTED` router delivers it to the shared inbox
+  (`FORWARDED`); a `SINGLE_NODE` router throws the new `exception.NodeDrainingException` (an `IllegalStateException`)
+  before queuing anything — and when the drain began after the submit had already reserved its idempotency key, the
+  reservation is reset first — so the caller can retry the same key elsewhere. A draining `SINGLE_NODE` router still
+  runs every message already queued in its inbox (behind a running turn, or deferred by its admission gate), and its
+  forwards count toward idleness (`DrainSnapshot.isForwardsRunHere()`), since no peer could run them.
+- **Quiescence covers only what the router sees.** Background subagent tasks, workflows, monitors and other
+  `AgentRuntime`-owned work that outlives a turn, and `LiveSession`s driven outside the router, are not counted; a host
+  running them must combine its own in-flight state before stopping the process.
+- **`admission.TurnAdmission` (new SPI) via `SessionRouterBuilder.turnAdmission(...)`.** A node-local gate asked before a
+  pass would start here — on a local submit and on an inbox pass — always before the inbox is collected and before a
+  lease is claimed, at the same boundary as the drain flag. A deferral loses nothing: a deferred submit goes to the
+  inbox, a deferred inbox pass leaves the inbox untouched. A permit covers one pass (the serial turns one session runs
+  while it holds the turn gate) and is released exactly once, including on failure and on abandonment before the first
+  turn. A gate that throws counts as a deferral. The default `alwaysAdmit()` keeps today's behaviour. Each time a permit
+  is released the router re-rings one session its gate deferred, so capacity freed on a node goes to waiting work at
+  once. When every node defers at the moment a message is announced, the node waiting on it (the forward's origin) also
+  re-asks its gate once per forward poll interval and, if it still defers or is draining, re-announces the message to
+  the cluster. Trade-off on `DISTRIBUTED`: a holder whose gate is momentarily full gives its idle session up (evicted,
+  lease returned) so a peer can run it — warm sessions can turn into cold opens; size the gate accordingly. On
+  `SINGLE_NODE` there is no peer, so a deferral keeps the session cached and costs only latency.
+- **Migration note:** `SessionRouter.beginDrain()` is a default method that throws `UnsupportedOperationException`, and
+  `isDraining()` defaults to `false`. A decorator or delegating `SessionRouter` must forward both explicitly, or the
+  delegate's drain is unreachable through it.
+
+### Added / Changed (subclasses, testkit): occurrence-targeted routine interrupt and node drain for scheduling
+
+A host that splits API servers from workers can now cancel one queued fire without hitting the next one, and drain a
+worker without killing the routines it is running. Additive for callers. Changed for `RoutineExecutor` subclasses and
+test doubles (scheduled fires now arrive through the two-argument `execute`) and for custom interrupt buses run against
+the published contract testkit (see the migration notes). Design:
+`docs/design/agent-execution/interrupt.md` §12.8–§12.9, `docs/design/scheduling/llm-scheduling-agent.md` §6.1, §7.6.
+
+- **Added: `RoutineExecutor.execute(ScheduledTask, ScheduledFire)` and
+  `interrupt(ScheduledTaskId, String occurrenceKey, InterruptReason)`.** A run started for a fire with a slot is
+  registered under `ScheduledFire.getOccurrenceKey()`; the keyed interrupt trips only that run and is a no-op on a
+  mismatch, so a cancel that arrives after its occurrence finished no longer stops the next occurrence's run (the
+  scheduling counterpart of `SessionRouter.interrupt(SessionId, TurnId, …)`). Runs without a slot (`execute(task)`,
+  `ScheduledFire.untimed`) have no key and are reached by the task-wide form only, which is unchanged.
+  `ScheduledTaskManager` now starts **every** scheduled run — keyed and untimed fires alike — through
+  `execute(ScheduledTask, ScheduledFire)`; `execute(ScheduledTask)` delegates to it with an untimed fire and is the
+  entry point for direct calls only. A blank occurrence key is refused (`IllegalArgumentException`) by
+  `RoutineExecutor.interrupt`, `ScheduledTaskManager.interrupt` and both buses' keyed `publish`, since a receiver reads
+  a blank key as task-wide. The fire is required (`NullPointerException` for `null`; use `ScheduledFire.untimed`).
+  A keyed interrupt that arrives **before** its occurrence's run registers is not lost: a node that finds no run of
+  that occurrence keeps a tombstone for exactly `(taskId, occurrenceKey)` — node-local, at most 1024 entries (oldest
+  evicted), 10 minutes — and a run of that occurrence registering in that time starts interrupted and ends cancelled
+  before its first step. A tombstone never matches another occurrence or an untimed run.
+- **Added: `ScheduledTaskManager.interrupt(ScheduledTaskId, String occurrenceKey, Principal)`** — authorizes, trips the
+  local run of that occurrence, and broadcasts the keyed request.
+- **Added (SPI, default methods): `ScheduledTaskInterruptBus.publish(taskId, occurrenceKey, reason)` and
+  `InterruptListener.onInterruptRequested(taskId, occurrenceKey, reason)`.** Both defaults widen to the task-wide
+  method, so buses and lambda listeners written before keys keep compiling and keep stopping what they always stopped —
+  over-stopping is chosen over dropping a stop. `InMemoryScheduledTaskInterruptBus` and `MongoScheduledTaskInterruptBus`
+  carry the key; `SchedulingEngine`'s subscriber routes it to the keyed interrupt. The contract testkit gains matching
+  cases (see the migration notes).
+- **Added: drain visibility.** `RoutineExecutor.inFlightRunCount()` / `awaitIdle(Duration)` and
+  `SchedulingEngine.inFlightRunCount()` / `awaitIdle(Duration)` only watch — a timeout returns `false` and interrupts
+  nothing; a timeout too large for nanoseconds is clamped and waits instead of throwing.
+  `SchedulingEngine.pauseFires()` / `resumeFires()` / `isAcceptingFires()` stop this node from starting new runs
+  without closing anything. `pauseFires()` returns whether the scheduler actually stopped firing here (`false`: fires
+  it keeps handing this node are refused and, with cluster-wide triggers, run nowhere), and it is serialized with
+  `resumeFires()` so a concurrent pause and resume cannot leave the scheduler firing into a refusing manager. The
+  scheduler stops firing here (`TaskScheduler.pauseFiring()` / `resumeFiring()`, new default methods returning
+  "cannot pause"; in-memory scheduler skips due occurrences, owned Quartz goes to node-local
+  `standby()`, borrowed Quartz is left alone), then the task manager refuses any fire that still arrives — before the
+  execution guard, so the occurrence is not claimed here. The manager is paused even when the scheduler's pause
+  throws, and a `pauseFires()` made before `start()` stays in effect (owned Quartz starts straight into standby). The
+  manager's own pause / resume / await methods are package-private: called alone they drop occurrences. Owned Quartz
+  standby is not a hard barrier — a trigger already acquired and within milliseconds of firing, or a job already on a
+  worker thread, still reaches the manager and is refused, and Quartz counts it as fired. Typical drain:
+  `pauseFires()` → `awaitIdle(grace)` → `close()`.
+- **Migration notes** — `RoutineExecutor` subclasses and stubs: a subclass, Mockito stub or verification written
+  against `execute(ScheduledTask)` no longer sees scheduled fires — cron and untimed fires alike now arrive through
+  `execute(ScheduledTask, ScheduledFire)`. Override, stub or verify that method instead (`execute(any(), any())`); a
+  `verify(executor, never()).execute(any())` left on the old form passes vacuously. Wire format:
+  `MongoScheduledTaskInterruptBus` documents gain an optional `occurrenceKey` field. Old documents (no field) decode
+  as task-wide; a node on the previous release reading a keyed document ignores the
+  field and stops every run of the task, so during a rolling upgrade a keyed cancel may stop more than asked but is
+  never lost. No DDL change. A custom `ScheduledTaskInterruptBus` still compiles and runs, widening keyed requests to
+  the task until it overrides the new `publish` — but run against the published `aimon-scheduling-testkit`, it now
+  **fails** `AbstractScheduledTaskInterruptBusContractTest`'s new cases `occurrenceKeyCrossesToTheOtherNode` (the
+  key must reach the other node's keyed listener intact; relying on the widening default fails it) and
+  `blankOccurrenceKeyIsRefused` (the keyed `publish` must throw `IllegalArgumentException` for a blank key); the third
+  new case, `occurrenceCancelFromAnotherNodeStopsOnlyThatOccurrence`, needs the same. Override
+  `publish(taskId, occurrenceKey, reason)` and deliver through
+  `InterruptListener.onInterruptRequested(taskId, occurrenceKey, reason)` to pass. With a scheduler that cannot pause
+  (a borrowed Quartz, or one without `pauseFiring`; `pauseFires()` then returns `false`), a cluster-wide trigger
+  landing on a paused node is refused and that occurrence runs nowhere — standby
+  the application's scheduler yourself. Owned Quartz waits for running jobs on `shutdown` by default, so `close()` after
+  a timed-out `awaitIdle` blocks on what is left; build with `waitForJobsOnShutdown(false)` to have it interrupted
+  instead.
+
 ### Changed (breaking default): Anthropic default model `claude-sonnet-4-5` → `claude-sonnet-5-5`
 
 `claude-sonnet-4-5` is deprecated and retires on **2026-11-30**; from then on every deployment that names no Anthropic

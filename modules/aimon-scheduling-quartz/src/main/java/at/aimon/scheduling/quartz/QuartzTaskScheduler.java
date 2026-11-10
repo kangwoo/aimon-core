@@ -100,6 +100,12 @@ public class QuartzTaskScheduler implements TaskScheduler {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     /**
+     * Whether firing on this node is paused ({@link #pauseFiring()}), remembered so that a pause asked for before
+     * {@link #start()} keeps an owned scheduler in standby when it starts. Guarded by {@code this}.
+     */
+    private boolean firingPaused;
+
+    /**
      * Creates a new Quartz scheduler with the provided Quartz Scheduler instance and task executor.
      *
      * <p>
@@ -378,11 +384,15 @@ public class QuartzTaskScheduler implements TaskScheduler {
     }
 
     @Override
-    public void start() {
+    public synchronized void start() {
         if (running.compareAndSet(false, true)) {
             try {
                 claimExecutorSlot();
-                if (ownsScheduler) {
+                if (ownsScheduler && firingPaused) {
+                    // A Quartz scheduler that was never started is in standby: jobs and triggers can be added, nothing
+                    // is acquired. Leaving it there is starting straight into the pause; resumeFiring() starts it.
+                    LOGGER.info("Quartz task scheduler started in standby: firing was paused before start");
+                } else if (ownsScheduler) {
                     scheduler.start();
                     LOGGER.info("Quartz task scheduler started");
                 } else {
@@ -417,6 +427,74 @@ public class QuartzTaskScheduler implements TaskScheduler {
             } catch (SchedulerException e) {
                 throw new TaskSchedulerException("Failed to shutdown scheduler", e);
             }
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * An owned scheduler goes into Quartz {@linkplain Scheduler#standby() standby}: this node stops acquiring triggers,
+     * jobs already executing carry on, and on a clustered job store the other nodes keep firing the shared triggers.
+     * Standby is node-local — unlike {@code pauseJobs}, whose paused state a clustered store shares with every node.
+     * On a RAM store, triggers missed during standby are handled by their misfire policy on resume (fire-and-proceed:
+     * one catch-up fire). A borrowed scheduler belongs to the application, which may run its own jobs on it, so it is
+     * left alone and this returns {@code false}; standby it from the application if that is what draining means there.
+     *
+     * <p>
+     * Called before {@link #start()}, the pause is remembered and {@code start()} leaves the owned scheduler in standby
+     * rather than starting it; {@link #resumeFiring()} starts it.
+     *
+     * <p>
+     * <b>Standby is not a hard barrier.</b> Quartz stops <em>acquiring</em> triggers, but two kinds of fire still reach
+     * {@link ScheduledTaskExecutor#execute(ScheduledFire)} after this returns: a trigger this node had already acquired
+     * and that is within Quartz's release threshold of its fire time (a few milliseconds — roughly 70 ms on a JDBC
+     * store, less on a RAM store — inside which an acquired trigger is fired rather than handed back), and a job
+     * already handed to a worker thread. Under {@code SchedulingEngine.pauseFires()} the task manager refuses those
+     * fires; Quartz has nonetheless counted the trigger as fired, so that occurrence does not run anywhere and is not
+     * retried as a misfire.
+     */
+    @Override
+    public synchronized boolean pauseFiring() {
+        if (!ownsScheduler) {
+            LOGGER.info("Not pausing borrowed Quartz scheduler — it belongs to the application; fires reaching AIMON"
+                    + " are refused by the task manager instead");
+            return false;
+        }
+        try {
+            if (!running.get()) {
+                if (scheduler.isShutdown()) {
+                    return false;
+                }
+                firingPaused = true;
+                LOGGER.info("Quartz task scheduler not started yet; it will start in standby");
+                return true;
+            }
+            firingPaused = true;
+            scheduler.standby();
+            LOGGER.info("Quartz task scheduler in standby: this node no longer acquires triggers");
+            return true;
+        } catch (SchedulerException e) {
+            throw new TaskSchedulerException("Failed to put the scheduler in standby", e);
+        }
+    }
+
+    @Override
+    public synchronized void resumeFiring() {
+        if (!ownsScheduler) {
+            return;
+        }
+        firingPaused = false;
+        if (!running.get()) {
+            return;
+        }
+        try {
+            if (scheduler.isInStandbyMode()) {
+                scheduler.start();
+                LOGGER.info("Quartz task scheduler resumed from standby");
+            }
+        } catch (SchedulerException e) {
+            throw new TaskSchedulerException("Failed to resume the scheduler from standby", e);
         }
     }
 

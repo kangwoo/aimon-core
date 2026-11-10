@@ -5,6 +5,7 @@
 package at.aimon.core.scheduling;
 
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashSet;
@@ -13,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,6 +77,18 @@ public class ScheduledTaskManager {
      * triggers are: what other nodes do to theirs is reconciled, not locked against.
      */
     private final Object triggerLock = new Object();
+
+    /**
+     * Guards {@link #acceptingFires} and {@link #admittedFires} together, so that once {@link #pauseFires()} returns no
+     * fire can be admitted that {@link #awaitIdle(Duration)} would not see.
+     */
+    private final Object admissionLock = new Object();
+
+    /** Whether {@link #executeFire} admits fires on this node; guarded by {@link #admissionLock}. */
+    private boolean acceptingFires = true;
+
+    /** Fires admitted and not yet finished on this node; guarded by {@link #admissionLock}. */
+    private int admittedFires;
 
     /**
      * ScheduledTaskManager를 생성한다. Uses the default in-memory {@link ScheduledExecutionGuard} (prevents overlapping
@@ -580,6 +594,72 @@ public class ScheduledTaskManager {
     }
 
     /**
+     * Stops the run of one occurrence of a task — the one started for the fire whose
+     * {@link ScheduledFire#getOccurrenceKey() occurrence key} is {@code occurrenceKey} — here and, through the
+     * {@link ScheduledTaskInterruptBus}, on every other node. The schedule is left alone.
+     *
+     * <p>
+     * Differs from {@link #interrupt(ScheduledTaskId, Principal)} when the named occurrence is no longer the running
+     * one: that form stops whatever of the task runs now, this one does nothing on a mismatch. It is the form for a
+     * host cancelling a fire it queued or dispatched, whose cancel may arrive after that occurrence has finished and
+     * the next one has started (see {@link RoutineExecutor#interrupt(ScheduledTaskId, String, InterruptReason)}).
+     *
+     * <p>
+     * A bus implementation that predates occurrence keys widens the request to the whole task
+     * ({@link ScheduledTaskInterruptBus#publish(ScheduledTaskId, String, InterruptReason)} defaults to the task-wide
+     * publish). That widening reaches every node the bus delivers to — and this one too when the bus delivers a
+     * request back to its own publisher (the {@link ScheduledTaskInterruptBus#subscribe subscribe} contract allows it;
+     * the MongoDB bus filters its own requests out, a custom bus may not). With such a bus the local half is not exact
+     * either: the direct local interrupt this method makes is, but the self-delivered task-wide request that follows
+     * may stop the next occurrence's run here as well. Only a bus that carries the key keeps the whole request exact.
+     *
+     * <p>
+     * A request that arrives before the occurrence's run has registered — the fire is admitted but still in the
+     * execution guard or loading the task — is not lost: every node that finds no run of the occurrence remembers it
+     * briefly, and the run starts already interrupted (see
+     * {@link RoutineExecutor#interrupt(ScheduledTaskId, String, InterruptReason)}).
+     *
+     * @param taskId
+     *            the task
+     * @param occurrenceKey
+     *            the occurrence to stop (must not be null or blank)
+     * @param principal
+     *            the principal requesting the interrupt
+     * @return {@code true} if the occurrence's run was signalled <b>on this instance</b>; {@code false} does not mean
+     *         nothing was stopped, as for {@link #interrupt(ScheduledTaskId, Principal)}, nor that nothing will be — a
+     *         run of the occurrence that has not registered yet starts interrupted
+     * @throws IllegalArgumentException
+     *             if {@code occurrenceKey} is blank
+     * @throws TaskNotFoundException
+     *             if the task doesn't exist
+     * @throws UnauthorizedTaskAccessException
+     *             if the principal doesn't own the task
+     */
+    public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, Principal principal) {
+        Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        if (occurrenceKey.isBlank()) {
+            throw new IllegalArgumentException("Occurrence key cannot be blank");
+        }
+        getById(taskId, principal);
+
+        final boolean signalled = routineExecutor.interrupt(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED);
+        try {
+            interruptBus.publish(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED);
+        } catch (RuntimeException e) {
+            log.warn("Failed to broadcast the stop request for occurrence '{}' of task '{}'; a run of it on another"
+                    + " node is not stopped: {}", occurrenceKey, taskId, e.getMessage(), e);
+        }
+        if (signalled) {
+            log.info("Interrupted in-flight run of occurrence '{}' of task '{}' by {}", occurrenceKey, taskId,
+                    principal);
+        } else {
+            log.info("Occurrence '{}' of task '{}' has no run in progress on this instance; interrupt requested by {}"
+                    + " was broadcast only", occurrenceKey, taskId, principal);
+        }
+        return signalled;
+    }
+
+    /**
      * Asks the other nodes to stop their runs of {@code taskId}, and never lets that ask break the caller.
      *
      * <p>
@@ -880,13 +960,123 @@ public class ScheduledTaskManager {
      * occurrence that already ran (see {@link ScheduledExecutionGuard#tryBegin(ScheduledFire)}).
      *
      * <p>
-     * Never throws, for the reason given on {@link #executeTask(ScheduledTaskId)}.
+     * The run is registered with the {@link RoutineExecutor} under the fire's occurrence key, so
+     * {@link #interrupt(ScheduledTaskId, String, Principal)} can stop this occurrence without touching the next. A host
+     * that persisted the fire into its own queue rebuilds it with {@link ScheduledFire#of} (or
+     * {@link ScheduledFire#untimed} when it had no slot) from the getters and passes it here.
+     *
+     * <p>
+     * While fires are paused on this node ({@link SchedulingEngine#pauseFires()}) the fire is refused before the guard
+     * is asked, so the occurrence is not claimed here and stays available to a node that is still accepting — on
+     * schedulers whose triggers fire on every node. Never throws, for the reason given on
+     * {@link #executeTask(ScheduledTaskId)}.
      *
      * @param fire
      *            the fire to execute
      */
     public void executeFire(ScheduledFire fire) {
         Objects.requireNonNull(fire, "Fire cannot be null");
+        if (!admit()) {
+            log.info("{} refused: fires are paused on this node", fire);
+            return;
+        }
+        try {
+            executeAdmitted(fire);
+        } finally {
+            release();
+        }
+    }
+
+    private boolean admit() {
+        synchronized (admissionLock) {
+            if (!acceptingFires) {
+                return false;
+            }
+            admittedFires++;
+            return true;
+        }
+    }
+
+    private void release() {
+        synchronized (admissionLock) {
+            admittedFires--;
+            if (admittedFires == 0) {
+                admissionLock.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * Stops admitting fires on this node: from the moment this returns, {@link #executeFire} and
+     * {@link #executeTask} refuse every fire — before the execution guard is asked, so the occurrence is not claimed
+     * here. Fires already admitted, and the routines they run, carry on untouched; nothing is interrupted or closed.
+     *
+     * <p>
+     * This is the manager's half of draining a node. It does not stop the scheduler's triggers, so on a scheduler
+     * whose trigger fires on one node of the cluster (Quartz on a clustered store) a fire that still lands here is
+     * refused and that occurrence is <b>not</b> run anywhere. Use {@link SchedulingEngine#pauseFires()}, which puts
+     * the scheduler in standby first and so hands the triggers to the other nodes. Idempotent.
+     *
+     * <p>
+     * Package-private for that reason: calling it alone drops occurrences, so the engine is its only caller.
+     */
+    void pauseFires() {
+        synchronized (admissionLock) {
+            acceptingFires = false;
+        }
+        log.info("Fires paused on this node; runs already in progress continue");
+    }
+
+    /** Admits fires again after {@link #pauseFires()}. Idempotent. */
+    void resumeFires() {
+        synchronized (admissionLock) {
+            acceptingFires = true;
+        }
+        log.info("Fires resumed on this node");
+    }
+
+    /**
+     * Whether this node admits fires.
+     *
+     * @return {@code false} between {@link #pauseFires()} and {@link #resumeFires()}
+     */
+    boolean isAcceptingFires() {
+        synchronized (admissionLock) {
+            return acceptingFires;
+        }
+    }
+
+    /**
+     * Waits until no admitted fire is in progress on this node — its routine run finished and its outcome recorded —
+     * or until {@code timeout} has passed. Nothing is interrupted. Meaningful after {@link #pauseFires()}; without it a
+     * fire may be admitted the moment this returns {@code true}. Runs started on the {@link RoutineExecutor} directly,
+     * not through this manager, are not counted here; {@link SchedulingEngine#awaitIdle(Duration)} waits for both.
+     *
+     * @param timeout
+     *            how long to wait at most (must not be null or negative)
+     * @return {@code true} if no admitted fire was in progress when this returned, {@code false} on timeout
+     * @throws InterruptedException
+     *             if the calling thread is interrupted while waiting
+     */
+    boolean awaitIdle(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout, "Timeout cannot be null");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("Timeout cannot be negative: " + timeout);
+        }
+        final long deadline = System.nanoTime() + SchedulingDurations.saturatedNanos(timeout);
+        synchronized (admissionLock) {
+            while (admittedFires > 0) {
+                final long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                TimeUnit.NANOSECONDS.timedWait(admissionLock, remaining);
+            }
+            return true;
+        }
+    }
+
+    private void executeAdmitted(ScheduledFire fire) {
         final ScheduledTaskId taskId = fire.getTaskId();
         if (multiNode && leftToOtherNodes(taskId)) {
             return;
@@ -916,7 +1106,10 @@ public class ScheduledTaskManager {
                 return;
             }
 
-            final RoutineResult result = routineExecutor.execute(task);
+            // One entry point for every scheduled run, keyed or untimed: the executor registers a keyed fire under its
+            // occurrence key and an untimed one under none. A subclass or test double observing scheduled runs
+            // overrides execute(ScheduledTask, ScheduledFire); the one-argument form is for direct calls only.
+            final RoutineResult result = routineExecutor.execute(task, fire);
 
             // Record the run. Conditional, not a blind save: the task can be cancelled while this run is in flight —
             // that is now the normal case rather than a rare one, since cancelling interrupts the run — and a plain

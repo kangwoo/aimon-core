@@ -122,6 +122,49 @@ class QuartzTaskSchedulerTest {
     }
 
     @Test
+    void pauseFiring_OwnedScheduler_GoesToStandbyAndResumeRestartsIt() throws Exception {
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("task-paused"), EVERY_MINUTE);
+
+        assertThat(scheduler.pauseFiring()).isTrue();
+        assertThat(scheduler.getQuartzScheduler().isInStandbyMode()).isTrue();
+        // Standby keeps the triggers: resuming needs no rebuild.
+        assertThat(scheduler.exists(ScheduledTaskId.of("task-paused"))).isTrue();
+
+        scheduler.resumeFiring();
+        assertThat(scheduler.getQuartzScheduler().isInStandbyMode()).isFalse();
+        assertThat(scheduler.getQuartzScheduler().isStarted()).isTrue();
+    }
+
+    @Test
+    void pauseFiring_BeforeStart_StartsStraightIntoStandby() throws Exception {
+        final QuartzTaskScheduler early = new QuartzTaskScheduler(QuartzTaskScheduler.createDefaultScheduler(),
+                taskId -> lastExecutedTaskId.set(taskId));
+        try {
+            assertThat(early.pauseFiring()).isTrue();
+            early.start();
+
+            // Never left standby: no window in which a clustered trigger could be acquired and then refused.
+            assertThat(early.getQuartzScheduler().isInStandbyMode()).isTrue();
+            assertThat(early.getQuartzScheduler().isStarted()).isFalse();
+            early.scheduleRecurrently(ScheduledTaskId.of("task-early"), EVERY_MINUTE);
+            assertThat(early.exists(ScheduledTaskId.of("task-early"))).isTrue();
+
+            early.resumeFiring();
+            assertThat(early.getQuartzScheduler().isInStandbyMode()).isFalse();
+            assertThat(early.getQuartzScheduler().isStarted()).isTrue();
+        } finally {
+            early.shutdown();
+        }
+    }
+
+    @Test
+    void pauseFiring_NotRunning_ReportsNothingPaused() {
+        scheduler.shutdown();
+        assertThat(scheduler.pauseFiring()).isFalse();
+        scheduler = null;
+    }
+
+    @Test
     void testIsClusterWide_RamJobStore_IsPerNode() {
         // The default scheduler is a RAM job store: its triggers live in this JVM and nowhere else.
         assertThat(scheduler.isClusterWide()).isFalse();

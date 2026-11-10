@@ -10,6 +10,7 @@ import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
+import at.aimon.session.routing.admission.TurnAdmission;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
@@ -42,6 +43,8 @@ public final class SessionRouterConfig {
     private final SessionApprovalStore sessionApprovalStore;
     private final SessionLogSegmentStore segmentStore;
     private final List<SessionLifecycleListener> lifecycleListeners;
+    private final TurnAdmission turnAdmission;
+    private final boolean forwardSubmitsWhileDraining;
 
     private SessionRouterConfig(Builder builder) {
         this.store = builder.store;
@@ -66,6 +69,8 @@ public final class SessionRouterConfig {
         this.lifecycleListeners = builder.lifecycleListeners == null
                 ? List.of()
                 : List.copyOf(builder.lifecycleListeners);
+        this.turnAdmission = builder.turnAdmission == null ? TurnAdmission.alwaysAdmit() : builder.turnAdmission;
+        this.forwardSubmitsWhileDraining = builder.forwardSubmitsWhileDraining;
     }
 
     public static Builder builder() {
@@ -195,6 +200,27 @@ public final class SessionRouterConfig {
         return lifecycleListeners;
     }
 
+    /**
+     * The node-local gate consulted before a pass starts here (routing.md §8.4).
+     *
+     * @return the gate (never null; {@link TurnAdmission#alwaysAdmit()} when none was configured)
+     */
+    public TurnAdmission turnAdmission() {
+        return turnAdmission;
+    }
+
+    /**
+     * What a draining node does with a submit it will not run: {@code true} delivers it to the shared inbox for a peer
+     * to collect (the {@code DISTRIBUTED} answer), {@code false} refuses it with
+     * {@link at.aimon.session.routing.exception.NodeDrainingException} (the {@code SINGLE_NODE} answer, where no peer
+     * exists). Defaults to {@code true}.
+     *
+     * @return whether submits are forwarded while draining
+     */
+    public boolean forwardSubmitsWhileDraining() {
+        return forwardSubmitsWhileDraining;
+    }
+
     public static final class Builder {
 
         private SessionStore store;
@@ -217,6 +243,8 @@ public final class SessionRouterConfig {
         private SessionApprovalStore sessionApprovalStore;
         private SessionLogSegmentStore segmentStore;
         private List<SessionLifecycleListener> lifecycleListeners;
+        private TurnAdmission turnAdmission;
+        private boolean forwardSubmitsWhileDraining = true;
 
         private Builder() {
         }
@@ -318,6 +346,16 @@ public final class SessionRouterConfig {
 
         public Builder lifecycleListeners(List<SessionLifecycleListener> lifecycleListeners) {
             this.lifecycleListeners = lifecycleListeners;
+            return this;
+        }
+
+        public Builder turnAdmission(TurnAdmission turnAdmission) {
+            this.turnAdmission = turnAdmission;
+            return this;
+        }
+
+        public Builder forwardSubmitsWhileDraining(boolean forwardSubmitsWhileDraining) {
+            this.forwardSubmitsWhileDraining = forwardSubmitsWhileDraining;
             return this;
         }
 

@@ -123,6 +123,30 @@ public interface TaskScheduler {
     void shutdown();
 
     /**
+     * Stops this node from firing triggers, without removing them and without touching runs already started — the
+     * scheduler half of draining a node ({@code SchedulingEngine.pauseFires()}). On a cluster-wide scheduler the other
+     * nodes keep firing the shared triggers; on a per-node one this node's triggers simply do not fire until
+     * {@link #resumeFiring()}.
+     *
+     * <p>
+     * The default cannot pause and says so by returning {@code false}; the engine then relies on the manager refusing
+     * fires, which drops an occurrence a cluster-wide scheduler hands this node instead of handing it to another.
+     *
+     * @return whether this scheduler stopped firing on this node
+     */
+    default boolean pauseFiring() {
+        return false;
+    }
+
+    /**
+     * Fires triggers on this node again after {@link #pauseFiring()}. The default does nothing, matching the default
+     * {@link #pauseFiring()}.
+     */
+    default void resumeFiring() {
+        // Nothing was paused.
+    }
+
+    /**
      * Whether the triggers this scheduler holds are shared by every node of the deployment.
      *
      * <p>
