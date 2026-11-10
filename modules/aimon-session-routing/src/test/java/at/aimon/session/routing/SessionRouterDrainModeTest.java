@@ -171,9 +171,8 @@ class SessionRouterDrainModeTest {
 
         final DrainHandle handle = node.manager().beginDrain();
         assertThat(handle.awaitIdle(Duration.ofMillis(300))).isFalse();
-        // Past the lease's whole length (2s, renewed every 300ms): the turn's lease must still be renewed while the
-        // node
-        // drains.
+        // Past the lease's whole length (2s, renewed every 300ms): the turn's lease must still be renewed while
+        // the node drains.
         Thread.sleep(2_500L);
         assertThat(leaseStore.findHolder(id).map(LeaseHolder::getHolderId)).contains("node-A");
         assertThat(session.recordedInterrupts()).as("waiting must never interrupt").isEmpty();

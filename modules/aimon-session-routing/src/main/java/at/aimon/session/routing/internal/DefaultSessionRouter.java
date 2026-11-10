@@ -297,9 +297,8 @@ public final class DefaultSessionRouter implements SessionRouter {
     private final AtomicBoolean draining = new AtomicBoolean();
 
     /**
-     * Hand-overs dispatched to a worker thread because of draining — {@link #beginDrain()}'s per-session hand-over and
-     * a
-     * doorbell heard while draining — that have not finished yet. Counted at dispatch and uncounted in the task's
+     * Hand-overs dispatched to a worker thread because of draining — {@link #beginDrain()}'s per-session hand-over
+     * and a doorbell heard while draining — that have not finished yet. Counted at dispatch and uncounted in the task's
      * {@code finally}, so {@link DrainSnapshot#isQuiescent()} cannot read true while a lease return or a doorbell relay
      * is still queued behind it.
      */
