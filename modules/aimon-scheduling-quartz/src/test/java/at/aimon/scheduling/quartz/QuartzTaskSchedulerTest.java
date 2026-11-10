@@ -122,6 +122,27 @@ class QuartzTaskSchedulerTest {
     }
 
     @Test
+    void pauseFiring_OwnedScheduler_GoesToStandbyAndResumeRestartsIt() throws Exception {
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("task-paused"), EVERY_MINUTE);
+
+        assertThat(scheduler.pauseFiring()).isTrue();
+        assertThat(scheduler.getQuartzScheduler().isInStandbyMode()).isTrue();
+        // Standby keeps the triggers: resuming needs no rebuild.
+        assertThat(scheduler.exists(ScheduledTaskId.of("task-paused"))).isTrue();
+
+        scheduler.resumeFiring();
+        assertThat(scheduler.getQuartzScheduler().isInStandbyMode()).isFalse();
+        assertThat(scheduler.getQuartzScheduler().isStarted()).isTrue();
+    }
+
+    @Test
+    void pauseFiring_NotRunning_ReportsNothingPaused() {
+        scheduler.shutdown();
+        assertThat(scheduler.pauseFiring()).isFalse();
+        scheduler = null;
+    }
+
+    @Test
     void testIsClusterWide_RamJobStore_IsPerNode() {
         // The default scheduler is a RAM job store: its triggers live in this JVM and nowhere else.
         assertThat(scheduler.isClusterWide()).isFalse();

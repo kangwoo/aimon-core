@@ -56,6 +56,22 @@ public final class InMemoryScheduledTaskInterruptBus implements ScheduledTaskInt
     }
 
     @Override
+    public void publish(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+        Objects.requireNonNull(taskId, "Task ID cannot be null");
+        Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        Objects.requireNonNull(reason, "Reason cannot be null");
+
+        for (InterruptListener listener : listeners) {
+            try {
+                listener.onInterruptRequested(taskId, occurrenceKey, reason);
+            } catch (RuntimeException e) {
+                log.warn("Interrupt listener failed for occurrence '{}' of task '{}' ({}); continuing the fan-out",
+                        occurrenceKey, taskId, reason, e);
+            }
+        }
+    }
+
+    @Override
     public Subscription subscribe(InterruptListener listener) {
         Objects.requireNonNull(listener, "Listener cannot be null");
         listeners.add(listener);

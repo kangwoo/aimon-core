@@ -2,6 +2,7 @@ package at.aimon.session.mongodb;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -147,11 +148,30 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
     public void publish(ScheduledTaskId taskId, InterruptReason reason) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(reason, "Reason cannot be null");
+        insert(taskId, null, reason);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The key travels in the optional {@code occurrenceKey} field. A node on a release before it ignores the field and
+     * stops every run of the task — the old behaviour, wider than asked but not lost.
+     */
+    @Override
+    public void publish(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+        Objects.requireNonNull(taskId, "Task ID cannot be null");
+        Objects.requireNonNull(occurrenceKey, "Occurrence key cannot be null");
+        Objects.requireNonNull(reason, "Reason cannot be null");
+        insert(taskId, occurrenceKey, reason);
+    }
+
+    private void insert(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
         if (closed.get()) {
             throw new IllegalStateException("Bus is closed");
         }
         try {
-            collection.insertOne(codec.encode(taskId, reason, nodeId));
+            collection.insertOne(codec.encode(taskId, occurrenceKey, reason, nodeId));
         } catch (MongoException e) {
             throw new SchedulingException("Mongo error publishing stop request for task '" + taskId + "'", e);
         }
@@ -342,7 +362,12 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
             }
             for (InterruptListener listener : listeners) {
                 try {
-                    listener.onInterruptRequested(request.getTaskId(), request.getReason());
+                    final Optional<String> occurrenceKey = request.getOccurrenceKey();
+                    if (occurrenceKey.isPresent()) {
+                        listener.onInterruptRequested(request.getTaskId(), occurrenceKey.get(), request.getReason());
+                    } else {
+                        listener.onInterruptRequested(request.getTaskId(), request.getReason());
+                    }
                 } catch (RuntimeException | Error e) {
                     // Error too: this is the only thread that will ever deliver a stop request to this node, and
                     // nothing restarts it. A listener's AssertionError or LinkageError must not end it.

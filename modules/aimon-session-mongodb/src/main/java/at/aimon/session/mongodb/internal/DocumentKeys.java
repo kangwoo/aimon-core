@@ -303,6 +303,13 @@ public final class DocumentKeys {
     /** Why the stop was requested ({@code InterruptReason} name). */
     public static final String F_REASON = "reason";
 
+    /**
+     * The one occurrence a stop request is addressed to ({@code ScheduledFire.getOccurrenceKey()}); absent for a
+     * task-wide request. Optional on the wire so a request from a node that predates it decodes as task-wide, and a
+     * node that predates it reads a targeted request as task-wide.
+     */
+    public static final String F_OCCURRENCE_KEY = "occurrenceKey";
+
     private DocumentKeys() {
     }
 }

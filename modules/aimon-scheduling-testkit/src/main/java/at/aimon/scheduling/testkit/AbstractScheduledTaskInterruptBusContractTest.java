@@ -3,9 +3,11 @@ package at.aimon.scheduling.testkit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -38,6 +40,7 @@ import at.aimon.core.scheduling.SchedulingEngine;
 import at.aimon.core.scheduling.SchedulingEngineBuilder;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 
 /**
  * What every {@link ScheduledTaskInterruptBus} that claims to cross a node boundary owes the two nodes on either side
@@ -61,6 +64,15 @@ import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
  * Whether the publishing node hears its own request. The SPI allows the echo and does not require it — the in-memory
  * bus echoes, a backend may filter by origin — so every assertion here is made on the <em>other</em> node, and the
  * engine-level scenario runs with whatever the backend does.
+ *
+ * <h2>Occurrence keys</h2>
+ *
+ * <p>
+ * A request published with an occurrence key must reach the other node <em>with</em> that key, through
+ * {@link ScheduledTaskInterruptBus.InterruptListener#onInterruptRequested(ScheduledTaskId, String, InterruptReason)},
+ * and a task-wide request must stay task-wide. The SPI's default widens a keyed request to the task so that buses
+ * written before keys keep working; a backend that does that fails {@code occurrenceKeyCrossesToTheOtherNode} here,
+ * on purpose — it is the cross-node half of stopping one occurrence and not the next.
  */
 public abstract class AbstractScheduledTaskInterruptBusContractTest {
 
@@ -117,6 +129,26 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
 
         assertThat(heardOnB.poll(PATIENCE.toMillis(), TimeUnit.MILLISECONDS))
                 .isEqualTo(new Received(taskId, InterruptReason.TASK_CANCELLED));
+    }
+
+    @Test
+    @DisplayName("an occurrence-targeted request crosses with its occurrence key intact")
+    void occurrenceKeyCrossesToTheOtherNode() throws Exception {
+        final ScheduledTaskInterruptBus nodeA = busFor("node-A");
+        final ScheduledTaskInterruptBus nodeB = busFor("node-B");
+        final BlockingQueue<Received> heardOnB = listenOn(nodeB);
+        awaitSubscriptionsLive();
+
+        final ScheduledTaskId taskId = ScheduledTaskId.generate();
+        final String occurrenceKey = taskId.value() + "@1767258000000";
+        nodeA.publish(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED);
+        nodeA.publish(taskId, InterruptReason.TASK_CANCELLED);
+
+        // Order is not part of the contract; both shapes must arrive, the targeted one still targeted and the
+        // task-wide one still task-wide.
+        final List<Received> heard = List.of(poll(heardOnB), poll(heardOnB));
+        assertThat(heard).containsExactlyInAnyOrder(new Received(taskId, occurrenceKey, InterruptReason.TASK_CANCELLED),
+                new Received(taskId, InterruptReason.TASK_CANCELLED));
     }
 
     @Test
@@ -254,6 +286,54 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
                 .satisfies(h -> assertThat(h.getStatus()).isEqualTo(ScheduledTaskExecutionHistory.Status.CANCELLED));
     }
 
+    /**
+     * The occurrence-targeted variant of the scenario above: a cancel aimed at an occurrence that has already finished
+     * arrives, from another node, while the next occurrence runs — and must leave it alone; one aimed at the running
+     * occurrence stops it.
+     */
+    @Test
+    @DisplayName("a late occurrence cancel from another node spares the next occurrence; a matching one stops it")
+    void occurrenceCancelFromAnotherNodeStopsOnlyThatOccurrence() throws Exception {
+        final InMemoryScheduledTaskRepository tasks = new InMemoryScheduledTaskRepository();
+        final InMemoryScheduledTaskExecutionHistoryRepository history;
+        history = new InMemoryScheduledTaskExecutionHistoryRepository();
+        final Agent agent = DefaultAgent.builder().name("interrupt-bus-occurrence").systemPrompt("test").build();
+        final AgentRuntimeId runtimeId = AgentRuntimeId.from(agent);
+
+        final DefaultAgentRuntimeRegistry holderRuntimes = new DefaultAgentRuntimeRegistry();
+        holderRuntimes.register(new StubAgentRuntime(runtimeId, agent, List.of(new BlockingTool())));
+        final SchedulingEngine holder = engine(tasks, history, holderRuntimes, busFor("node-A"));
+        final SchedulingEngine entry = engine(tasks, history, new DefaultAgentRuntimeRegistry(), busFor("node-B"));
+        holder.start();
+        awaitSubscriptionsLive();
+
+        final ScheduledTask task = ScheduledTask.builder().id(ScheduledTaskId.generate()).name("blocking-task")
+                .cronExpression("0 0 1 1 *").owner(alice).boundRuntimeId(runtimeId)
+                .routine(List.of(RoutineStep.builder().tool(BlockingTool.TOOL_NAME).toolParams("{}").maxRetries(0)
+                        .timeout(Duration.ofSeconds(30)).build()))
+                .enabled(true).build();
+        holder.getTaskManager().register(task);
+        final Instant finishedSlot = Instant.parse("2026-01-01T00:00:00Z");
+        final Instant runningSlot = Instant.parse("2027-01-01T00:00:00Z");
+        final ScheduledFire finished = ScheduledFire.of(task.getId(), finishedSlot, finishedSlot);
+        final ScheduledFire running = ScheduledFire.of(task.getId(), runningSlot, runningSlot);
+        final CompletableFuture<Void> run = CompletableFuture
+                .runAsync(() -> holder.getTaskManager().executeFire(running));
+        assertThat(stepEntered.await(PATIENCE.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+
+        assertThat(entry.getTaskManager().interrupt(task.getId(), finished.getOccurrenceKey().orElseThrow(), alice))
+                .isFalse();
+        // Give a delivery that was going to (wrongly) stop the run time to have done so.
+        assertThat(run).as("the next occurrence keeps running").failsWithin(QUIET_PERIOD);
+
+        assertThat(entry.getTaskManager().interrupt(task.getId(), running.getOccurrenceKey().orElseThrow(), alice))
+                .isFalse();
+        run.get(PATIENCE.toSeconds(), TimeUnit.SECONDS);
+
+        assertThat(history.findByTaskIdOrderByStartedAtDesc(task.getId(), 10)).singleElement()
+                .satisfies(h -> assertThat(h.getStatus()).isEqualTo(ScheduledTaskExecutionHistory.Status.CANCELLED));
+    }
+
     private SchedulingEngine engine(InMemoryScheduledTaskRepository tasks,
             InMemoryScheduledTaskExecutionHistoryRepository history, DefaultAgentRuntimeRegistry runtimes,
             ScheduledTaskInterruptBus bus) {
@@ -265,8 +345,24 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
 
     private BlockingQueue<Received> listenOn(ScheduledTaskInterruptBus bus) {
         final BlockingQueue<Received> heard = new LinkedBlockingQueue<>();
-        toClose.add(bus.subscribe((id, reason) -> heard.add(new Received(id, reason))));
+        toClose.add(bus.subscribe(new ScheduledTaskInterruptBus.InterruptListener() {
+            @Override
+            public void onInterruptRequested(ScheduledTaskId taskId, InterruptReason reason) {
+                heard.add(new Received(taskId, reason));
+            }
+
+            @Override
+            public void onInterruptRequested(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+                heard.add(new Received(taskId, occurrenceKey, reason));
+            }
+        }));
         return heard;
+    }
+
+    private static Received poll(BlockingQueue<Received> queue) throws InterruptedException {
+        final Received next = queue.poll(PATIENCE.toMillis(), TimeUnit.MILLISECONDS);
+        assertThat(next).as("a delivery within %s", PATIENCE).isNotNull();
+        return next;
     }
 
     private static List<ScheduledTaskId> drainIds(BlockingQueue<Received> queue, int count)
@@ -284,26 +380,34 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
     private static final class Received {
 
         private final ScheduledTaskId taskId;
+        /** {@code null} for a task-wide request. */
+        private final String occurrenceKey;
         private final InterruptReason reason;
 
         Received(ScheduledTaskId taskId, InterruptReason reason) {
+            this(taskId, null, reason);
+        }
+
+        Received(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
             this.taskId = taskId;
+            this.occurrenceKey = occurrenceKey;
             this.reason = reason;
         }
 
         @Override
         public boolean equals(Object o) {
-            return o instanceof Received other && taskId.equals(other.taskId) && reason == other.reason;
+            return o instanceof Received other && taskId.equals(other.taskId)
+                    && Objects.equals(occurrenceKey, other.occurrenceKey) && reason == other.reason;
         }
 
         @Override
         public int hashCode() {
-            return 31 * taskId.hashCode() + reason.hashCode();
+            return Objects.hash(taskId, occurrenceKey, reason);
         }
 
         @Override
         public String toString() {
-            return taskId + "/" + reason;
+            return taskId + (occurrenceKey == null ? "" : "#" + occurrenceKey) + "/" + reason;
         }
     }
 
