@@ -80,6 +80,14 @@ public final class SchedulingEngine implements AutoCloseable {
     private ScheduledExecutorService reconciler;
 
     /**
+     * Serializes {@link #pauseFires()}, {@link #resumeFires()} and the pause check in {@link #start()}. Each of them
+     * touches two halves — the scheduler and the manager — and each half is thread-safe on its own, but the pair is
+     * not: a pause and a resume interleaved half by half could leave the scheduler firing while the manager refuses
+     * every fire, and on a clustered scheduler those occurrences would run nowhere.
+     */
+    private final Object fireControlLock = new Object();
+
+    /**
      * Creates a new scheduling engine.
      *
      * <p>
@@ -158,12 +166,14 @@ public final class SchedulingEngine implements AutoCloseable {
      */
     public void start() {
         final List<ScheduledTask> stored = rehydrateAtStart ? taskManager.readStoredEnabled() : List.of();
-        taskScheduler.start();
-        if (!taskManager.isAcceptingFires()) {
-            // Idempotent on a scheduler that already started into the pause; for one that ignored a pause asked for
-            // before it started, this closes the window as soon as it can.
-            taskScheduler.pauseFiring();
-            log.info("Scheduling engine starting with fires paused on this node");
+        synchronized (fireControlLock) {
+            taskScheduler.start();
+            if (!taskManager.isAcceptingFires()) {
+                // Idempotent on a scheduler that already started into the pause; for one that ignored a pause asked
+                // for before it started, this closes the window as soon as it can.
+                taskScheduler.pauseFiring();
+                log.info("Scheduling engine starting with fires paused on this node");
+            }
         }
         if (rehydrateAtStart) {
             taskManager.scheduleStored(stored);
@@ -278,28 +288,50 @@ public final class SchedulingEngine implements AutoCloseable {
      * <p>
      * A fire the scheduler had already dispatched when it paused either got in first (and is waited for) or is refused.
      * Refused is dropped on this node; with a scheduler that could not pause (a borrowed Quartz scheduler, or one
-     * without {@code pauseFiring}), a cluster-wide trigger that keeps landing here is dropped the same way.
+     * without {@code pauseFiring}), a cluster-wide trigger that keeps landing here is dropped the same way — which is
+     * what a {@code false} return tells the caller.
      *
      * <p>
-     * A typical drain: {@code pauseFires()}, then {@code awaitIdle(grace)}, then {@link #close()} — which interrupts
-     * whatever outlived the grace period with {@code SYSTEM_SHUTDOWN}. Cancellation requests from the bus are still
-     * honoured while paused.
+     * Serialized with {@link #resumeFires()}: a concurrent pause and resume each take effect on both halves before the
+     * other starts, so they never leave the scheduler firing into a manager that refuses.
+     *
+     * <p>
+     * A typical drain: {@code pauseFires()}, then {@code awaitIdle(grace)}, then {@link #close()}, which interrupts
+     * whatever outlived the grace period with {@code SYSTEM_SHUTDOWN} — <b>unless</b> the scheduler waits for its jobs
+     * on shutdown. {@code close()} shuts the scheduler down before the routine executor, and an owned Quartz scheduler
+     * waits for running jobs by default; those jobs are the routines still running, so {@code close()} blocks until
+     * they end instead of interrupting them. Build it with {@code
+     * QuartzTaskSchedulerBuilder.waitForJobsOnShutdown(false)} when the drain's timeout should end in an interrupt.
+     * Cancellation requests from the bus are still honoured while paused.
+     *
+     * @return {@code true} if the scheduler stopped firing on this node; {@code false} if it cannot pause (a borrowed
+     *         Quartz scheduler, or a {@link TaskScheduler} without {@code pauseFiring}). On {@code false} the node
+     *         still starts no new run, but a fire the scheduler keeps handing this node is refused and, with
+     *         cluster-wide triggers, that occurrence runs nowhere — pause the application's scheduler itself, or expect
+     *         those occurrences to be skipped
      */
-    public void pauseFires() {
+    public boolean pauseFires() {
         final boolean schedulerPaused;
-        try {
-            schedulerPaused = taskScheduler.pauseFiring();
-        } finally {
-            taskManager.pauseFires();
+        synchronized (fireControlLock) {
+            try {
+                schedulerPaused = taskScheduler.pauseFiring();
+            } finally {
+                taskManager.pauseFires();
+            }
         }
         log.info("Scheduling engine paused fires on this node (scheduler paused: {}); {} routine run(s) in progress",
                 schedulerPaused, routineExecutor.inFlightRunCount());
+        return schedulerPaused;
     }
 
-    /** Starts accepting fires on this node again after {@link #pauseFires()}. */
+    /**
+     * Starts accepting fires on this node again after {@link #pauseFires()}. Serialized with {@link #pauseFires()}.
+     */
     public void resumeFires() {
-        taskManager.resumeFires();
-        taskScheduler.resumeFiring();
+        synchronized (fireControlLock) {
+            taskManager.resumeFires();
+            taskScheduler.resumeFiring();
+        }
         log.info("Scheduling engine resumed fires on this node");
     }
 
@@ -329,11 +361,16 @@ public final class SchedulingEngine implements AutoCloseable {
      * @param timeout
      *            how long to wait at most in total (must not be null or negative)
      * @return {@code true} if this node was idle when it returned, {@code false} if the timeout passed first
+     * @throws IllegalArgumentException
+     *             if {@code timeout} is negative
      * @throws InterruptedException
      *             if the calling thread is interrupted while waiting
      */
     public boolean awaitIdle(Duration timeout) throws InterruptedException {
         Objects.requireNonNull(timeout, "Timeout cannot be null");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("Timeout cannot be negative: " + timeout);
+        }
         final long deadline = System.nanoTime() + SchedulingDurations.saturatedNanos(timeout);
         if (!taskManager.awaitIdle(timeout)) {
             return false;

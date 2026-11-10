@@ -692,12 +692,14 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 ### 7.6 노드 드레인 — 발화를 멈추고 끝나기를 기다린다
 
 API 서버와 워커를 나누고 워커를 하나씩 내리는 호스트는, 도는 루틴을 죽이지 않고 노드를 비울 수 있어야 한다.
-엔진은 그 일을 **수명과 분리된** 세 메서드로 준다. 어느 것도 무언가를 닫거나 끊지 않는다 — 엔진은
+엔진은 그 일을 **수명과 분리된** 메서드들로 준다. 어느 것도 무언가를 닫거나 끊지 않는다 — 엔진은
 application-scoped 이고(§2.3) 일시정지는 `resumeFires()` 로 되돌릴 수 있다.
 
 | 메서드 | 하는 일 |
 |--------|--------|
-| `SchedulingEngine.pauseFires()` | ① `TaskScheduler.pauseFiring()` — 이 노드에서 트리거를 그만 쏜다. ② 매니저의 일시정지 — 그래도 들어오는 발화(호스트가 직접 부르는 `executeFire` 포함)를 guard 에 묻기 **전에** 거절한다. ①이 던져도 ②는 `finally` 에서 걸린다 |
+| `SchedulingEngine.pauseFires()` | ① `TaskScheduler.pauseFiring()` — 이 노드에서 트리거를 그만 쏜다. ② 매니저의 일시정지 — 그래도 들어오는 발화(호스트가 직접 부르는 `executeFire` 포함)를 guard 에 묻기 **전에** 거절한다. ①이 던져도 ②는 `finally` 에서 걸린다. 반환값은 ①이 실제로 멈췄는가다(`false` 의 뜻은 아래 표 뒤) |
+| `SchedulingEngine.resumeFires()` | 매니저를 다시 열고 스케줄러를 다시 쏘게 한다. `pauseFires()` 와 같은 엔진 락으로 직렬화된다 |
+| `SchedulingEngine.isAcceptingFires()` | `pauseFires()` 와 `resumeFires()` 사이에서 `false` |
 | `SchedulingEngine.inFlightRunCount()` | 이 노드에서 도는 루틴 실행 수(`RoutineExecutor.inFlightRunCount()`) |
 | `SchedulingEngine.awaitIdle(Duration)` | 받아들인 발화와 루틴 실행이 모두 끝나기를 기다린다. 타임아웃이면 `false` — **아무것도 끊지 않는다** |
 
@@ -721,7 +723,12 @@ standby 상태 그대로 남고(재개할 때 시작한다), 인메모리 스케
 | 기본 구현(`TaskScheduler` default) | 멈출 수 없다. `false` |
 
 스케줄러가 멈추지 못하면(`false`) 클러스터 전체 트리거가 이 노드에 준 회차는 거절되어 **어디서도 돌지 않는다**.
-차용 Quartz 라면 애플리케이션이 직접 standby 해야 한다.
+`pauseFires()` 가 그 `false` 를 그대로 돌려주므로 호스트는 로그가 아니라 코드로 이 경우를 안다. 차용 Quartz 라면
+애플리케이션이 직접 standby 해야 한다.
+
+`pauseFires()` 와 `resumeFires()` 는 한 엔진 락으로 직렬화된다. 각 반쪽(스케줄러, 매니저)은 따로 스레드 안전하지만
+둘을 묶은 짝은 아니어서, 일시정지와 재개가 반쪽씩 엇갈리면 스케줄러는 쏘는데 매니저는 모두 거절하는 상태가 남을 수
+있다 — 클러스터 트리거라면 그 회차들이 어디서도 돌지 않는다. `start()` 의 일시정지 재확인도 같은 락 안에서 한다.
 
 소유 Quartz 의 standby 도 빈틈없는 장벽은 아니다. Quartz 는 트리거를 새로 *가져오지* 않을 뿐이어서, 이미 가져온
 트리거 가운데 발화 시각이 Quartz 의 반환 임계값(수 ms — JDBC 저장소에서 약 70 ms, RAM 저장소에서는 더 짧다) 안에

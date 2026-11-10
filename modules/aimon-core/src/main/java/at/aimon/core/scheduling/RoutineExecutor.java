@@ -155,7 +155,9 @@ import at.aimon.core.tracing.Tracer;
  * <b>One occurrence, not the task.</b> A run started for a {@link ScheduledFire} that carries a slot
  * ({@link #execute(ScheduledTask, ScheduledFire)}) is registered under the fire's occurrence key, and
  * {@link #interrupt(ScheduledTaskId, String, InterruptReason)} stops only that run — a cancel aimed at an occurrence
- * that arrives after it finished is a no-op instead of stopping the next occurrence's run.
+ * that arrives after it finished is a no-op instead of stopping the next occurrence's run. A cancel that arrives
+ * <em>before</em> its occurrence's run registers here is not lost either: it leaves a short-lived, bounded tombstone
+ * for that one occurrence, and the run trips itself the moment it registers (see the keyed {@code interrupt}).
  *
  * <h2>Draining</h2>
  *
@@ -247,6 +249,37 @@ public class RoutineExecutor {
     private int inFlightCount;
 
     private final Object idleLock = new Object();
+
+    /**
+     * How long a keyed interrupt that found no run of its occurrence here is remembered
+     * ({@link #interrupt(ScheduledTaskId, String, InterruptReason)}). Long enough to cover the gap between a fire being
+     * admitted and its run registering — an execution-guard round-trip and a task load, normally well under a second —
+     * with a wide margin; short enough that the tombstones of occurrences that ran elsewhere, or had already finished,
+     * do not linger.
+     */
+    static final Duration OCCURRENCE_TOMBSTONE_TTL = Duration.ofMinutes(10);
+
+    /**
+     * At most this many occurrence tombstones are kept on this instance; past it the oldest goes first. A bound so that
+     * a stream of cancels for occurrences that never run here — every node of a cluster records the ones it does not
+     * run — cannot grow the set without limit.
+     */
+    static final int OCCURRENCE_TOMBSTONE_LIMIT = 1024;
+
+    /**
+     * Guards {@link #occurrenceTombstones} and the keyed half of the in-flight registry together: a keyed interrupt
+     * scans the registry and, finding nothing, records a tombstone in one step, and a keyed run adds itself to the
+     * registry and consumes its tombstone in one step. So whichever comes second sees the first — an interrupt racing
+     * a run's registration either finds the run or leaves the tombstone the run then finds.
+     */
+    private final Object occurrenceLock = new Object();
+
+    /**
+     * Occurrence-targeted interrupts that arrived before their occurrence's run registered here, keyed by
+     * {@code (taskId, occurrenceKey)}, in insertion order so expiry and eviction both take from the head. Guarded by
+     * {@link #occurrenceLock}.
+     */
+    private final Map<Map.Entry<ScheduledTaskId, String>, Tombstone> occurrenceTombstones = new LinkedHashMap<>();
 
     /**
      * Records a ROUTINE span per run and a TOOL span per step attempt. Defaults to {@link Tracer#noop()}; wired via
@@ -390,22 +423,30 @@ public class RoutineExecutor {
      * {@link #execute(ScheduledTask)} delegates here too. Override this method, not the one-argument form, to observe
      * or replace scheduled runs.
      *
+     * <p>
+     * When a keyed interrupt for this fire's occurrence arrived before the run registered (and within
+     * {@link #OCCURRENCE_TOMBSTONE_TTL}), the run starts already interrupted with that request's reason and ends as
+     * cancelled before its first step.
+     *
      * @param task
      *            the scheduled task to execute (must not be null)
      * @param fire
-     *            the fire this run serves, or {@code null} when there is none; when present its task id must be
-     *            {@code task}'s
+     *            the fire this run serves (must not be null; {@link ScheduledFire#untimed} for a run without a slot);
+     *            its task id must be {@code task}'s
      * @return the routine execution result
+     * @throws NullPointerException
+     *             if {@code task} or {@code fire} is null
      * @throws IllegalArgumentException
      *             if {@code fire} names a different task
      */
     public RoutineResult execute(ScheduledTask task, ScheduledFire fire) {
         Objects.requireNonNull(task, "Task cannot be null");
-        if (fire != null && !fire.getTaskId().equals(task.getId())) {
+        Objects.requireNonNull(fire, "Fire cannot be null");
+        if (!fire.getTaskId().equals(task.getId())) {
             throw new IllegalArgumentException(
                     "Fire " + fire + " does not belong to task '" + task.getId() + "'; refusing to run it");
         }
-        final String occurrenceKey = fire == null ? null : fire.getOccurrenceKey().orElse(null);
+        final String occurrenceKey = fire.getOccurrenceKey().orElse(null);
 
         // Minted here rather than with the step context so the run's root span can name it too.
         final ExecutionId executionId = ExecutionId.generate("routine:" + task.getId());
@@ -413,7 +454,13 @@ public class RoutineExecutor {
         final RoutineTrace trace = RoutineTrace.open(tracer, tracePayloadPolicy, task, executionId);
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
         final InFlightRun run = new InFlightRun(coordinator, occurrenceKey);
-        registerRun(task.getId(), run);
+        final Optional<InterruptReason> earlyCancel = registerRun(task.getId(), run);
+        if (earlyCancel.isPresent()) {
+            // Tripped before the first step, so the run's own gate records it as cancelled rather than running it.
+            log.info("Occurrence '{}' of task '{}' was cancelled before its run started here ({}); not running it",
+                    occurrenceKey, task.getId(), earlyCancel.get());
+            coordinator.requestInterrupt(earlyCancel.get());
+        }
         RoutineResult result = null;
         try {
             result = runRoutine(task, coordinator, executionId, trace);
@@ -500,6 +547,19 @@ public class RoutineExecutor {
      * fire — has no occurrence key and is never matched here; only the task-wide form reaches it. Cooperative in the
      * same senses as the task-wide form.
      *
+     * <p>
+     * <b>Early cancels.</b> A host cancelling a fire it queued may be faster than the fire: the request can arrive
+     * while the fire is still between admission and its run (an execution-guard round-trip, a task load). So when
+     * nothing matches, the request is remembered as a tombstone for exactly {@code (taskId, occurrenceKey)}, and a run
+     * of that occurrence that registers within {@link #OCCURRENCE_TOMBSTONE_TTL} starts already interrupted with this
+     * {@code reason}; the first such run consumes the tombstone. A tombstone names one occurrence, so it never touches
+     * any other occurrence of the task, nor a run without a slot — the guarantee that a late cancel cannot stop the
+     * next occurrence is unchanged. The set is node-local and bounded ({@link #OCCURRENCE_TOMBSTONE_LIMIT}, oldest
+     * evicted first); a tombstone for an occurrence that never runs here (it ran on another node, or had finished)
+     * simply expires. One consequence: if the same occurrence is run again here within the TTL after a cancel that
+     * arrived once it had finished (a scheduler re-delivering a fire it already delivered), that repeat is cancelled —
+     * which is what the cancel named.
+     *
      * @param taskId
      *            the task (must not be null)
      * @param occurrenceKey
@@ -508,8 +568,8 @@ public class RoutineExecutor {
      * @param reason
      *            why (must not be null)
      * @return {@code true} if a run of that occurrence was signalled here, {@code false} if none is in progress on this
-     *         instance — because it has finished, has not started, runs on another node, or the key names another
-     *         occurrence
+     *         instance — because it has finished, has not started (it will start interrupted if it registers here
+     *         within the TTL), runs on another node, or the key names another occurrence
      * @throws NullPointerException
      *             if any argument is null
      * @throws IllegalArgumentException
@@ -525,19 +585,26 @@ public class RoutineExecutor {
             throw new IllegalArgumentException("Occurrence key cannot be blank");
         }
 
-        final Set<InFlightRun> runs = inFlightRuns.get(taskId);
         int signalled = 0;
-        if (runs != null) {
-            for (InFlightRun run : runs) {
-                if (occurrenceKey.equals(run.occurrenceKey)) {
-                    run.coordinator.requestInterrupt(reason);
-                    signalled++;
+        synchronized (occurrenceLock) {
+            final Set<InFlightRun> runs = inFlightRuns.get(taskId);
+            if (runs != null) {
+                for (InFlightRun run : runs) {
+                    if (occurrenceKey.equals(run.occurrenceKey)) {
+                        run.coordinator.requestInterrupt(reason);
+                        signalled++;
+                    }
                 }
+            }
+            if (signalled == 0) {
+                recordTombstone(taskId, occurrenceKey, reason);
             }
         }
         if (signalled == 0) {
-            log.debug("No in-flight run of occurrence '{}' of task '{}' on this instance; interrupt({}) is a no-op",
-                    occurrenceKey, taskId, reason);
+            log.debug(
+                    "No in-flight run of occurrence '{}' of task '{}' on this instance; interrupt({}) is remembered"
+                            + " for {} in case that run has not registered yet",
+                    occurrenceKey, taskId, reason, OCCURRENCE_TOMBSTONE_TTL);
             return false;
         }
         log.info("Interrupted the in-flight run of occurrence '{}' of task '{}' ({})", occurrenceKey, taskId, reason);
@@ -563,6 +630,13 @@ public class RoutineExecutor {
      * ({@link SchedulingEngine#pauseFires()}), then waits here, and only once this returns {@code false} decides
      * whether to stop what is left ({@link #interrupt(ScheduledTaskId, InterruptReason)}, or the engine's
      * {@link SchedulingEngine#close() close()}).
+     *
+     * <p>
+     * <b>{@code close()} does not always interrupt.</b> It shuts the task scheduler down before this executor, and an
+     * owned Quartz scheduler waits for its running jobs on shutdown by default — those jobs are the routines still
+     * running here, so {@code close()} blocks until they end and never gets to interrupt them. Build that scheduler
+     * with {@code QuartzTaskSchedulerBuilder.waitForJobsOnShutdown(false)} for a drain whose timeout should end in an
+     * interrupt; the waiting has already been done here.
      *
      * <p>
      * Idle is a moment, not a state: unless new fires are refused, a run may start the instant this returns
@@ -606,11 +680,72 @@ public class RoutineExecutor {
         return runs != null && !runs.isEmpty();
     }
 
-    private void registerRun(ScheduledTaskId taskId, InFlightRun run) {
+    /**
+     * Adds {@code run} to the registry and, for a keyed run, consumes the tombstone an early cancel left for its
+     * occurrence.
+     *
+     * @return the reason of the early cancel to apply to the run, or empty
+     */
+    private Optional<InterruptReason> registerRun(ScheduledTaskId taskId, InFlightRun run) {
         synchronized (idleLock) {
             inFlightCount++;
         }
-        inFlightRuns.computeIfAbsent(taskId, id -> ConcurrentHashMap.newKeySet()).add(run);
+        if (run.occurrenceKey == null) {
+            inFlightRuns.computeIfAbsent(taskId, id -> ConcurrentHashMap.newKeySet()).add(run);
+            return Optional.empty();
+        }
+        synchronized (occurrenceLock) {
+            inFlightRuns.computeIfAbsent(taskId, id -> ConcurrentHashMap.newKeySet()).add(run);
+            return consumeTombstone(taskId, run.occurrenceKey);
+        }
+    }
+
+    /** Remembers an early cancel for one occurrence. Caller holds {@link #occurrenceLock}. */
+    private void recordTombstone(ScheduledTaskId taskId, String occurrenceKey, InterruptReason reason) {
+        final Instant now = clock.instant();
+        expireTombstones(now);
+        final Map.Entry<ScheduledTaskId, String> key = Map.entry(taskId, occurrenceKey);
+        // Re-inserted rather than updated, so a repeated cancel moves to the tail and keeps insertion order = expiry.
+        occurrenceTombstones.remove(key);
+        occurrenceTombstones.put(key, new Tombstone(reason, now.plus(OCCURRENCE_TOMBSTONE_TTL)));
+        final var oldest = occurrenceTombstones.entrySet().iterator();
+        while (occurrenceTombstones.size() > OCCURRENCE_TOMBSTONE_LIMIT) {
+            oldest.next();
+            oldest.remove();
+        }
+    }
+
+    /** Takes the live tombstone for one occurrence, if any. Caller holds {@link #occurrenceLock}. */
+    private Optional<InterruptReason> consumeTombstone(ScheduledTaskId taskId, String occurrenceKey) {
+        if (occurrenceTombstones.isEmpty()) {
+            return Optional.empty();
+        }
+        final Instant now = clock.instant();
+        expireTombstones(now);
+        final Tombstone tombstone = occurrenceTombstones.remove(Map.entry(taskId, occurrenceKey));
+        return tombstone == null ? Optional.empty() : Optional.of(tombstone.reason);
+    }
+
+    /** Drops expired tombstones from the head. Caller holds {@link #occurrenceLock}. */
+    private void expireTombstones(Instant now) {
+        final var it = occurrenceTombstones.values().iterator();
+        while (it.hasNext()) {
+            if (it.next().expiresAt.isAfter(now)) {
+                return;
+            }
+            it.remove();
+        }
+    }
+
+    /**
+     * How many occurrence tombstones are held on this instance, expired or not. For tests.
+     *
+     * @return the number of remembered early cancels
+     */
+    int occurrenceTombstoneCount() {
+        synchronized (occurrenceLock) {
+            return occurrenceTombstones.size();
+        }
     }
 
     private void deregisterRun(ScheduledTaskId taskId, InFlightRun run) {
@@ -1431,6 +1566,17 @@ public class RoutineExecutor {
         } catch (InterruptedException e) {
             timeoutExecutor.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** An early cancel waiting for its occurrence's run: the reason to apply, and when it stops counting. */
+    private static final class Tombstone {
+        private final InterruptReason reason;
+        private final Instant expiresAt;
+
+        Tombstone(InterruptReason reason, Instant expiresAt) {
+            this.reason = reason;
+            this.expiresAt = expiresAt;
         }
     }
 
