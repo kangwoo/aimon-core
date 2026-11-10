@@ -12,6 +12,10 @@ import at.aimon.core.llms.openai.OpenAILlmClient;
  * The real model clients of the E2E. Default models follow the live-test precedent and can be overridden with
  * {@code AIMON_LLM_TEST_OPENAI_MODEL} / {@code AIMON_LLM_TEST_ANTHROPIC_MODEL}, for when a weak model will not write
  * code. The key goes straight into the client builder; no config object is ever logged.
+ *
+ * <p>
+ * The Anthropic default is {@code claude-haiku-5-5}, which thinks by default; its {@code maxTokens} is 16000 so that
+ * thinking cannot use up the reply.
  */
 final class LiveModels {
 
@@ -28,7 +32,7 @@ final class LiveModels {
         if (override != null && !override.isBlank()) {
             return override.strip();
         }
-        return OPENAI.equals(provider) ? "gpt-4o-mini" : "claude-haiku-4-5-20251001";
+        return OPENAI.equals(provider) ? "gpt-4o-mini" : "claude-haiku-5-5";
     }
 
     /**
@@ -44,6 +48,6 @@ final class LiveModels {
         }
         Objects.requireNonNull(provider, "provider cannot be null");
         return new AnthropicLlmClient(
-                AnthropicConfig.builder().apiKey(keys.anthropic()).model(model(provider)).maxTokens(4000).build());
+                AnthropicConfig.builder().apiKey(keys.anthropic()).model(model(provider)).maxTokens(16000).build());
     }
 }

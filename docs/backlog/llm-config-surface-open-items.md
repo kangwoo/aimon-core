@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 30건 (열림 5 · 닫힘 25)
+# LLM 설정 표면 — 등록 항목 36건 (열림 11 · 닫힘 25)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -2005,6 +2005,130 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 
 ---
 
+## L-31 — `thinkingMode: off` 는 기본 모델 `claude-sonnet-5-5` 에서 thinking 을 끄지 못한다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q2, 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** `AnthropicThinkingMode.OFF`(와 `ReasoningEffort.NONE`)가 thinking 을 정말로 끄게 할지 정한다 — Sonnet 5.5 에는
+`thinking: {"type": "between_tools"}`, Haiku 5.5 에는 `{"type": "disabled"}`(effort ≤ `high`), Opus 5.5 는 끌 수 없다.
+
+**왜.** 관측 가능한 결과 — 2026-11-10 부터 모델을 적지 않은 anthropic 배포와 `default-anthropic` 번들은 `claude-sonnet-5-5`
+로 돌고, 그 모델은 `OFF` 에서도 effort `high` 로 adaptive thinking 을 한다. 운영자가 `thinkingMode: off` 를 "생각하지
+않는다" 로 읽으면 thinking 토큰이 과금되는 줄 모른다. 지금의 처방은 `auto`/`adaptive` + `reasoningEffort: low` 이고 CHANGELOG
+가 그렇게 적는다.
+
+**어디.** 2026-11-10 — `AnthropicThinkingResolver.resolveShape`(`OFF` · `NONE` 이 방언 전에 정해지는 자리),
+`AnthropicThinkingMode.OFF` javadoc, [`anthropic-thinking.md`](../design/llm/anthropic-thinking.md) §4.5 · §4.6.
+
+**심각도 (규칙 셋).** 재지 않았다 — 설계 §3 A2 가 이 PR 에서 기각한 이유는 계약 변경이라는 것이다(`OFF` 는 "파라미터를
+보내지 않는다" 로 문서화되어 있다). 모델별로 "가장 낮은 thinking 모양" 이 다르므로(위 셋) 매핑 하나로 닫히지 않고,
+`between_tools` 는 다른 모든 모델과 effort `xhigh`/`max` 에서 400 이며 `display` · `block_binding` 을 금한다 — 즉 블록 바인딩과
+함께 쓸 수 없다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 능력 기술자의 새 축(다섯 번째 `ThinkingDialect` 상태 또는 플래그) +
+리졸버 분기 + SDK 3.3.0 이 모르는 `between_tools` 를 `putAdditionalBodyProperty` 로 쓰기다.
+
+**언제 다시 볼까.** `OFF` 에서 thinking 토큰이 과금된다는 보고가 오거나, SDK 가 `between_tools` 를 모델링할 때.
+
+## L-32 — 가격표가 Haiku 5.5 의 100K 초과 요금을 적을 수 없다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q4, 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** 프롬프트 크기로 요금이 갈리는 모델(Haiku 5.5: 100K 이하 $0.10/$0.50, 초과 $0.50/$2.50)을 `ModelPriceTable` 이
+표현하게 할지 정한다.
+
+**왜.** 관측 가능한 결과 — 내장 행은 100K 이하 요금이고, 같은 변경이 Haiku 5.5 에 1M 컨텍스트 창을 주어 compaction 이 약
+800K 에서야 시작하므로, 긴 세션은 100K 를 넘는 프롬프트를 일상적으로 보내고 그 요청의 비용을 **최대 5배 적게** 적는다.
+그 수치로 예산을 잡는 운영자는 행을 덮어쓰거나 창을 낮춰야 한다(CHANGELOG 가 그렇게 적는다).
+
+**어디.** 2026-11-10 — `InMemoryModelPriceTable.withDefaults()` 의 `claude-haiku-5` 행과 그 주석, `ModelPrice` ·
+`costOf(TokenUsage)`.
+
+**심각도 (규칙 셋).** 표 자체가 "convenience defaults, not a billing source of truth" 라고 말하므로 청구 오류는 아니다. 하지만
+1M 창 때문에 가장자리 경우가 아니다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** `ModelPrice` 에 구간을 넣으면 `ModelPriceTable` SPI 가 바뀐다(설계 A7 이 기각).
+
+**언제 다시 볼까.** 구간 요금 모델이 하나 더 나오거나, 비용 집계로 예산을 강제하는 기능이 생길 때.
+
+## L-33 — `claude-opus-5-5` 능력 행은 카탈로그뿐이다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q5, 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** `claude-opus-5-5` 에 adaptive 200 · budgeted 400 과 블록 바인딩을 라이브로 재서 행을 측정된 것으로 만든다.
+
+**왜.** 관측 가능한 결과 — 같은 변경에서 Sonnet 5.5 · Haiku 5.5 는 라이브로 확인했고(바인딩 대조군 포함) Opus 5.5 는
+벤더 카탈로그만 근거다. 행이 틀리면 `thinkingMode: extended` 가 400 이거나(번역이 안 되면) 바인딩이 거절된다.
+
+**어디.** 2026-11-10 — `InMemoryModelCapabilityRegistry.registerAnthropicDefaults` 의 exact 행 셋과 그 주석,
+[`model-capabilities.md`](../design/llm/model-capabilities.md) §6.2.
+
+**심각도 (규칙 셋).** 낮게 본다 — 같은 카탈로그 문장의 다른 두 모델이 그대로 맞았다. `claude-mythos` 행과 같은 처지다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** `AnthropicThinkingBindingLiveTest` 의 매개변수에 이름 하나를 더하면 된다
+(Opus 가격으로 몇 센트).
+
+**언제 다시 볼까.** Opus 5.5 를 쓰는 배포가 생기거나, 그 행의 400 보고가 올 때.
+
+## L-34 — Fable 5.1 · Mythos 5.1 도 prefix 검사를 하지만 블록 바인딩을 말하지 않는다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q6 (셋째 점), 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** `claude-fable-5-1` · `claude-mythos-5-1` 에 `supportsThinkingBlockBinding: true` 를 말하는 exact 행을 둘지 정한다.
+
+**왜.** 관측 가능한 결과 — 2026-08-31 이후 계정에서 그 모델로 도는 에이전트는 다음 턴(시스템 프롬프트 재렌더링)이나
+compaction 뒤에 *"bound to a different conversation"* 400 을 맞고, 나쁜 블록이 이력에 남으므로 그 뒤 요청도 실패한다.
+클라이언트가 두 처방(플래그 선언, 재전송 끄기)을 한 번 알리지만 기본값으로는 실패한다. 이 PR 이전과 같은 동작이라
+회귀는 아니다.
+
+**어디.** 2026-11-10 — `claude-fable-5` · `claude-mythos` prefix 행(5.0 모델까지 덮는다), `AnthropicLlmClient.
+reportIfThinkingBlockBindingRejected`.
+
+**심각도 (규칙 셋).** 재지 않았다. Fable 5.1 의 prefix 검사를 일으켜 본 적이 없다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** exact 행 둘을 prefix 앞에 두고(exact 가 이긴다) 라이브 테스트에 이름을 더한다.
+벤더가 그 모델에 `block_binding` 을 문서화했는지 먼저 확인한다.
+
+**언제 다시 볼까.** Fable 5.1 · Mythos 5.1 배포에서 그 400 이 보고될 때.
+
+## L-35 — Fable · Mythos 가격과 4.6 ~ 4.8 의 1M 창이 표에 없다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q6 (첫째 · 둘째 점), 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** 가격표에 Fable 5 / 5.1 · Mythos 행을, 컨텍스트 창 표에 Opus 4.6 ~ 4.8 · Sonnet 4.6 의 1M 을 넣는다.
+
+**왜.** 관측 가능한 결과 — Fable · Mythos 는 비용이 집계되지 않고, 4.6 ~ 4.8 은 200K 로 해석되어 compaction 이 실제 창보다
+일찍 돈다(안전한 과소 보고).
+
+**어디.** 2026-11-10 — `InMemoryModelPriceTable.withDefaults()`, `InMemoryModelContextWindowRegistry.withDefaults()` 의
+`claude-opus-4` · `claude-sonnet-4` prefix.
+
+**심각도 (규칙 셋).** 낮다 — 하나는 집계 누락, 하나는 이른 compaction 이다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 4.6 ~ 4.8 은 `claude-opus-4` 보다 앞에 등록해야 하는 중첩 prefix 다(가격표의
+`claude-opus-4-5` 와 같은 모양).
+
+**언제 다시 볼까.** 그 모델의 비용 집계나 창이 필요해질 때.
+
+## L-36 — 스트리밍 응답의 `input_transformations` 가 어느 이벤트에 오는지 재지 않았다
+
+*(2026-11-10 등록. 출처는 [설계](../design/llm/anthropic-default-model-sonnet-5-5.md) — Anthropic 기본 모델을 `claude-sonnet-5-5` 로 옮긴 작업 — 의 §7 Q1b, 그 문서 §8.3 이 이 항목으로 올렸다.)*
+
+**무엇을.** 블록 바인딩 베타 헤더를 단 **스트리밍** 요청에서 서버가 드롭 목록(`input_transformations`)을 `message_start` ·
+`message_delta` 중 어디에 싣는지(혹은 싣지 않는지) 잰다.
+
+**왜.** 관측 가능한 결과 — CLI 는 스트리밍으로 돌므로, 거기서 목록이 오지 않으면 드롭 WARN 이 뜨지 않는다. 요청은 어느
+쪽이든 영향받지 않는다. 블로킹 경로에서는 최상위 필드로 온다는 것을 쟀다(2026-11-10).
+
+**어디.** 2026-11-10 — `AnthropicStreamingMapper.onMessageStart` · `onMessageDelta` 가 네 자리(메시지 · 이벤트 · 델타)를
+읽고 스트림당 한 번 보고한다. 픽스처로만 테스트했다.
+
+**심각도 (규칙 셋).** 보고만의 문제다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** `AnthropicThinkingBindingLiveTest` 의 case b 를 스트리밍으로 한 번 더 보내면 된다.
+
+**언제 다시 볼까.** 스트리밍 배포에서 드롭 WARN 이 한 번도 안 보인다는 보고가 오거나, 이 라이브 테스트를 다음에 돌릴 때.
+
 ## 관련 문서
 
 이 등록부가 부르는 옛 설계 문서(`옛 …md`)와 그 절 번호는 [`../design/README.md` §4](../design/README.md#4-옛-경로-대응표) 가
@@ -2034,4 +2158,5 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 - [`../getting-started/aimon-core-integration-via-cli-reference.md`](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다) —
   CLI 가이드의 provider 전환 절. L-17 의 주의 문구와 L-18 · L-19 가 적혀 있던 자리이고, #104 ~ #107 이 그 항목들을
   닫으며 함께 고쳤다
+- [`../design/llm/anthropic-default-model-sonnet-5-5.md`](../design/llm/anthropic-default-model-sonnet-5-5.md) — 기본 모델을 `claude-sonnet-5-5` 로 옮긴 설계(승인본). §7 Q1b · Q2 · Q4 · Q5 · Q6 이 L-31 ~ L-36 의 출처이고, §8.3 이 각 질문이 간 곳을 적는다
 - [`README.md`](README.md) — 항목 등록 규칙

@@ -162,7 +162,7 @@ CLI 는 memory 모델 이름을 `AgentSetupFactory.memoryModelName` 에서 **한
 | 설정 | 기본 모델 | 조립 경로 |
 |---|---|---|
 | `OpenAIConfig` | **없다.** `build()` 가 모델 없는 설정을 거절한다 | CLI `LlmClientFactory` 는 yaml `model` 을, 스타터는 `aimon.llm.model` 을 이름하며 먼저 요구한다 |
-| `AnthropicConfig` | `claude-sonnet-4-5` | 두 조립 경로 모두 키가 있을 때만 모델을 복사한다 — anthropic 에서 키는 선택이다 |
+| `AnthropicConfig` | `claude-sonnet-5-5` | 두 조립 경로 모두 키가 있을 때만 모델을 복사한다 — anthropic 에서 키는 선택이다 |
 
 **`OpenAIConfig` 는 모델을 요구한다.**
 
@@ -170,24 +170,31 @@ CLI 는 memory 모델 이름을 `AgentSetupFactory.memoryModelName` 에서 **한
 - 조립 경로가 `build()` 보다 먼저 자기 키 이름으로 요구한다. `build()` 의 메시지는 자바 필드를 가리키지만 운영자가 고칠
   것은 설정 키이기 때문이다.
 
-**`AnthropicConfig` 의 내장 기본 모델은 `claude-sonnet-4-5` 다.** 이유는 넷이다.
+**`AnthropicConfig` 의 내장 기본 모델은 `claude-sonnet-5-5` 다**(2026-11-10). 앞의 기본값 `claude-sonnet-4-5` 는 벤더가
+deprecated 로 표시했고 **2026-11-30 에 은퇴한다** — 그날부터 모델을 적지 않은 배포와 `default-anthropic` 번들의 모든 요청이
+실패하므로 기본값을 옮겼다. 이유는 넷이다.
 
-- **제공이 측정된 이름이다**(아래 결론 표). 제공되는 이름 중 가장 작은 이동이다.
-- **내장 능력 표가 이미 기술하는 이름이다.** 기본값이 표의 행으로 해석되므로 요청 모양이 기본값에서도 fail-open 추측이
-  아니다([`model-capabilities.md`](model-capabilities.md)). `AnthropicConfigTest` 가 기본값이 기술된 행으로 해석됨을
-  단언하므로, 기본값을 다시 바꾸는 변경은 표를 만난다.
+- **벤더의 현재 Sonnet 이다.** 카탈로그가 Active 로 적고, 은퇴 날짜가 없다. Opus 5.5(카탈로그의 "새 코드의 기본")는
+  가격이 두 배이고 thinking 을 끌 수 없어 택하지 않았다.
+- **내장 능력 표가 exact 행으로 기술하는 이름이다.** 기본값이 표의 행으로 해석되므로 요청 모양이 기본값에서도 fail-open 추측이
+  아니다([`model-capabilities.md`](model-capabilities.md)). `AnthropicConfigTest` 가 기본값이 기술된 `ADAPTIVE` 행으로
+  해석되고 블록 바인딩을 말하며 은퇴 목록에 없음을 단언하므로, 기본값을 다시 바꾸는 변경은 표를 만난다.
 - **`default-anthropic` 번들의 메인 모델과 같다.** 제공 여부를 지켜야 할 이름이 하나로 준다.
-- **이름 밖의 요청을 바꾸지 않는다.** 날짜 스냅샷 이름은 같은 모델의 두 번째 표기를 만들고, 측정하지 않은 새 계열은
-  이름 밖에서 요청 모양(thinking · temperature)을 바꾼다.
+- **이름 밖의 요청 변화를 함께 다뤘다.** 이번 이동은 이름 밖에서 요청을 바꾼다 — adaptive thinking 이 기본으로 켜지고(그래서
+  `maxTokens` 기본 4096 → 16000, `timeout` 기본 60s → 600s), 되실은 thinking 블록이 대화의 prefix 에 묶인다(그래서 블록
+  바인딩). 근거와 대안은 [`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) 다.
 
 | 무엇 | 결과 | 측정 날짜 |
 |---|---|---|
 | Anthropic 모델 API · Messages API 에 `claude-sonnet-4-20250514` | 둘 다 404 `not_found_error` | 2026-09-11 |
 | Anthropic 모델 API 에 `claude-sonnet-4-5` | 200 — 날짜 스냅샷으로 해석되고, 모델 정보가 budgeted thinking 만 지원한다고 답한다 | 2026-09-11 |
-| Anthropic Messages API 에 `claude-sonnet-4-5` | 200 — 제공됨 | 2026-09-11 |
+| Anthropic Messages API 에 `claude-sonnet-4-5` | 200 — 제공됨(앞의 기본값. 2026-11-30 은퇴) | 2026-09-11 |
+| Anthropic Messages API 에 `claude-sonnet-5-5` — `thinkingMode` `off`(바인딩 운반체) · `auto` + `low`, 그리고 블록 바인딩 라이브 테스트(`AnthropicThinkingBindingLiveTest`)와 ExecuteCode E2E(JS · Python) | 전부 200 — 제공됨. 바뀐 시스템 프롬프트와 compaction 모양의 이력에서 낡은 블록이 `prefix_binding_mismatch` 로 버려졌다 | 2026-11-10 |
+
+위의 2026-09-11 행은 앞의 기본값이 어떻게 골라졌는지의 기록으로 남긴다.
 
 **측정 범위.** 제공 여부는 Anthropic Messages API 에서만 쟀다. 모델을 적지 않은 채 `baseUrl` 로 게이트웨이를 가리키는
-배포는 그 게이트웨이에 `claude-sonnet-4-5` 를 보내며, 게이트웨이가 그 이름을 받는지는 측정하지 않았다.
+배포는 그 게이트웨이에 `claude-sonnet-5-5` 를 보내며, 게이트웨이가 그 이름을 받는지는 측정하지 않았다.
 
 **기본 모델이 제공되지 않게 되면** 그 모델로 도는 요청은 요청 시점에 벤더의 오류로 실패한다. memory 가 켜져 있으면 기동
 줄이 이미 그 모델과 키를 이름해 두었다.

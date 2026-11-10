@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: ec652745
+source_commit: 32e6baca
 ---
 
 # AIMON Core 기여 가이드
@@ -211,8 +211,9 @@ OPENAI_KEY_FILE=<키를 담은 파일 경로> ANTHROPIC_KEY_FILE=<경로> ./grad
   `LIVE-E2E provider=openai model=gpt-4o-mini engine=javascript result=PASS executeCodeCalls=1 nestedCallsBestProgram=10 nestedCallsAllPrograms=10 perProgram=[10] inputTokens=… outputTokens=… completion=COMPLETED answer=CORRECT programPrinted=[[h2, h3, h5]] finalAnswerMatches=false`.
   그 위에 프로그램마다의 수치(`LIVE-E2E program #n … dispatched= succeeded= tools=[…] status=…`)를 출력한다.
   실패하면 대화, 렌더 페이로드, span 트리도 출력한다. 어느 것에도 키는 없다.
-- **모델.** 기본은 `gpt-4o-mini` 와 `claude-haiku-4-5-20251001` 이다. 약한 모델이 코드를 쓰지 않으면
-  `AIMON_LLM_TEST_OPENAI_MODEL` / `AIMON_LLM_TEST_ANTHROPIC_MODEL` 로 바꾼다.
+- **모델.** 기본은 `gpt-4o-mini` 와 `claude-haiku-5-5` 이다(그 모델은 기본으로 생각하므로 Anthropic 클라이언트는
+  `maxTokens` 16000 으로 돈다). 약한 모델이 코드를 쓰지 않으면 `AIMON_LLM_TEST_OPENAI_MODEL` /
+  `AIMON_LLM_TEST_ANTHROPIC_MODEL` 로 바꾼다.
 - **셸 변형은 모델이 쓴 Python 을 이 호스트에서 돌린다.** `python3` 3.8 이상이 필요하고(없으면 건너뛴다), 스스로 샌드박스라고
   *선언*한 로컬 환경에서 돌며, 모델이 `Bash` 를 직접 부를 수도 있다. 스택이 닫힌 뒤에는 기록해 둔 실행 디렉터리의
   `aimon_ptc.py` 프로세스가 남지 않았는지 확인한다. 프로그램이 스스로 `exec` 한 하위 프로세스는 맞추지 못하므로, 실행 뒤

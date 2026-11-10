@@ -56,9 +56,12 @@ import at.aimon.core.llm.ReasoningEffort;
  *
  * <p>
  * <strong>The table describes two vendors</strong>, and one instance of it is read by both clients. The
- * {@code claude-*} rows come in two shapes — six prefixes that state two flags (the names they match refuse the
- * sampling parameters <em>and</em> speak the {@link ThinkingDialect#ADAPTIVE} thinking dialect) and five that state
- * the dialect alone — and the {@code gpt-*} / {@code o*} rows cannot match a {@code claude-*} name or the other way
+ * {@code claude-*} rows come in three shapes — six prefixes that state two flags (the names they match refuse the
+ * sampling parameters <em>and</em> speak the {@link ThinkingDialect#ADAPTIVE} thinking dialect), five that state
+ * the dialect alone, and three exact rows for the current generation ({@code claude-sonnet-5-5},
+ * {@code claude-opus-5-5}, {@code claude-haiku-5-5}) that state the same two flags plus
+ * {@link ModelCapabilities#supportsThinkingBlockBinding()} — and the {@code gpt-*} / {@code o*} rows cannot match a
+ * {@code claude-*} name or the other way
  * round, so the two blocks do not interfere. What they do share is the look-up: a {@code claude-*} name reaching
  * {@code OpenAILlmClient} through an OpenAI-compatible gateway resolves to the Anthropic rows and has its sampling
  * suppressed too. That is the right answer arriving from an unexpected direction, and it is stated here because it is
@@ -153,8 +156,15 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * and speaks the budgeted dialect is describable — it just has no row here, because nothing in the built-in table
      * needs one.
      */
-    private static final ModelCapabilities ADAPTIVE_REFUSING_SAMPLING = ModelCapabilities.builder()
-            .supportsSamplingParameters(false).thinkingDialect(ThinkingDialect.ADAPTIVE).build();
+    private static final ModelCapabilities ADAPTIVE_REFUSING_SAMPLING = adaptiveRefusingSampling().build();
+
+    /**
+     * {@link #ADAPTIVE_REFUSING_SAMPLING} plus {@link ModelCapabilities#supportsThinkingBlockBinding()}, for the
+     * models the vendor documents as running the preserved-thinking prefix check and accepting
+     * {@code thinking.block_binding}. Built from the same builder so the two shared flags cannot drift.
+     */
+    private static final ModelCapabilities ADAPTIVE_REFUSING_SAMPLING_BINDING = adaptiveRefusingSampling()
+            .supportsThinkingBlockBinding(true).build();
 
     /**
      * The dialect and nothing else, in the two states the 2026-09-10 census measured that
@@ -346,16 +356,44 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 .register("gpt-6-astra", alwaysReasoning).register("gpt-6.1-sol", alwaysReasoning);
     }
 
+    /** The two flags every adaptive {@code claude-*} row states, as a builder the caller finishes. */
+    private static ModelCapabilities.Builder adaptiveRefusingSampling() {
+        return ModelCapabilities.builder().supportsSamplingParameters(false).thinkingDialect(ThinkingDialect.ADAPTIVE);
+    }
+
     /**
-     * Registers the eleven {@code claude-*} prefixes, so that {@link #builderWithDefaults()} stays readable.
+     * Registers the eleven {@code claude-*} prefixes and the three current-generation exact rows, so that
+     * {@link #builderWithDefaults()} stays readable.
      *
      * <p>
-     * Extracted for length rather than for structure: the rows below are two blocks measured a day apart and the
-     * comments that say what each one does and does not assert are longer than the registrations. Registration order
-     * is free for all eleven — see the second comment in the block — so lifting them out of the chain changes
-     * nothing about what the table answers.
+     * Extracted for length rather than for structure: the rows below are three blocks and the comments that say what
+     * each one does and does not assert are longer than the registrations. Registration order is free for all
+     * fourteen — see the second comment in the block, and exact rows shadow every prefix whatever their position — so
+     * lifting them out of the chain changes nothing about what the table answers.
      */
     private static void registerAnthropicDefaults(Builder builder) {
+        // Current generation, transcribed from the vendor catalog (2026-11): claude-sonnet-5-5, claude-opus-5-5 and
+        // claude-haiku-5-5 are adaptive-only (budget_tokens is a 400 on all three; Opus 5.5 cannot turn thinking off
+        // at all) and refuse non-default sampling. Exact rather than prefix: these ids have no dated snapshots
+        // (registerGpt6Defaults states the same rule), and an exact row keeps "no claude-* prefix nests under
+        // another" true. Two of them were already reached by the claude-sonnet-5 / claude-opus-5 prefixes below; that
+        // was a coincidence of spelling, and the Haiku one was not reached at all -- thinkingMode(EXTENDED) was sent
+        // literally and 400'd.
+        //
+        // supportsThinkingBlockBinding is the third fact, and it is what these rows have that the prefixes do not:
+        // all three run the history-editing check on replayed thinking blocks and accept
+        // thinking.block_binding.prefix_mismatch_behavior with adaptive thinking (vendor migration guides). The
+        // claude-sonnet-5 / claude-opus-5 / claude-fable-5 / claude-mythos prefixes stay without it -- Sonnet 5 runs
+        // no check, and the Fable and Mythos prefixes also cover 5.0 models the guides give no binding evidence for.
+        //
+        // Documentation-derived, like claude-mythos: the live tests (AnthropicThinkingBindingLiveTest) confirm Sonnet
+        // 5.5 and Haiku 5.5 on the adaptive path with the binding; Opus 5.5 is the catalog's word alone. What the rows
+        // deliberately do NOT state, same rule as the blocks below: the forced tool_choice refusal (no client sends
+        // one), between_tools (no client sends it), and the server's default effort (high on Sonnet, medium on Haiku
+        // and Opus -- a server default, not a request-surface fact). The OpenAI-shaped flags stay fail-open.
+        builder.register("claude-sonnet-5-5", ADAPTIVE_REFUSING_SAMPLING_BINDING)
+                .register("claude-opus-5-5", ADAPTIVE_REFUSING_SAMPLING_BINDING)
+                .register("claude-haiku-5-5", ADAPTIVE_REFUSING_SAMPLING_BINDING);
         // Anthropic, measured 2026-09-09 against the account's own /v1/models listing. On these six the
         // server refuses temperature at any non-default value, and top_p / top_k at ANY value including
         // their defaults -- see docs/design/llm/model-capabilities.md section 6.2. Suppression
@@ -420,7 +458,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // is a prefix of another or of an existing one (-4-5 / -4-6 / -4-7 / -4-8 are siblings, not
                 // nested), and claude-sonnet-4-20250514 -- AnthropicConfig's default model until #116 measured it
                 // unserved on 2026-09-11 -- does not start with claude-sonnet-4-5, so it stays undescribed. The
-                // default is now claude-sonnet-4-5 itself, which the row below describes.
+                // default then moved to claude-sonnet-4-5 and has since moved to claude-sonnet-5-5 (exact row at the
+                // top of this method); claude-sonnet-4-5 is deprecated, retires 2026-11-30, and keeps its measured
+                // row so a deployment that pins it still resolves until then.
                 .registerPrefix("claude-opus-4-5", BUDGETED_DIALECT_ONLY)
                 .registerPrefix("claude-sonnet-4-5", BUDGETED_DIALECT_ONLY)
                 .registerPrefix("claude-haiku-4-5", BUDGETED_DIALECT_ONLY)
@@ -467,14 +507,16 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
      * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, {@code gpt-5.6-terra} (the family row
-     * with the one measured ladder that has a gap in it), the o-series, and eleven Anthropic prefixes. Six of those
-     * refuse sampling parameters and speak the adaptive thinking dialect — five whose <em>sampling</em> refusal was
-     * measured, plus the documentation-derived {@code claude-mythos} family; the adaptive dialect on five of the six
-     * was read off the vendor's published per-model table and then confirmed live on 2026-09-10, and
-     * {@code claude-mythos} remains documentation alone. The other five state a <em>dialect only</em>, measured
-     * 2026-09-10: three {@link ThinkingDialect#BUDGETED} and two {@link ThinkingDialect#EITHER}. Everything else
-     * resolves to {@link ModelCapabilities#unknown()}, whose dialect is {@link ThinkingDialect#UNKNOWN} — so a model
-     * this table has never heard of keeps the thinking request it had before the dialect existed.
+     * with the one measured ladder that has a gap in it), the o-series, eleven Anthropic prefixes and three Anthropic
+     * exact rows. The exact rows are the current generation ({@code claude-sonnet-5-5}, {@code claude-opus-5-5},
+     * {@code claude-haiku-5-5}): adaptive, refusing sampling, and accepting a thinking block binding, transcribed from
+     * the vendor catalog. Of the prefixes, six refuse sampling parameters and speak the adaptive thinking dialect: five
+     * whose <em>sampling</em> refusal was measured, plus the documentation-derived {@code claude-mythos} family; the
+     * adaptive dialect on five of the six was read off the vendor's published per-model table and then confirmed live
+     * on 2026-09-10, and {@code claude-mythos} remains documentation alone. The other five state a <em>dialect
+     * only</em>, measured 2026-09-10: three {@link ThinkingDialect#BUDGETED} and two {@link ThinkingDialect#EITHER}.
+     * Everything else resolves to {@link ModelCapabilities#unknown()}, whose dialect is {@link ThinkingDialect#UNKNOWN}
+     * — so a model this table has never heard of keeps the thinking request it had before the dialect existed.
      *
      * @return a registry with framework-default capability entries
      */

@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.anthropic.core.JsonValue;
 import com.anthropic.errors.AnthropicIoException;
 import com.anthropic.models.messages.InputJsonDelta;
 import com.anthropic.models.messages.MessageDeltaUsage;
@@ -126,6 +127,11 @@ final class AnthropicStreamingMapper {
     // block.
     private final List<AnthropicOutputBlocks.Block> orderedBlocks = new ArrayList<>();
 
+    // The model message_start names, for the dropped-thinking-block report; and whether that report already went out,
+    // because the vendor does not say which event carries input_transformations and it is reported once per stream.
+    private String servedModel;
+    private boolean inputTransformationsReported;
+
     AnthropicStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator, String providerName,
             AnthropicDivergenceReporter reporter, boolean forwardReasoning) {
         this.sink = Objects.requireNonNull(sink, "sink");
@@ -226,6 +232,19 @@ final class AnthropicStreamingMapper {
             aggregator.recordServedBy(AnthropicUsages.model(event.message()), AnthropicUsages.serviceTier(usage));
         } catch (RuntimeException e) {
             log.debug("Could not read usage from message_start: {}", e.getMessage());
+        }
+        try {
+            this.servedModel = AnthropicUsages.model(event.message());
+            reportInputTransformations(event.message()._additionalProperties());
+            reportInputTransformations(event._additionalProperties());
+        } catch (RuntimeException e) {
+            log.debug("Could not read input_transformations from message_start: {}", e.getMessage());
+        }
+    }
+
+    private void reportInputTransformations(Map<String, JsonValue> properties) {
+        if (!inputTransformationsReported) {
+            inputTransformationsReported = AnthropicInputTransformations.report(properties, servedModel, reporter);
         }
     }
 
@@ -368,6 +387,12 @@ final class AnthropicStreamingMapper {
         this.outputTokens = usage.outputTokens();
         // The docs put the thinking breakdown only on the final message_delta, so this is the one place to read it.
         this.thinkingTokens = AnthropicUsages.thinkingTokens(usage);
+        try {
+            reportInputTransformations(event._additionalProperties());
+            reportInputTransformations(event.delta()._additionalProperties());
+        } catch (RuntimeException e) {
+            log.debug("Could not read input_transformations from message_delta: {}", e.getMessage());
+        }
     }
 
     private void emitTextDelta(String text) {

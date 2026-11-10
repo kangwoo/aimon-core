@@ -353,7 +353,7 @@ llm → agent 방향의 예외 매핑은 **실행기에서만** 일어난다. �
 취소와 독립적인 hang 방어다. `LlmModel.requestTimeout`(`Optional<Duration>`, 0·음수는 생성 시 거부)을 두고, 값이
 있을 때만 provider 가 SDK `RequestOptions.timeout(Duration)` 을 실은 2-arg 오버로드로 호출한다. blocking 과
 스트리밍 호출 모두 이 상한을 받는다. 미설정이면 single-arg 호출 그대로이고 클라이언트 단위
-`AnthropicConfig` / `OpenAIConfig` 의 `timeout`(기본 60초)이 상한이다.
+`AnthropicConfig` / `OpenAIConfig` 의 `timeout`(기본 Anthropic 600초 · OpenAI 60초. 스트리밍을 포함한 호출 전체에 걸린다)이 상한이다.
 
 두 상한 모두 **SDK 시도 하나**에 걸린다. SDK 는 실패한 요청을 스스로 재시도하고(기본 2회) 시도마다 새 호출을 만들므로,
 호출 전체의 벽시계 시간은 시도 수 × 상한에 backoff 를 더한 값까지 갈 수 있다. SDK 가 재시도하는 동안의 취소는 전송

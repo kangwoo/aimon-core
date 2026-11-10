@@ -434,9 +434,23 @@ Claude Fable 5.1 이후 모델에서, 2026-08-31 이후 생성된 계정에는 �
 과 `redacted_thinking` 블록을 전부 뺀다 — 그대로다. 전사 증가(§3.6)를 없애는 수단이기도 하다. OpenAI 쪽의 같은 탈출구는
 `endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)` 다.
 
-**기본값을 `true` 로 둔다.** 설정 없이 기능이 동작하게 하는 값이고, 위험은 좁다 — Fable 5.1 이후 모델, 2026-08-31
-이후 생성된 계정, 실제로 바뀐 prefix 가 모두 겹쳐야 하며, 그때의 오류는 해법을 가리키는 문장이다. `false` 의 대가는
-아무도 켜지 않는 기능이다.
+**기본값을 `true` 로 둔다.** 설정 없이 기능이 동작하게 하는 값이다. 이 문단은 위험을 "좁다 — Fable 5.1 이후 모델만" 이라고
+적었는데, 2026-11-10 에 클라이언트 기본 모델이 그 검사를 하는 `claude-sonnet-5-5` 로 옮기면서 **좁지 않게 되었다** — 새 계정의
+기본 경로가 다음 턴(시스템 프롬프트 재렌더링)이나 컴팩션 뒤에 이 400 을 맞고, 나쁜 블록이 이력에 남으므로 그 뒤 요청도
+전부 실패한다. 그래서 같은 변경이 **`drop_block`** 을 붙였다: 행이 `supportsThinkingBlockBinding` 을 말하는 모델
+(`claude-sonnet-5-5` · `claude-opus-5-5` · `claude-haiku-5-5`)에 thinking 블록을 되실을 때는
+`thinking.block_binding.prefix_mismatch_behavior: "drop_block"` 과 베타 헤더 `thinking-binding-controls-2026-08-01` 을
+싣는다. 그 필드는 어느 값이든 오래된 계정도 검사에 넣으므로 동작이 계정 나이와 무관하다. prefix 가 바뀌면 서버가 무효가 된
+블록만 버리고(유효한 블록은 남는다) 최상위 `input_transformations` 에 적으며, 클라이언트가 그것을 이유별로 1 · 10 · 100 …
+번째에 WARN 한다. 바인딩이 없는 모델(Fable 5.1, Mythos 5.1, 게이트웨이 개명)에서 이 400 이 나면 클라이언트가 두 처방 —
+그 이름에 `supportsThinkingBlockBinding: true` 선언, 또는 재전송 끄기 — 을 한 번 알린다. 실측(2026-11-10, Sonnet 5.5 ·
+Haiku 5.5): 바뀐 시스템 프롬프트와 컴팩션 모양의 이력 모두 200 에 `prefix_binding_mismatch` 드롭 하나, 같은 요청에 바인딩
+값을 `error` 로 바꾼 대조는 400 *"The block is bound to a different conversation"*. 설계와 실측 전부는
+[`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) 다.
+
+**롤링 컨텍스트 engine 과 함께 쓰면** 창이 찬 뒤로 거의 모든 요청이 가장 오래된 메시지를 떨어뜨리므로(prefix 편집), 되실은
+블록이 거의 매번 버려지고 드롭 WARN 이 1 · 10 · 100 … 번째에 뜬다. 그 배포는 사실상 추론 재전송을 잃는다 — 결함이 아니라
+`drop_block` 이 하는 일이다. `false` 의 대가는 여전히 아무도 켜지 않는 기능이다.
 
 **스위치는 클라이언트가 적용한다.** 클라이언트가 변환 전에 `AnthropicMessageConverter.withoutReasoningTraces` 로
 트레이스를 벗긴다. 변환기는 "받은 것을 되싣는다" 한 규칙만 갖고, `false` 인 요청의 body 는 트레이스가 없던 때와 같다.
@@ -554,7 +568,7 @@ provider 이름을 받지 않는 1인자 `convertMessages` 는 `@Deprecated` 로
 
 ## 11. 남은 것
 
-모두 백로그에 등록되지 않은 항목이다.
+취소선을 그은 둘을 빼면 모두 백로그에 등록되지 않은 항목이다.
 
 - **앵커의 필요성이 측정되지 않았다.** OpenAI 왕복이 **동작한다**는 것은 측정했지만 앵커를 빼면 실패하는지는 재지 않았다.
   일부러 틀리게 만든 요청이 필요하다
@@ -563,11 +577,12 @@ provider 이름을 받지 않는 1인자 `convertMessages` 는 `@Deprecated` 로
   코어 변경이 필요하다
 - **`redacted_thinking` 스트리밍을 관측하지 않았다.** `content_block_start` 에 완결된 채 온다는 가정이 틀리면 스트리밍
   경로가 그 트레이스를 버린다
-- **preserved-thinking prefix 검사를 실제로 일으켜 보지 않았다.** 재렌더된 프롬프트로 Fable 5.1 세션을 돌려 400 을 본
-  적이 없다. 스위치는 운영에서 발견하면 비싼 실패라서 있다
-- **`thinking-binding-controls-2026-08-01` beta header 와 `prefix_mismatch_behavior: "drop_block"`** — prefix 가 무효가
-  되었을 때 요청을 실패시키지 않고 블록을 버리고 무엇을 버렸는지 알리는, prefix 검사의 원칙적 해법이다. beta header 에
-  새 설정 축이 붙어 따로 설계해야 한다
+- ~~preserved-thinking prefix 검사를 실제로 일으켜 보지 않았다~~ — 2026-11-10 에 일으켰다(§7, Sonnet 5.5 · Haiku 5.5).
+  Fable 5.1 에서는 여전히 재지 않았다
+- ~~`thinking-binding-controls-2026-08-01` beta header 와 `prefix_mismatch_behavior: "drop_block"`~~ — 2026-11-10 에
+  구현했다(§7). 바인딩을 아직 말하지 않는 모델(Fable 5.1 · Mythos 5.1)은
+  [`L-34`](../../backlog/llm-config-surface-open-items.md), 스트리밍 응답에서 드롭 목록이 어느 이벤트에 오는지는
+  [`L-36`](../../backlog/llm-config-surface-open-items.md) 이다
 - **전사 증가량이 측정되지 않았다.** iteration 40 번짜리 추론 도구 루프가 세션 행을 얼마나 키우는지 모른다(§3.6)
 - **레닥션 요구가 강한 배포를 위한 정책이 없다.** 트레이스를 다시 쓰는 것이 아니라 만들지 않는 정책이 필요하고, 그것은
   별도 설계다(§3.4)

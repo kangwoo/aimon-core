@@ -78,6 +78,8 @@ final class ShadowedBuiltInRow {
                 lower(failOpen.thinkingDialect()));
         finding.compare("supportsReasoningSummary", declaration.supportsReasoningSummary().isPresent(),
                 row.supportsReasoningSummary(), failOpen.supportsReasoningSummary());
+        finding.compare("supportsThinkingBlockBinding", declaration.supportsThinkingBlockBinding().isPresent(),
+                row.supportsThinkingBlockBinding(), failOpen.supportsThinkingBlockBinding());
 
         if (dropped.isEmpty()) {
             return Optional.empty();

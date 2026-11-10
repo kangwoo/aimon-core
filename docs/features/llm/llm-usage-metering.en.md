@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: f444f497
+source_commit: a72eba37
 ---
 
 # LLM Usage Metering Guide
@@ -128,7 +128,7 @@ The same rules apply when you build a `SubagentExecutionRequest` and invoke it y
 ```java
 WikiSearchStrategy strategy = LlmRerankSearchStrategy.builder()
         .llmClient(llmClient)
-        .modelConfig(LlmModel.builder().name("claude-haiku-4-5").build())
+        .modelConfig(LlmModel.builder().name("claude-haiku-5-5").build())
         .llmCallMetadata(LlmCallMetadata.builder()
                 .component("wiki-rerank")
                 .feature("search")

@@ -55,10 +55,11 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * The model names are load-bearing. {@code claude-opus-5} is in the built-in table as adaptive-only;
- * {@code claude-sonnet-4-20250514} — {@code AnthropicConfig}'s default model until #116 measured it unserved on
- * 2026-09-11, when the default moved to the described {@code claude-sonnet-4-5}; no request here is sent — is
- * deliberately <em>not</em> in it and stands for every model the table cannot answer for; {@code prod-thinker} is a
- * gateway rename whose budgeted dialect an operator has declared.
+ * {@code gateway-claude-deployment} — a gateway-style rename; no request here is sent — is deliberately <em>not</em>
+ * in it, nor in {@code AnthropicModelLifecycle}'s list (the retired {@code claude-sonnet-4-20250514} it replaced
+ * now draws a lifecycle warning, which every "says nothing" assertion here would have picked up), and stands for
+ * every model the table cannot answer for; {@code prod-thinker} is a gateway rename whose budgeted dialect an
+ * operator has declared.
  *
  * <p>
  * <strong>Two of those three sentences were rewritten on 2026-09-10 and the history is the point.</strong> The
@@ -69,15 +70,16 @@ import ch.qos.logback.core.read.ListAppender;
  * because what it tests is that a declaration reaches the client, not that the dialect exists.
  *
  * <p>
- * {@code claude-sonnet-4-20250514} is undescribed <strong>by the table</strong>, not undialected in fact — the
- * vendor's own per-model table puts the Claude 4 generation in the extended-only group, so a future
- * documentation-derived row will move it. {@link #theUndescribedModelReallyIsUndescribed} is what makes that
- * survivable: the next row that describes this name fails with a sentence rather than with a golden-body diff.
+ * The undescribed name is undescribed <strong>by the table</strong>, not undialected in fact: a real deployment behind
+ * it speaks some dialect, and a declared row is how it would say so. {@link #theUndescribedModelReallyIsUndescribed} is
+ * what makes that survivable: the next row that describes this name fails with a sentence rather than with a
+ * golden-body diff.
  *
  * <p>
  * {@code claude-haiku-4-5} is a built-in budgeted prefix, used where the row itself — not a declaration — is what is
  * under test: {@link #autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens} pins the request {@code AUTO}
- * sends on it when {@code AnthropicConfig}'s default {@code maxTokens} reaches the wire.
+ * sends on it at a {@code maxTokens} of 4096, the shape of an agent definition written against the old
+ * {@code AnthropicConfig} default.
  */
 @DisplayName("AnthropicLlmClient - the thinking dialect, looked up per model")
 @ExtendWith(MockitoExtension.class)
@@ -90,7 +92,7 @@ class AnthropicThinkingDialectTest {
     private static final String ADAPTIVE_MODEL = "claude-opus-5";
 
     /** Deliberately absent from the built-in table: the fail-open path, and the byte-identical claim. */
-    private static final String UNKNOWN_MODEL = "claude-sonnet-4-20250514";
+    private static final String UNKNOWN_MODEL = "gateway-claude-deployment";
 
     /** A gateway rename an operator has described as speaking the budgeted dialect. */
     private static final String BUDGETED_MODEL = "prod-thinker";
@@ -109,22 +111,23 @@ class AnthropicThinkingDialectTest {
     /**
      * What the request body was before the dialect existed, captured at the parent commit by sending the same
      * message with {@code thinkingMode(EXTENDED)} and {@code reasoningEffort(LOW)} against a model no row describes.
-     * {@code LOW}'s 2048-token budget fits under the default {@code maxTokens} of 4096, so no clamp warning muddies
+     * {@code max_tokens} has since followed {@code AnthropicConfig}'s default from 4096 to 16000.
+     * {@code LOW}'s 2048-token budget fits under it, so no clamp warning muddies
      * the "nothing is reported" half of the row.
      */
-    private static final String TODAYS_EXTENDED_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
+    private static final String TODAYS_EXTENDED_BODY = "{\"max_tokens\":16000,"
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"gateway-claude-deployment\","
             + "\"system\":\"You are helpful\",\"thinking\":{\"budget_tokens\":2048,\"type\":\"enabled\"}}";
 
     /** The same, with {@code thinkingMode(ADAPTIVE)} and {@code reasoningEffort(MEDIUM)}. */
-    private static final String TODAYS_ADAPTIVE_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
+    private static final String TODAYS_ADAPTIVE_BODY = "{\"max_tokens\":16000,"
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"gateway-claude-deployment\","
             + "\"output_config\":{\"effort\":\"medium\"},\"system\":\"You are helpful\","
             + "\"thinking\":{\"type\":\"adaptive\"}}";
 
     /** The same, with thinking off — which is also what {@code AUTO} sends when the table cannot answer. */
-    private static final String TODAYS_THINKING_OFF_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
+    private static final String TODAYS_THINKING_OFF_BODY = "{\"max_tokens\":16000,"
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"gateway-claude-deployment\","
             + "\"system\":\"You are helpful\"}";
 
     @Mock
@@ -337,19 +340,20 @@ class AnthropicThinkingDialectTest {
     }
 
     @Test
-    @DisplayName("AUTO on a built-in budgeted row at AnthropicConfig's 4096 maxTokens sends 4095 and warns once")
+    @DisplayName("AUTO on a built-in budgeted row at a 4096 maxTokens sends 4095 and warns once")
     void autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens() {
         // #83, and a decision rather than an oversight: why this request stays as it is -- one token left for the
         // answer -- is docs/design/llm/anthropic-thinking.md section 6.2. Any headroom policy added
         // to AUTO turns this red; read that section before changing the assertions.
         //
-        // No reasoningEffort and no maxTokens on the call, so the MEDIUM rung's 4096 meets AnthropicConfig's 4096:
-        // the shape of an agent definition that sets no model.maxTokens. Not the CLI's bundled agents -- they set
-        // 40000 and never clamp here.
+        // No reasoningEffort on the call, so the MEDIUM rung's 4096 meets a configured maxTokens of 4096 -- the
+        // shape an agent definition had when 4096 was AnthropicConfig's default (it is now 16000, which never clamps
+        // here). Not the CLI's bundled agents -- they set 40000 and never clamp here either.
         //
         // One token further up is the neighbour below, which is silent: section 16.8 (#89) is which requests this
         // warning covers.
-        final JsonNode body = send(client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).build()),
+        final JsonNode body = send(
+                client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).maxTokens(4096).build()),
                 LlmModel.builder().build());
 
         assertThat(body.get("max_tokens").asInt()).isEqualTo(4096);

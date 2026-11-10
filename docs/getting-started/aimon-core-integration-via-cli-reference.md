@@ -278,13 +278,13 @@ Anthropic 으로 바꾼 설정은 이렇다.
 llm:
   provider: anthropic
   apiKey: "${ANTHROPIC_KEY}"
-  model: claude-sonnet-4-5
+  model: claude-sonnet-5-5
 agent:
   name: default-anthropic
 ```
 
 번들의 `explore` 서브에이전트는 모델을 적지 않고 메인 에이전트의 모델로 돈다 — `default-anthropic` 에서는
-`claude-sonnet-4-5` 다(모델을 적는 것은 `default` 의 `explore` 뿐이고, 그것은 `gpt-5.1` 이다). 모델을 적지 않은
+`claude-sonnet-5-5` 다(모델을 적는 것은 `default` 의 `explore` 뿐이고, 그것은 `gpt-5.1` 이다). 모델을 적지 않은
 서브에이전트는 메인 에이전트가 도는 모델로 돌고, 메인 에이전트의 정의도 모델을 적지 않았다면 클라이언트의 기본
 모델로 돈다 — `llm.model` 을 적었으면 그 값이고, 적지 않았다면(anthropic 에서만 그럴 수 있다) Anthropic
 클라이언트에 내장된 기본 모델이다.
@@ -377,6 +377,7 @@ llm:
 | `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`). 거기서 위로 전부 받는다는 뜻이다 | `minimal` 부터 `high` 까지 |
 | `acceptedReasoningEfforts` | 받는 rung **전부**, 목록으로 — 사다리 중간에 구멍이 있을 때 쓰는 일반형 (`[none, low, medium, high]`). 빈 원소(`~`, 값 없는 `-`)는 건너뛰지 않고 **몇 번째인지를 부르며 기동을 실패시킨다** | 위 칸과 같다 |
 | `supportsReasoningSummary` | 이 모델이 추론 요약 요청(`reasoning.summary`)을 받는가. **OpenAI Responses 경로만 읽는다** — `supportsReasoningTraceRoundTrip: true` 인 이름만 그 경로에 가므로, `reasoning.effort` 는 받고 `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리다 | `true` — 호출자가 요청한 것을 빼앗지 않는다 |
+| `supportsThinkingBlockBinding` | 이 모델이 `thinking.block_binding` 을 받는가. **anthropic 분기만, adaptive 방언에서만 읽는다.** `true` 이고 thinking 블록을 되실으면(`llm.anthropic.replayThinkingBlocks`, 기본 `true`) 요청에 `prefix_mismatch_behavior: drop_block` 과 베타 헤더가 실려, 시스템 프롬프트 재렌더링이나 compaction 으로 prefix 가 바뀐 낡은 블록이 요청을 실패시키지 않고 버려진다. 내장 표는 `claude-sonnet-5-5` · `claude-opus-5-5` · `claude-haiku-5-5` 에 `true` 를 적는다 | `false` — 요청 본문이 이 키가 생기기 전 그대로다 |
 | `thinkingDialect` | 이 모델의 thinking 요청이 어느 모양인가 — `unknown` · `either` · `budgeted` · `adaptive`. **anthropic 분기만 읽는다.** 아래 `llm.anthropic.thinkingMode: auto` 가 물어보는 값이 이것이다 | `unknown` — 표가 답할 수 없다는 뜻이고, 클라이언트는 설정된 것을 그대로 둔다 |
 
 이 선언은 내장 **표**를 대체하지 않고 확장한다. exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
@@ -463,10 +464,11 @@ llm:
 | `adaptive` | `thinking: {"type": "adaptive"}` 와 `output_config.effort` — 현 세대 모델의 방언 |
 | `auto` | capability 표가 이 모델이 말한다고 적은 방언. 여러 Claude 모델을 도는 배포가 설정 하나로 갈 수 있는 값이다 |
 
-내장 표가 `BUDGETED` 로 적은 세 가족(`claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5`)에서 `auto` 는
-예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나온다** — 적지 않았으면 가운데 칸인 4096 이다.
-그 예산에도 아래 `thinkingBudgetTokens` 의 상한이 똑같이 걸린다. 에이전트 정의가 `model.maxTokens` 를 적지
-않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 4096 이므로 예산은 4095 로 clamp 되고 WARN 이 한 번 뜨며,
+내장 표가 `BUDGETED` 로 적은 세 가족(`claude-opus-4-5` · `claude-sonnet-4-5`(deprecated, 2026-11-30 은퇴) ·
+`claude-haiku-4-5`)에서 `auto` 는 예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나온다** — 적지
+않았으면 가운데 칸인 4096 이다. 그 예산에도 아래 `thinkingBudgetTokens` 의 상한이 똑같이 걸린다. 에이전트 정의가
+`model.maxTokens` 를 적지 않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 16000 이라 4096 은 그대로 나간다.
+`model.maxTokens` 를 4096 이하로 적은 에이전트에서는 예산이 `maxTokens - 1` 로 clamp 되고 WARN 이 한 번 뜨며, 4096 이면
 **답변에 남는 것은 1 토큰이다.** CLI 가 함께 배포하는 에이전트 정의는 모두 `maxTokens: 40000` 이라 그 정의로는
 이 일이 일어나지 않는다. 처방은 둘이다 — 에이전트 정의의 `model.maxTokens` 를 올리거나, 위의
 `llm.reasoningEffort` 를 `low`(2048) 나 `minimal`(1024) 로 내린다(에이전트 정의에 `model.reasoningEffort` 가
@@ -507,8 +509,8 @@ llm:
 - **아래로 1024.** API 가 그보다 작은 예산을 매 요청 거절하므로 기동 시점에 거절한다.
 - **위로 `max_tokens` 미만.** thinking 토큰이 `max_tokens` 에 함께 계산되므로 클라이언트가
   `max_tokens - 1` 로 clamp 하고 그 사실을 WARN 으로 남긴다. **그 `max_tokens` 는 에이전트 정의의
-  `model.maxTokens` 이고, 적지 않았으면 `AnthropicConfig` 의 기본값 4096 이다 — 그런 에이전트에서
-  `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** CLI 가 함께 배포하는 에이전트 정의는 모두
+  `model.maxTokens` 이고, 적지 않았으면 `AnthropicConfig` 의 기본값 16000 이다 — `model.maxTokens: 4096` 을 적은
+  에이전트에서 `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** CLI 가 함께 배포하는 에이전트 정의는 모두
   `maxTokens: 40000` 이라 그 정의로는 8000 이 그대로 나간다. 천장을 올리는 키는 여기 없다 — 그것은 에이전트
   정의의 `model.maxTokens` 이고, 세 번째 설정 표면이다.
 

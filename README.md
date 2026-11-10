@@ -181,7 +181,7 @@ llm:
   baseUrl: "https://api.openai.com/v1"
   apiKey: "${OPENAI_KEY}"     # ${ENV} interpolation supported
   model: "gpt-5.1"
-  timeout: 60
+  timeout: 60                 # total per-call ceiling in seconds, streaming included; unset = client default
 
 agent:
   name: "default"

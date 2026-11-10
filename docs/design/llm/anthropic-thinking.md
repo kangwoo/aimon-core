@@ -143,24 +143,32 @@ fail-open 값이다.
 
 ### 4.1 해석표 — 정본
 
-`OFF` 와 `NONE` 은 방언을 보기 **전에** 정한다. 두 상태 모두 `thinking` 파라미터를 싣지 않으므로 방언 조회가 막으려는
-400 을 받을 수 없고, 파라미터 없는 요청에 대해 표에 물으면 아무도 필요 없는 질문에 대한 보고가 생긴다 — `AUTO` 에서
-`NONE` 을 설정한 호출자도 이미 원하는 것을 말했다.
+`OFF` 와 `NONE` 은 방언을 보기 **전에** 정한다. 두 상태 모두 thinking 을 **요청하지** 않으므로 방언 조회가 막으려는
+400 을 받을 수 없고, thinking 을 요청하지 않는 요청에 대해 표에 물으면 아무도 필요 없는 질문에 대한 보고가 생긴다 — `AUTO`
+에서 `NONE` 을 설정한 호출자도 이미 원하는 것을 말했다.
 
-| 모드 | 방언 | 요청 | 보고 |
-|---|---|---|---|
-| `OFF` | 무엇이든 | 파라미터 없음 | 방언에 대해서는 없음. 설정된 effort · display 가 닿지 않으면 알린다(§8.3) |
-| (`OFF` 아님), effort `NONE` | 무엇이든 | 파라미터 없음(§4.6) | 없음 |
-| `EXTENDED` | `BUDGETED` | `{"type":"enabled","budget_tokens":N}` | 없음 |
-| `ADAPTIVE` | `ADAPTIVE` | `{"type":"adaptive"}` + `output_config.effort` | 없음 |
-| `EXTENDED` | `ADAPTIVE` | `{"type":"adaptive"}`, effort 는 의도에서 | 번역 보고 |
-| `ADAPTIVE` | `BUDGETED` | `{"type":"enabled"}`, 예산은 의도에서 | 번역 보고 |
-| `EXTENDED` · `ADAPTIVE` | `UNKNOWN` | 명명된 모드 그대로 | 없음 |
-| `EXTENDED` | `EITHER` | `{"type":"enabled","budget_tokens":N}` — 따르고 번역하지 않는다 | 없음 |
-| `ADAPTIVE` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` — 따른다 | 없음 |
-| `AUTO` | `BUDGETED` · `ADAPTIVE` | 모델의 방언 | 없음 — `AUTO` 가 요청한 것이다 |
-| `AUTO` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` | 없음 — `AUTO` 가 표에 물었고 표가 답했다 |
-| `AUTO` | `UNKNOWN` | 파라미터 없음, `OFF` 와 같음 | 보고 — 표에 물었고 표가 답하지 못했다 |
+마지막 열은 2026-11-10 에 붙었다. 행이 `supportsThinkingBlockBinding` 을 말하고(내장 표에서는 `claude-sonnet-5-5` ·
+`claude-opus-5-5` · `claude-haiku-5-5` 세 exact 행), 방언이 `ADAPTIVE` 이고, `replayThinkingBlocks` 가 켜져 있으면
+`thinking.block_binding.prefix_mismatch_behavior: "drop_block"` 과 베타 헤더 `thinking-binding-controls-2026-08-01` 이
+실린다. 파라미터가 없던 요청에는 서버 기본값인 `{"type":"adaptive"}` 를 바인딩의 **운반체**로만 싣는다 — `display` 도
+effort 도 없고, 그 모델들에서 생략이 뜻하던 것과 같으므로 바뀌는 것은 바인딩뿐이다. 운반체는 thinking 을 요청한 것으로
+세지 않으므로(`requestsThinking() == false`) `OFF` 아래 effort · display 보고는 그대로 나간다(§8.1). 근거와 실측은
+[`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) §4.5 · §6.3 이다.
+
+| 모드 | 방언 | 요청 | 보고 | 바인딩 행(replay 켜짐) |
+|---|---|---|---|---|
+| `OFF` | 무엇이든 | 파라미터 없음 | 방언에 대해서는 없음. 설정된 effort · display 가 닿지 않으면 알린다(§8.3) | `ADAPTIVE` 행이면 운반체 `{"type":"adaptive","block_binding":…}` |
+| (`OFF` 아님), effort `NONE` | 무엇이든 | 파라미터 없음(§4.6) | 없음 | `ADAPTIVE` 행이면 운반체 |
+| `EXTENDED` | `BUDGETED` | `{"type":"enabled","budget_tokens":N}` | 없음 | 싣지 않는다 — 선언된 행이면 한 번 보고 |
+| `ADAPTIVE` | `ADAPTIVE` | `{"type":"adaptive"}` + `output_config.effort` | 없음 | 같은 객체에 `block_binding` |
+| `EXTENDED` | `ADAPTIVE` | `{"type":"adaptive"}`, effort 는 의도에서 | 번역 보고 | 같은 객체에 `block_binding` |
+| `ADAPTIVE` | `BUDGETED` | `{"type":"enabled"}`, 예산은 의도에서 | 번역 보고 | 싣지 않는다 — 선언된 행이면 한 번 보고 |
+| `EXTENDED` · `ADAPTIVE` | `UNKNOWN` | 명명된 모드 그대로 | 없음 | 해당 없음 |
+| `EXTENDED` | `EITHER` | `{"type":"enabled","budget_tokens":N}` — 따르고 번역하지 않는다 | 없음 | 해당 없음 |
+| `ADAPTIVE` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` — 따른다 | 없음 | 해당 없음 |
+| `AUTO` | `BUDGETED` · `ADAPTIVE` | 모델의 방언 | 없음 — `AUTO` 가 요청한 것이다 | `ADAPTIVE` 이면 같은 객체에 `block_binding` |
+| `AUTO` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` | 없음 — `AUTO` 가 표에 물었고 표가 답했다 | 해당 없음 |
+| `AUTO` | `UNKNOWN` | 파라미터 없음, `OFF` 와 같음 | 보고 — 표에 물었고 표가 답하지 못했다 | 해당 없음 |
 
 `output_config.effort` 는 adaptive 모양에만 붙고 호출이 rung 을 말했을 때만 붙는다. 이 가드는 측정상 필요하다 —
 `thinking` 파라미터 없이 보낸 `output_config.effort` 는 `claude-haiku-4-5` · `claude-sonnet-4-5` 에서 400 이다(2026-09-10
@@ -228,7 +236,11 @@ fail-open 값이다.
 thinking 이 켜지고 그만큼 과금된다.
 
 `OFF` 는 **요청 파라미터만** 끈다. "모델이 생각하지 않는다" 는 뜻이 아니다 — 기본으로 thinking 이 켜진 모델은 생각하고, 그
-블록의 캡처는 모드와 무관하게 일어난다([`reasoning-traces.md`](reasoning-traces.md)).
+블록의 캡처는 모드와 무관하게 일어난다([`reasoning-traces.md`](reasoning-traces.md)). 2026-11-10 부터 클라이언트 기본 모델
+`claude-sonnet-5-5` 가 그런 모델이다(effort `high` 로 adaptive thinking 이 기본으로 켜진다). 그 모델에서 덜 생각하게 하는
+손잡이는 `OFF` 가 아니라 `auto`/`adaptive` + `reasoningEffort: low` 이고, `OFF` 가 정말로 끄게 할 것인가(`between_tools`,
+Haiku 5.5 의 `disabled`)는 [`L-31`](../../backlog/llm-config-surface-open-items.md) 이다. 바인딩 행에서 `OFF` 가 싣는
+운반체는 §4.1 의 마지막 열이다.
 
 ### 4.6 `NONE` 은 파라미터를 생략한다
 
@@ -322,8 +334,9 @@ signature 에 모델을 싣지 않는 것은 조건이 설정 쌍의 성질이�
 
 `BUDGETED` 행에서 `AUTO` 는 `EXTENDED` 와 같은 분기를 탄다. effort 가 없으면 요청 예산은 중간 rung 4096 이고, 보내는 예산은
 `min(4096, max_tokens − 1)` 이다. `max_tokens` 는 호출의 `LlmModel` 값이 먼저이고 없으면 `AnthropicConfig.getMaxTokens()`
-— 기본 4096 — 다. thinking 토큰이 `max_tokens` 에 포함되므로 4096 대 4096 이면 `budget_tokens: 4095` 가 나가고 답에 1토큰이
-남는다. clamp 는 `REQUIRES_THINKING` finding `thinkingBudgetClamped=4096->4095` 로 기록되고, 클라이언트 인스턴스당 한 번
+— 기본 16000(2026-11-10 까지 4096) — 다. thinking 토큰이 `max_tokens` 에 포함되므로 4096 대 4096 이면 `budget_tokens: 4095`
+가 나가고 답에 1토큰이 남는다. 기본값이 16000 이 된 뒤로 이 모양은 에이전트 정의가 `model.maxTokens` 를 4096 이하로 적었을
+때만 생긴다. clamp 는 `REQUIRES_THINKING` finding `thinkingBudgetClamped=4096->4095` 로 기록되고, 클라이언트 인스턴스당 한 번
 `maxTokens` 를 올리라는 WARN 으로 나간다. `MINIMAL`(1024)과 `LOW`(2048)는 4096 아래라 clamp 도 경고도 없다.
 
 ### 6.2 `AUTO` 예산 정책 — 1토큰 답도 그대로 둔다
@@ -343,14 +356,16 @@ signature 에 모델을 싣지 않는 것은 조건이 설정 쌍의 성질이�
 
 ### 6.3 누가 닿는가 — 개수가 아니라 모양
 
-`max_tokens` 는 에이전트 정의의 `model.maxTokens` 가 먼저이고, `AnthropicConfig` 기본 4096 은 그것이 없을 때만 쓴다. 어느
-설정 표면도 LLM `maxTokens` 를 바인딩하지 않는다. 그래서 영향받는 배포는 모양으로 말한다 — **`maxTokens` 가 없거나 요청 예산
-(effort 없음 4096, `high` 16000) 이하인 에이전트.**
+`max_tokens` 는 에이전트 정의의 `model.maxTokens` 가 먼저이고, `AnthropicConfig` 기본 16000(2026-11-10 까지 4096)은 그것이
+없을 때만 쓴다. 어느 설정 표면도 LLM `maxTokens` 를 바인딩하지 않는다. 그래서 영향받는 배포는 모양으로 말한다 —
+**`maxTokens` 가 요청 예산(effort 없음 4096, `high` 16000) 이하인 에이전트.** 기본값 16000 은 `high` 의 16000 과 같으므로
+`maxTokens` 를 적지 않은 에이전트는 `high` 에서만 clamp 된다.
 
 - CLI 번들 에이전트 정의는 모든 rung 보다 큰 `maxTokens` 를 적으므로 해당하지 않는다
-- 에이전트 정의를 싣지 않는 스타터 앱은 `maxTokens` 를 적지 않는 한 해당한다
-- 모델을 적지 않은 anthropic 배포는 클라이언트 기본 모델 `claude-sonnet-4-5`([`model-name-resolution.md`](model-name-resolution.md))로
-  나가고, 그 이름은 `BUDGETED` prefix 행으로 해석되므로 역시 이 모양에 든다
+- 에이전트 정의를 싣지 않는 스타터 앱은 `maxTokens` 를 적지 않으면 `high` 에서만 해당한다
+- 모델을 적지 않은 anthropic 배포는 클라이언트 기본 모델 `claude-sonnet-5-5`([`model-name-resolution.md`](model-name-resolution.md))로
+  나가고, 그 이름은 `ADAPTIVE` exact 행으로 해석되므로 이 모양에 들지 않는다(adaptive 방언에는 예산이 없다). 2026-11-10 까지의
+  기본 `claude-sonnet-4-5` 는 `BUDGETED` 행이라 이 모양에 들었다
 - `max_tokens ≤ 1024` 면 예산이 들어가지 않아 파라미터를 생략하고 `thinkingBudgetImpossible` 로 보고한다
 
 ### 6.4 clamp 경고의 범위 — clamp 만
@@ -659,6 +674,9 @@ display-on-budgeted, budget-overrides-effort 는 모두 `REQUIRES_THINKING` 이�
 - **budgeted 모양이 `display` 를 받는가** — 측정되지 않았다(§7.3). 받는다면 budgeted 배포가 이미 받는 텍스트의 더 풍부한
   형태를 요청할 수 있다 — 결함이 아니라 놓친 기회다. 미등록
 - **interleaved thinking** — 자체 게이트와 모델별 매트릭스가 필요해 착수하지 않았다(§9). 보내게 되면 §6.4 가 바뀐다. 미등록
+- **`OFF` 가 정말로 끄는가** — 기본 모델 `claude-sonnet-5-5` 에서 `OFF` 는 thinking 을 끄지 못한다(§4.5). `between_tools`
+  (Sonnet 5.5) · `disabled`(Haiku 5.5) 로 옮기려면 모델별 "가장 낮은 thinking 모양" 축이 필요하다.
+  [`L-31`](../../backlog/llm-config-surface-open-items.md)
 - **보고가 읽힌다는 현장 증거** — `AUTO` + 모르는 모델, `OFF` 아래 effort 는 이 설계가 동작 대신 로그 한 줄을 두는 자리이고,
   운영자가 그것을 읽는다는 증거는 없다. 미등록
 
@@ -674,7 +692,7 @@ display-on-budgeted, budget-overrides-effort 는 모두 `REQUIRES_THINKING` 이�
 | `ThinkingDialect.java` | 네 상수, 두 쌍, "행 값은 요청이 쓰지 않는다" 불변식, 효과 전용 상수를 두지 않는 이유 |
 | `AnthropicThinkingMode.java` | 네 모드, 두 400 문구 인용, `AUTO` 의 뜻과 명시 예산을 받지 않는 이유, 기본 `OFF` |
 | `AnthropicThinkingResolver.java` | 로거 없음, `OFF`·`NONE` 을 방언 전에 정하는 순서, 해석표(`resolveDialect` · `resolveAutoDialect` · `resolveNamedDialect`), `requestedEffort`, finding 기록 지점과 scope, `display` 쓰기 |
-| `AnthropicThinkingResolution.java` | `Scope` 둘, `findingsToReport()` 가 유일한 접근자, 방출 뒤 중복 제거 |
+| `AnthropicThinkingResolution.java` | `Scope` 셋(`UNCONDITIONAL` 은 2026-11-10), `requestsThinking()` 과 바인딩 운반체, 베타 헤더, `findingsToReport()` 가 유일한 접근자, 방출 뒤 중복 제거 |
 | `AnthropicThinkingBudgets.java` | budget ladder 와 수의 출처, `requestedBudget` · `budgetFor`(clamp · 포기) · `nearestEffort` · `effortFor` |
 | `AnthropicThinkingDisplay.java` | `SUMMARIZED` 하나, 부재가 off, `OMITTED` · boolean 을 두지 않는 이유, budgeted 모양 제외 |
 | `AnthropicConfig.java` | `thinkingMode` 기본 `OFF`, `thinkingBudgetTokens` 생성 시 검증, `reasoningEffort`, `thinkingDisplay`, 기본 `maxTokens` |
@@ -693,5 +711,6 @@ display-on-budgeted, budget-overrides-effort 는 모두 `REQUIRES_THINKING` 이�
 - [`configuration-surface.md`](configuration-surface.md) — thinking 키의 네임스페이스·바인딩·기동 실패
 - [`openai-responses-path.md`](openai-responses-path.md) — 다른 provider 의 숙고 요청(`reasoning.summary`)
 - [`model-name-resolution.md`](model-name-resolution.md) — 클라이언트 기본 모델
+- [`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) — 기본 모델을 `claude-sonnet-5-5` 로 옮긴 설계(승인본), 블록 바인딩과 그 실측
 - [`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md) — `max_tokens` 에서 잘린 응답의 보고
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-10 · L-15 · L-25 · L-26
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-10 · L-15 · L-25 · L-26 · L-31

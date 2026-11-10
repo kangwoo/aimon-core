@@ -77,7 +77,7 @@ import at.aimon.core.llm.Message;
  * <pre>{@code
  * WikiSearchStrategy strategy = LlmRerankSearchStrategy.builder()
  *         .llmClient(llmClient)
- *         .modelConfig(LlmModel.builder().name("claude-haiku-4-5").build())
+ *         .modelConfig(LlmModel.builder().name("claude-haiku-5-5").build())
  *         .maxIndexEntries(200)
  *         .build();
  * DefaultWikiKnowledgeBase wiki = new DefaultWikiKnowledgeBase(locator, generator, strategy);

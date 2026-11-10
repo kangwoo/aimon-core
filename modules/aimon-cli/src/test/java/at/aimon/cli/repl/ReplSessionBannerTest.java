@@ -87,7 +87,7 @@ class ReplSessionBannerTest {
         @Test
         @DisplayName("names the configured bundle, and the definition's name when it differs — which is the prompt's")
         void bundleAndDefinitionName() {
-            assertThat(ReplSession.agentBundleLine("default-anthropic", agent("default-agent", "claude-sonnet-4-5")))
+            assertThat(ReplSession.agentBundleLine("default-anthropic", agent("default-agent", "claude-sonnet-5-5")))
                     .contains("Agent bundle: default-anthropic (agent name: default-agent)");
         }
 
@@ -188,8 +188,8 @@ class ReplSessionBannerTest {
 
         // The client's default is not the definition's model, so the provider line shows the definition's only if
         // displayAgentInfo hands the agent to providerLine -- #106's own bug, one argument away.
-        private final Agent agent = agent("default-agent", "claude-sonnet-4-5");
-        private final LlmClient client = client("Anthropic", "claude-haiku-4-5");
+        private final Agent agent = agent("default-agent", "claude-sonnet-5-5");
+        private final LlmClient client = client("Anthropic", "claude-haiku-5-5");
 
         private List<String> infoLinesFor(String bundleName) {
             final RecordingFormatter formatter = new RecordingFormatter();
@@ -207,8 +207,8 @@ class ReplSessionBannerTest {
         @Test
         @DisplayName("prints the provider line with the definition's model, not the client's default")
         void printsTheProviderLine() {
-            assertThat(infoLinesFor("default-anthropic")).contains("LLM Provider: Anthropic (claude-sonnet-4-5)")
-                    .doesNotContain("LLM Provider: Anthropic (claude-haiku-4-5)");
+            assertThat(infoLinesFor("default-anthropic")).contains("LLM Provider: Anthropic (claude-sonnet-5-5)")
+                    .doesNotContain("LLM Provider: Anthropic (claude-haiku-5-5)");
         }
 
         @Test

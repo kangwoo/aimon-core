@@ -131,10 +131,10 @@ try (AnthropicLlmClient client = new AnthropicLlmClient(config)) {
 | 파라미터 | 타입 | 기본값 | 범위 | 설명 |
 |---------|------|-------|------|------|
 | `apiKey` | String | (필수) | - | Anthropic API 키 |
-| `model` | String | `claude-sonnet-4-5` | - | 사용할 Claude 모델 |
+| `model` | String | `claude-sonnet-5-5` | - | 사용할 Claude 모델. 이전 기본값 `claude-sonnet-4-5` 는 deprecated 이며 2026-11-30 에 은퇴한다 — 지정하면 WARN 이 한 번 남는다 |
 | `temperature` | double | (미설정) | 0.0 ~ 1.0 | 샘플링 온도. 기본값이 없다 — 호출의 `LlmModel` 이 싣는 값이 먼저이고, 둘 다 없으면 요청에 싣지 않는다 |
-| `maxTokens` | int | `4096` | > 0 | 최대 생성 토큰 수 |
-| `timeout` | Duration | 60초 | - | 요청 타임아웃 |
+| `maxTokens` | int | `16000` | > 0 | 최대 생성 토큰 수. 기본 모델은 기본으로 생각하고 thinking 토큰이 여기 포함되므로 넉넉하게 잡았다 |
+| `timeout` | Duration | 600초 | - | 스트리밍을 포함한 HTTP 호출 하나 전체의 상한(OkHttp `callTimeout`). 걸리면 SDK 가 재시도하고 시도마다 과금된다 |
 | `baseUrl` | String | null | - | 커스텀 API 엔드포인트 (선택) |
 
 ## 예외 계층

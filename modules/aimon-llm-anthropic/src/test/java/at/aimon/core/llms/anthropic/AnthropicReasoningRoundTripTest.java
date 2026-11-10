@@ -216,6 +216,21 @@ class AnthropicReasoningRoundTripTest {
     }
 
     @Test
+    @DisplayName("a signed thinking block with empty text is captured and replayed verbatim (display omitted)")
+    void emptyTextThinkingBlockRoundTrips() {
+        // Sonnet 5.5 and Haiku 5.5 default to display: omitted, which returns signed blocks whose thinking text is
+        // empty. The signature is what the server validates, so the empty text must survive both halves.
+        final JsonNode blocks = assistantBlocks(
+                replay(client(), responseWith(thinkingBlock(SIGNATURE, ""), toolUseBlock("toolu_1", "Ls"))));
+
+        assertThat(blocks).hasSize(2);
+        assertThat(blocks.get(0).get("type").asText()).isEqualTo("thinking");
+        assertThat(blocks.get(0).get("signature").asText()).isEqualTo(SIGNATURE);
+        assertThat(blocks.get(0).get("thinking").asText()).isEmpty();
+        assertThat(blocks.get(1).get("id").asText()).isEqualTo("toolu_1");
+    }
+
+    @Test
     @DisplayName("two blocks each stay in front of their own call, not both in front of the first")
     void interleavedBlocksStayWithTheirOwnCalls() {
         final JsonNode blocks = assistantBlocks(replay(client(), responseWith(thinkingBlock("sig-1", "first"),

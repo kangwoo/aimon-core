@@ -100,6 +100,18 @@ class DeclarationShadowWarningTest {
     }
 
     @Test
+    @DisplayName("a declaration for claude-haiku-5-5 names the exact row and the dropped sampling and binding flags")
+    void aCurrentGenerationExactRowListsTheBinding() {
+        final List<String> warnings = warningsFrom(Map.of("claude-haiku-5-5",
+                ModelCapabilityDeclaration.builder().thinkingDialect(ThinkingDialect.ADAPTIVE).build()));
+
+        assertThat(warnings).singleElement().asString().contains("exact row 'claude-haiku-5-5'")
+                .contains("supportsSamplingParameters=false (now true)")
+                .contains("supportsThinkingBlockBinding=true (now false)")
+                .contains("supportsThinkingBlockBinding: true");
+    }
+
+    @Test
     @DisplayName("an exact row names itself as one, and every dropped flag is listed — the ladder included")
     void anExactRowListsEveryDroppedFlag() {
         final List<String> warnings = warningsFrom(

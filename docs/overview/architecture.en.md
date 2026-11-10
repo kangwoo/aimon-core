@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: d67baadf
+source_commit: 8a42dc81
 ---
 
 # Architecture
@@ -158,7 +158,7 @@ It can also be defined in Markdown with YAML frontmatter.
 name: my-agent
 maxIterations: 10
 model:
-  name: claude-sonnet-4-5
+  name: claude-sonnet-5-5
   temperature: 0.5
   maxTokens: 40000
 variables:

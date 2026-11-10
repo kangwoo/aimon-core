@@ -5,8 +5,7 @@ maxIterations: 10
 
 # Model Configuration
 model:
-  name: claude-sonnet-4-5
-  temperature: 0.2
+  name: claude-sonnet-5-5
   maxTokens: 40000
 
 # Template Variables (can be overridden by users)

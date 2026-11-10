@@ -14,10 +14,11 @@ package at.aimon.core.llms.anthropic;
  *
  * <p>
  * The split, as the vendor's per-model table has it: Claude Sonnet 4.5, Opus 4.5, Haiku 4.5 and the earlier Claude 4
- * models are <strong>extended only</strong> and reject {@code adaptive}; Opus 4.7, Opus 4.8, Opus 5, Sonnet 5 and the
- * Fable/Mythos family are <strong>adaptive only</strong> and reject {@code enabled}; the 4.6 pair accepts both, with
- * {@code enabled} deprecated. On several of the newest models thinking is <strong>on by default</strong>, which is why
- * capturing and replaying thinking blocks is not gated on this setting at all — only the request parameter is.
+ * models are <strong>extended only</strong> and reject {@code adaptive}; Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Sonnet
+ * 5.5, Opus 5.5, Haiku 5.5 and the Fable/Mythos family are <strong>adaptive only</strong> and reject {@code enabled};
+ * the 4.6 pair accepts both, with {@code enabled} deprecated. On several of the newest models thinking is <strong>on by
+ * default</strong>, which is why capturing and replaying thinking blocks is not gated on this setting at all — only the
+ * request parameter is.
  *
  * <p>
  * The two server messages, verbatim, so that an operator who greps the error text lands here:
@@ -67,11 +68,20 @@ package at.aimon.core.llms.anthropic;
 public enum AnthropicThinkingMode {
 
     /**
-     * Send no {@code thinking} parameter. The request body is what it was before thinking support existed.
+     * Ask for no thinking: no {@code thinking} parameter is <em>requested</em>.
      *
      * <p>
-     * This does <em>not</em> mean "the model will not think": on the always-on models it will, and those blocks are
-     * still captured and replayed.
+     * On a model whose capability row states
+     * {@link at.aimon.core.llm.capability.ModelCapabilities#supportsThinkingBlockBinding()} (Sonnet 5.5, Opus 5.5,
+     * Haiku 5.5), while thinking blocks are replayed, the server-default {@code {"type": "adaptive"}} is still sent,
+     * only to carry {@code block_binding}; nothing about how much the model thinks changes. Everywhere else the body
+     * carries no {@code thinking} key.
+     *
+     * <p>
+     * This does <em>not</em> mean "the model will not think": on the always-on models — the default
+     * {@code claude-sonnet-5-5} among them, at effort {@code high} — it will, and those blocks are still captured and
+     * replayed. To think less there, use {@link #AUTO} or {@link #ADAPTIVE} with
+     * {@link at.aimon.core.llm.ReasoningEffort#LOW}.
      */
     OFF,
 

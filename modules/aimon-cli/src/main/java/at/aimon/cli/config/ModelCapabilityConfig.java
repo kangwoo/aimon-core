@@ -45,6 +45,7 @@ public class ModelCapabilityConfig {
     private List<ReasoningEffort> acceptedReasoningEfforts;
     private ThinkingDialect thinkingDialect;
     private Boolean supportsReasoningSummary;
+    private Boolean supportsThinkingBlockBinding;
 
     /** ModelCapabilityConfig를 생성한다. */
     public ModelCapabilityConfig() {
@@ -132,6 +133,14 @@ public class ModelCapabilityConfig {
         this.supportsReasoningSummary = supportsReasoningSummary;
     }
 
+    public Boolean getSupportsThinkingBlockBinding() {
+        return supportsThinkingBlockBinding;
+    }
+
+    public void setSupportsThinkingBlockBinding(Boolean supportsThinkingBlockBinding) {
+        this.supportsThinkingBlockBinding = supportsThinkingBlockBinding;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -148,14 +157,15 @@ public class ModelCapabilityConfig {
                 && lowestReasoningEffort == that.lowestReasoningEffort
                 && Objects.equals(acceptedReasoningEfforts, that.acceptedReasoningEfforts)
                 && thinkingDialect == that.thinkingDialect
-                && Objects.equals(supportsReasoningSummary, that.supportsReasoningSummary);
+                && Objects.equals(supportsReasoningSummary, that.supportsReasoningSummary)
+                && Objects.equals(supportsThinkingBlockBinding, that.supportsThinkingBlockBinding);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
                 supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts, thinkingDialect,
-                supportsReasoningSummary);
+                supportsReasoningSummary, supportsThinkingBlockBinding);
     }
 
     @Override
@@ -165,6 +175,6 @@ public class ModelCapabilityConfig {
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
                 + ", lowestReasoningEffort=" + lowestReasoningEffort + ", acceptedReasoningEfforts="
                 + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect + ", supportsReasoningSummary="
-                + supportsReasoningSummary + '}';
+                + supportsReasoningSummary + ", supportsThinkingBlockBinding=" + supportsThinkingBlockBinding + '}';
     }
 }

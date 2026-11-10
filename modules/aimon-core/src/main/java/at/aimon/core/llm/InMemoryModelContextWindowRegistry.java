@@ -26,7 +26,9 @@ public final class InMemoryModelContextWindowRegistry implements ModelContextWin
         this.defaultLimits = Objects.requireNonNull(builder.defaultLimits, "defaultLimits cannot be null");
     }
 
-    /** Returns a registry with framework-default mappings (gpt-4o, o1, gpt-6, claude-3.x, claude-4.x, ...). */
+    /**
+     * Returns a registry with framework-default mappings (gpt-4o, o1, gpt-6, claude-3.x, claude-4.x, claude-5.x, ...).
+     */
     public static InMemoryModelContextWindowRegistry withDefaults() {
         return builder().register("gpt-4o", ModelContextLimits.ofContextWindow(128_000))
                 .register("gpt-4-turbo", ModelContextLimits.ofContextWindow(128_000))
@@ -44,6 +46,13 @@ public final class InMemoryModelContextWindowRegistry implements ModelContextWin
                 .registerPrefix("claude-opus-4", ModelContextLimits.ofContextWindow(200_000))
                 .registerPrefix("claude-sonnet-4", ModelContextLimits.ofContextWindow(200_000))
                 .registerPrefix("claude-haiku-4", ModelContextLimits.ofContextWindow(200_000))
+                // The 5.x families and Mythos, at the 1M the vendor catalog lists for every one of them. No collision
+                // with the 4.x prefixes above: claude-sonnet-5... does not start with claude-sonnet-4.
+                .registerPrefix("claude-sonnet-5", ModelContextLimits.ofContextWindow(1_000_000))
+                .registerPrefix("claude-opus-5", ModelContextLimits.ofContextWindow(1_000_000))
+                .registerPrefix("claude-haiku-5", ModelContextLimits.ofContextWindow(1_000_000))
+                .registerPrefix("claude-fable-5", ModelContextLimits.ofContextWindow(1_000_000))
+                .registerPrefix("claude-mythos", ModelContextLimits.ofContextWindow(1_000_000))
                 .defaultLimits(ModelContextLimits.ofContextWindow(ModelContextLimits.DEFAULT_CONTEXT_WINDOW)).build();
     }
 

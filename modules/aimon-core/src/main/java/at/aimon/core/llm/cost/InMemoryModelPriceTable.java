@@ -68,7 +68,21 @@ public final class InMemoryModelPriceTable implements ModelPriceTable {
                 // Opus 4.5 dropped to $5 / $25; registered before the claude-opus-4 prefix that would otherwise match
                 // it.
                 .registerPrefix("claude-opus-4-5", ModelPrice.perMillionUsd(5.00, 25.00, 0.50, 6.25))
-                .registerPrefix("claude-opus-4", ModelPrice.perMillionUsd(15.00, 75.00, 1.50, 18.75)).build();
+                .registerPrefix("claude-opus-4", ModelPrice.perMillionUsd(15.00, 75.00, 1.50, 18.75))
+                // The 5.x generation, from the vendor catalog and migration guides (2026-11). Sonnet 5 and 5.5 share a
+                // price, so one family prefix.
+                .registerPrefix("claude-sonnet-5", ModelPrice.perMillionUsd(2.00, 10.00, 0.20, 2.50))
+                // Haiku 5.5 bills two rate cards by prompt size: $0.10 / $0.50 up to 100K prompt tokens, $0.50 / $2.50
+                // above. A flat ModelPrice holds one, so this is the <=100K card -- and the under-estimate is not an
+                // edge case: with the 1M context window, compaction starts near 800K, so long sessions routinely send
+                // prompts above 100K, and on those requests this row under-reports cost by up to 5x. An operator who
+                // budgets on these figures overrides the row, or registers a smaller context window to keep prompts
+                // under 100K.
+                .registerPrefix("claude-haiku-5", ModelPrice.perMillionUsd(0.10, 0.50, 0.01, 0.125))
+                // Opus 5.5 is $4 / $20 with cache reads at $0.20; registered before the claude-opus-5 prefix that
+                // would otherwise match it, as claude-opus-4-5 is above.
+                .registerPrefix("claude-opus-5-5", ModelPrice.perMillionUsd(4.00, 20.00, 0.20, 5.00))
+                .registerPrefix("claude-opus-5", ModelPrice.perMillionUsd(5.00, 25.00, 0.50, 6.25)).build();
     }
 
     @Override

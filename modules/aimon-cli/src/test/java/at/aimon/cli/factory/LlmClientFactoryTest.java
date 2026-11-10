@@ -435,6 +435,19 @@ class LlmClientFactoryTest {
         }
 
         @Test
+        @DisplayName("Should carry a declared thinking block binding through to the anthropic registry")
+        void aDeclaredBlockBindingReachesTheRegistry() {
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setThinkingDialect(ThinkingDialect.ADAPTIVE);
+            capabilities.setSupportsThinkingBlockBinding(true);
+            LlmProviderConfig config = anthropic("prod-claude");
+            config.setModelCapabilities(Map.of("prod-claude", capabilities));
+
+            assertThat(factory.anthropicConfig(config).getModelCapabilityRegistry().resolve("prod-claude")
+                    .supportsThinkingBlockBinding()).isTrue();
+        }
+
+        @Test
         @DisplayName("Should let the dialect stand alone as a whole declaration, and reach the openai branch too")
         void aDialectAloneIsAWholeDeclarationAndOneTableServesBothBranches() {
             // One table, both branches -- which is what keeps the shared namespace honest (§2.7's own argument, now

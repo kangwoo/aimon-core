@@ -213,8 +213,9 @@ OPENAI_KEY_FILE=<path to a file holding the key> ANTHROPIC_KEY_FILE=<path> ./gra
   `LIVE-E2E provider=openai model=gpt-4o-mini engine=javascript result=PASS executeCodeCalls=1 nestedCallsBestProgram=10 nestedCallsAllPrograms=10 perProgram=[10] inputTokens=… outputTokens=… completion=COMPLETED answer=CORRECT programPrinted=[[h2, h3, h5]] finalAnswerMatches=false`,
   with each program's own numbers (`LIVE-E2E program #n … dispatched= succeeded= tools=[…] status=…`) printed above it.
   On failure the conversation, the render payloads and the span tree are printed too; none of them carries a key.
-- **Models.** `gpt-4o-mini` and `claude-haiku-4-5-20251001` by default; override with `AIMON_LLM_TEST_OPENAI_MODEL` /
-  `AIMON_LLM_TEST_ANTHROPIC_MODEL` when a weak model will not write code.
+- **Models.** `gpt-4o-mini` and `claude-haiku-5-5` by default (the Anthropic client runs at `maxTokens` 16000, because
+  that model thinks by default); override with `AIMON_LLM_TEST_OPENAI_MODEL` / `AIMON_LLM_TEST_ANTHROPIC_MODEL` when a
+  weak model will not write code.
 - **The shell variant runs model-written Python on this host.** It needs `python3` ≥ 3.8 (it skips without), runs on a
   local environment that *declares* itself sandboxed, and the model may also call `Bash` directly. After the stack closes
   it checks that no `aimon_ptc.py` process from the run directories it recorded is left; a subprocess the program

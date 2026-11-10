@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 7da424e4
+source_commit: 0a9ab698
 ---
 
 # Embedding an AIMON agent in your application
@@ -301,7 +301,7 @@ aimon:
   llm:
     provider: anthropic             # anthropic (default) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
-    timeout: 60s
+    timeout: 60s                    # total per-call ceiling, streaming included. Unset = client default (Anthropic 600s, OpenAI 60s)
     anthropic:                      # read by the anthropic branch only — fails startup under another provider
       thinking-mode: "off"          # "off" (default) | extended | adaptive | auto — quotes explained below
       replay-thinking-blocks: true
@@ -421,9 +421,10 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  There are eight flags
+  There are nine flags
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `thinking-dialect` ·
+  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `supports-thinking-block-binding` ·
+  `thinking-dialect` ·
   `lowest-reasoning-effort` · `accepted-reasoning-efforts`) and
   **every one is optional**; for **a name the built-in table does not know** (a renamed gateway deployment,
   like the example above) what you leave out keeps today's behaviour, which is why the single line above is a
@@ -436,7 +437,10 @@ aimon:
   startup** instead, naming the shadowed row, the flags that fell back and the lines to copy. For such a name, copy every
   flag that row states (`thinking-dialect` and `supports-sampling-parameters: false`). `thinking-dialect` is
   read by the anthropic branch only and `supports-reasoning-summary` by the OpenAI Responses path only — the
-  latter is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary`. The
+  latter is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary`.
+  `supports-thinking-block-binding` is read by the anthropic branch on the adaptive dialect only; when `true`, a
+  replayed thinking block whose prefix has changed is dropped (`drop_block`) instead of failing the request — the
+  built-in table states it for the three `claude-*-5-5` models. The
   last two are **mutually exclusive** ways of stating one fact: `lowest-reasoning-effort` is shorthand for
   "it starts here and runs to the top", while `accepted-reasoning-efforts=none,low,medium,high` is the
   general form for a ladder with a gap in the middle (the built-in `gpt-5.6-terra` row is the measured
@@ -505,12 +509,13 @@ aimon:
   startup then fails, with a message that names the quotes. The CLI has no such limit because it can read the
   parser's original scalar — one collision, answered differently by the two surfaces.
 
-  On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` ·
-  `claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the call's
-  `ReasoningEffort`** — the middle rung, 4096, when none is set. That budget meets the same ceiling as
+  On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` (deprecated,
+  retires 2026-11-30) · `claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the
+  call's `ReasoningEffort`** — the middle rung, 4096, when none is set. That budget meets the same ceiling as
   `thinking-budget-tokens` just below. When the agent definition sets no `model.maxTokens`, `max_tokens` is
-  `AnthropicConfig`'s default of 4096, so the budget is clamped to 4095 with one WARN, **leaving one token for the
-  visible answer.** There are two remedies — raise the agent definition's `model.maxTokens`, or lower
+  `AnthropicConfig`'s default of 16000, so 4096 goes out as is. On an agent that sets `model.maxTokens` to 4096
+  or less the budget is clamped to `maxTokens - 1` with one WARN — at 4096, **leaving one token for the visible
+  answer.** There are two remedies — raise the agent definition's `model.maxTokens`, or lower
   `aimon.llm.reasoning-effort` to `low` (2048) or `minimal` (1024) (or the agent definition's
   `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a decision, not an
   oversight; the reasons and the alternatives refused are in
@@ -521,8 +526,8 @@ aimon:
   known). The likeliest mistake is **writing the budget and leaving the mode out**, where the mode is `off`
   and the number reaches nothing — also a startup failure. The value has a floor of 1024 (the API's) and a
   ceiling below `max_tokens`: thinking tokens count against it, so the client clamps to `max_tokens - 1` and
-  says so at WARN, and **since the default `max_tokens` is 4096, an untouched deployment sends
-  `thinking-budget-tokens: 8000` as 4095.** No property raises that ceiling — the agent definition's
+  says so at WARN, and **an agent that sets `model.maxTokens: 4096` sends `thinking-budget-tokens: 8000` as
+  4095** (under the default `max_tokens` of 16000 it goes out as is). No property raises that ceiling — the agent definition's
   `model.maxTokens` does.
 
   `replay-thinking-blocks: false` is an escape hatch for one named failure — *"Invalid `signature` in
