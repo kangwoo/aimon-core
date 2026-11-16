@@ -1,4 +1,4 @@
-# 포그라운드 Task 병렬 실행 — 등록 항목 6건 (열림 6 · 닫힘 0)
+# 포그라운드 Task 병렬 실행 — 등록 항목 6건 (열림 4 · 닫힘 2)
 
 출처는 [`../design/subagent/parallel-foreground-task.md`](../design/subagent/parallel-foreground-task.md) 의 구현이다. 그 문서
 §8(Open questions)과 §9(구현이 이 설계와 갈라진 자리) 가운데 **이 변경 밖으로 결과가 나가는 것**만 여기로
@@ -48,7 +48,7 @@
 
 ---
 
-## PF-3 — `runForeground` 가 돌아온 뒤의 늦은 interrupt 창 · **열림**
+## PF-3 — `runForeground` 가 돌아온 뒤의 늦은 interrupt 창 · **닫힘** *(2026-11-16)*
 
 **무엇을.** 도구가 돌아온 뒤 PostTool 훅 전에 실행 스레드의 인터럽트 플래그를 소비하고 신호로 승격할지 정한다
 ([`../design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) §8 의 변경).
@@ -63,6 +63,50 @@
 `toolinvocation/SingleToolInvoker.java` 의 PostTool 발화부, `tools/task/TaskTool.java` 의 `runForeground`.
 
 **언제 다시 볼까.** PostTool 훅이 취소된 `Task` 뒤에 건너뛰어졌다는 보고가 있을 때, 또는 `interrupt.md` §8 을 다시 열 때.
+
+**닫음 (2026-11-16).** 두 가지를 함께 바꿨다. ① `TerminatorRegistrar.close()` 가 **장벽**이 됐다 — 돌아온 시점에는 그
+registrar 의 terminator 가 돌고 있지도 않고 이후로 돌지도 않는다. `DefaultTerminatorRegistrar` 는 `fireAll` 전체와
+`register()` 의 즉시 발화를 두 번째 모니터 `fireLock` 안에서 돌리고, `close()` 는 `closed` 를 세운 뒤 — 두 번째 호출이라도
+— 그 모니터를 한 번 지나간다. terminator 는 계약상 곧바로 돌아오므로 대기는 짧다(계약을 어기고 도구 스레드를 기다리는 terminator 는 이제 교착한다
+— `close()` javadoc 에 적었다). ② `SingleToolInvoker` 는 registrar 가 있었던 도구(`THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED`)에
+한해, 호출을 보고하는 훅 — PostTool, 그리고 거부 경로의 PermissionDenied — **전에** registrar 를 닫고(`quiesce`), **실행의
+신호가 이미 떠 있을 때만** 스레드 플래그를 소비한다 — 그때는 누가 세운 플래그든 신호가 이미 취소를 담고 있다. registrar 가
+없던 도구의 플래그는 건드리지 않는다(워커에서 관측되는 플래그는 그 워커의 실제 인터럽트다 — `interrupt.md` §8.5 의 전제).
+새 규칙은 `interrupt.md` §8.8 에 적었다. 테스트: `DefaultTerminatorRegistrarTest.closeWaitsForTerminatorFiredByTrip` ·
+`closeWaitsForTerminatorFiredByRegister`,
+`secondCloseAlsoWaits`, `SingleToolInvokerTest.invoke_terminatorInterruptAfterCancellation_isConsumedBeforePostTool` ·
+`invoke_terminatorInterruptBeforeDeny_isConsumedBeforePermissionDenied` ·
+`invoke_cancelledBeforeApproval_refusedWithoutPromptAndFlagClearedBeforePermissionDenied` (모두 수정 전 코드에서 실패),
+`invoke_interruptWithoutCancellation_isLeftForTheCaller` · `invoke_toolWithoutRegistrar_flagUntouched` (수정 전에도 성립하던
+성질을 고정한다).
+
+- **근거가 달랐다 (규칙 둘).** 항목은 결과를 *"`DefaultHookExecutor` 의 fail-open 이 PostTool 을 건너뛸 수 있다"* 로 적었지만,
+  `interrupt.md` §8.7 이후 인터럽트로 끊긴 훅 대기는 정책과 무관하게 **BLOCKED** 다 — 조용한 건너뜀이 아니라 "답을 못 받았다"
+  는 정직한 보고다. 남은 결과는 그 훅이 실제로 **돌지 않는다**는 것이고, 출력을 가리는 PostTool 이라면 이미 만들어진 결과에
+  가림이 적용되지 않는다. 다만 `ignoresInterrupt()` 를 선언한 훅(선언적 보고 훅의 셸 명령 전부)은 §8.7 에 따라 원래부터 끝까지
+  돌았으므로, 이 창에 닿는 것은 그것을 선언하지 않은 코드 훅뿐이었다. 결과의 종류는 달라졌지만 창은 그대로였다.
+- **처방이 두 번 틀렸다 (규칙 다섯).** 적힌 처방은 *"PostTool 전에 플래그를 소비하고 신호로 승격한다"* 였다.
+  - **소비만으로는 창이 닫히지 않는다.** `fireAll` 은 스냅샷을 lock 안에서 뜨고 terminator 는 lock **밖**에서 부르므로, 스냅샷을
+    뜬 발화가 소비 **뒤에** `Thread::interrupt` 를 떨어뜨릴 수 있다. 장벽이 그 순서를 막는다. 코드를 읽어서 나온 것이고, 소비만
+    적용한 상태로 경합을 끝까지 재현하지는 않았다. 첫 구현은 장벽을 `fireAll` 에만 걸었는데, 독립 리뷰가 `register()` 의 즉시
+    발화가 그 밖에 있다는 것을, 두 번째 리뷰가 두 번째 `close()` 는 장벽 앞에서 돌아온다는 것을 짚었다.
+  - **승격은 해롭다.** 첫 구현은 처방대로 신호가 안 떠 있어도 플래그를 소비해 `PARENT_CANCELLED` 로 승격했다. 독립 리뷰가 그
+    결과를 짚었다 — terminator 는 trip 에서만 발화하므로 **안 뜬 신호 위의 플래그는 terminator 의 것이 아니라 호출자의 것**이고,
+    슬래시 커맨드 경로에서는 그 coordinator 가 아무도 읽지 않고 커맨드 끝에 닫힌다. 승격하면 §8.3 의 스윕이 플래그를 못 찾아
+    커맨드가 `COMPLETED` 로 끝나고 임베더의 취소가 사라지며, 같은 커맨드의 이후 terminator 는 등록 즉시 발화한다. 그래서
+    "신호가 떠 있을 때만 소비, 승격은 하지 않음" 으로 좁혔다. PF-3 의 사례(terminator 발화)는 언제나 그 조건 안에 있다.
+- **남은 창.** 장벽은 **자기 registrar** 만 막는다. 다른 경로로 같은 스레드에 오는 interrupt — 임베더 스레드에서 `joinAll` 중
+  인터럽트된 부모가 `DedicatedThreadDispatcher` 로 전용 스레드에 넘기는 것, inline lane 에서 부모 `Task` 의 terminator 가 자식
+  도구의 PostTool 에 떨어지는 것 — 는 여전히 PostTool 을 BLOCKED 로 만들 수 있다. 어느 쪽이든 이미 취소되는 실행이다.
+  도구가 예외로 끝나는 경로(`catch (Exception)`)는 뒤에 훅이 없어 손대지 않았다.
+- **대가.** 취소된 실행에서도 PostTool · PermissionDenied 훅이 이제 끝까지 돈다 — 예전에는 대기가 곧바로 BLOCKED 로 끝났다.
+  취소가 PostTool **전에** 온 경우만이 아니다. registrar 가 PostTool 전에 닫히므로 PostTool **도중에** 온 취소도
+  `THREAD_INTERRUPT` 도구(오늘은 `BashTool`)의 훅 대기를 더는 끊지 않는다 — 최종 리뷰가 짚었다. 그래서 취소가 호출마다 최대 훅
+  타임아웃만큼 늦어질 수 있고, 병렬 `Task` 라면 전용 스레드마다 그렇다. 훅은 trip 뒤 신호를 받지
+  않으므로(`CancellationSignals.liveOrEmpty`) 스스로 끊지도 못한다. 이 창을 닫은 것의 정의상 대가다.
+- **심각도 (규칙 셋).** 낮음 — 그리고 그대로였다. 이 창은 실행이 이미 취소된 경우에만 닿고(terminator 는 trip 에서만 발화한다),
+  잃는 것은 출력 가림 같은 PostTool 의 효과다. 전용 스레드가 넓힌 창도 아니다 — 순차 경로에도 같았다. 확인은 읽기와 위 테스트로
+  했고, 실제 가림 훅으로 재현하지는 않았다.
 
 ---
 
@@ -82,7 +126,7 @@ PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptH
 
 ---
 
-## PF-5 — 부모 수준 승인 대기자는 부모 취소에 깨어나지 않는다 · **열림**
+## PF-5 — 부모 수준 승인 대기자는 부모 취소에 깨어나지 않는다 · **닫힘** *(2026-11-16)*
 
 **무엇을.** 같은 승인 질문을 기다리는 호출자를 부모 취소가 깨우게 할지 정한다 — 예를 들어 대기를 턴의 취소 신호에도 묶는다.
 
@@ -97,6 +141,28 @@ PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptH
 
 **언제 다시 볼까.** 대화형이 아닌 `AskPromptHandler`(사람 대신 원격 승인 채널)가 생겨 묻던 쪽이 취소에 반응할 수 있게 될 때 —
 그때는 대기자만 매달리는 것이 실제 지연이 된다.
+
+**닫음 (2026-11-16).** `SideEffectApprovalGate.awaitShared` 가 이제 묻던 쪽의 답 **또는** 대기자 자신의 실행 취소 신호
+(`InterruptAccess.signalOf(context)`) 중 먼저 오는 것에 깬다. 그리고 실행이 이미 취소된 호출은 묻지도 않는다 — 프롬프트를
+만들기 전과 대기 루프의 매 회차에 신호를 본다. 신호에 건 리스너는 대기가 끝나면 지운다. 신호가 이미 떠 있으면
+리스너가 등록 즉시 불리므로 대기에 들어가지 않는다(읽기로 확인 — 루프 앞의 검사가 대부분을 먼저 거른다). 취소된 실행은 답이 같은 순간에 왔더라도 거부되고 아무것도 기억하지 않는다
+— 스레드 인터럽트로 깬 대기자와 같은 규칙이다. 테스트: `SideEffectApprovalGateTest.waiterWakesOnCancellationSignal` ·
+`alreadyCancelledCallerDoesNotWaitForAnotherAsker` · `alreadyCancelledCallerDoesNotAsk` (모두 수정 전 코드에서 실패), `waiterWithLiveSignalSharesAnswer` (취소되지 않은 대기자는
+여전히 답을 나눠 받는다 — 수정 전에도 성립하던 성질).
+
+- **재검토 트리거를 기다리지 않았다.** 항목의 트리거(사람 대신 원격 승인 채널)는 아직 오지 않았다. 고칠 자리가 한 메서드이고
+  처방이 기존 인터럽트 경로와 같은 결과를 내므로 먼저 닫았다.
+- **항목이 대기자만 봤다 (규칙 둘).** 항목은 기다리는 쪽만 적었지만, 이미 취소된 호출이 질문의 **소유자**가 되면 — 먼저 묻는
+  사람이 없거나, 묻던 쪽이 답을 못 받아 다시 돌아온 경우 — 사람 앞에 프롬프트를 띄웠고 `Task` 라면 그 스레드에는 아직
+  terminator 가 없어 그 답을 기다렸다. 수정 전부터 그랬다. 첫 구현은 대기자만 고쳤고, 두 번째 독립 리뷰가 짚었다.
+- **처방의 낱말 (규칙 다섯).** 항목은 *"대기를 턴의 취소 신호에도 묶는다"* 고 적었지만 묶은 것은 **실행**의 신호다 — 대기자는
+  포크나 루틴일 수도 있고, 컨텍스트가 실어 오는 것은 그 실행의 신호다. 부모 스레드에서 도는 `Task` 의 게이트라면 그것이 곧
+  부모의 신호다.
+- **심각도 (규칙 셋).** 낮음 — 그리고 그대로였다. 오늘의 CLI 에서는 묻던 쪽이 `readLine()` 에 막혀 있으므로 대기자가 늦게
+  깨어도 턴이 더 늦게 끝나지는 않는다(묻던 쪽의 답이 어차피 턴의 끝을 정한다). 달라진 것은 취소가 더는 사람의 답을 기다리지
+  않는다는 것이고, 이 차이가 실제 지연이 되는 것은 위의 트리거가 올 때다. 단, **이미 묻고 있는** 쪽은 여전히 사람의 답을
+  기다린다 — `channel.resolve` 는 신호에 반응하지 않고, `Task` 처럼 아직 terminator 가 없는 도구라면 interrupt 도 오지 않는다.
+  그 답은 진짜 사용자의 답이므로 기억된다. 이것은 대화형이 아닌 `AskPromptHandler` 가 생길 때 함께 볼 일이다. 확인은 읽기와 위 테스트로 했다.
 
 ---
 

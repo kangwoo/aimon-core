@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,17 +15,22 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
@@ -241,7 +247,7 @@ class SingleToolInvokerTest {
         givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
         when(toolExecutionManager.execute(any(), any(), any(), any()))
                 .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
-        try (at.aimon.core.agent.interrupt.DefaultInterruptCoordinator execution = new at.aimon.core.agent.interrupt.DefaultInterruptCoordinator()) {
+        try (DefaultInterruptCoordinator execution = new DefaultInterruptCoordinator()) {
             ToolDispatchResults.toToolUseResult(invoker.invoke(specIn(
                     ToolContext.builder().put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build())));
 
@@ -270,8 +276,8 @@ class SingleToolInvokerTest {
         givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
         when(toolExecutionManager.execute(any(), any(), any(), any()))
                 .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
-        try (at.aimon.core.agent.interrupt.DefaultInterruptCoordinator execution = new at.aimon.core.agent.interrupt.DefaultInterruptCoordinator()) {
-            execution.requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason.USER_SIGINT);
+        try (DefaultInterruptCoordinator execution = new DefaultInterruptCoordinator()) {
+            execution.requestInterrupt(InterruptReason.USER_SIGINT);
 
             ToolDispatchResults.toToolUseResult(invoker.invoke(specIn(
                     ToolContext.builder().put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build())));
@@ -441,14 +447,185 @@ class SingleToolInvokerTest {
         when(toolExecutionManager.execute(any(), any(), any(), any()))
                 .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok")));
 
-        ToolDispatchResults.toToolUseResult(invoker.invoke(spec(toolUse(Map.of()), List.of())));
+        final ToolUseResult result = ToolDispatchResults
+                .toToolUseResult(invoker.invoke(spec(toolUse(Map.of()), List.of())));
 
+        assertThat(result.isSuccess()).isTrue();
         verify(coordinator).newTerminatorRegistrar();
         verify(registrar).register(any());
-        verify(registrar).close();
+        // Closed once the tool returns, before PostTool, and again — a no-op — on the way out.
+        final InOrder order = inOrder(registrar, hookExecutionManager);
+        order.verify(registrar).close();
+        order.verify(hookExecutionManager).executePostTool(any());
         final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), any(), any());
         assertThat(ctxCaptor.getValue().get(InterruptToolKeys.TERMINATOR_REGISTRAR)).contains(registrar);
+    }
+
+    private ToolInvocationSpec specOn(InterruptCoordinator onCoordinator) {
+        return ToolInvocationSpec.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(hookRegistry).executionAttributes(Map.of())
+                .toolRegistry(toolRegistry).sessionRegistry(sessionRegistry).allowedTools(List.of())
+                .coordinator(onCoordinator).toolContext(ToolContext.empty()).toolUse(toolUse(Map.of()))
+                .iterationCount(1).build();
+    }
+
+    /** Records whether the thread carried an interrupt flag when PostTool hooks were fired. */
+    private AtomicBoolean recordFlagAtPostTool() {
+        // Starts true for the tests that expect false, and is overwritten when PostTool fires: a PostTool that never
+        // ran cannot pass for "the flag was clear".
+        final AtomicBoolean flag = new AtomicBoolean(true);
+        when(hookExecutionManager.executePostTool(any())).thenAnswer(inv -> {
+            flag.set(Thread.currentThread().isInterrupted());
+            return List.of();
+        });
+        return flag;
+    }
+
+    @Test
+    @DisplayName("PF-3: a terminator's interrupt that lands as the tool returns is consumed before PostTool")
+    void invoke_terminatorInterruptAfterCancellation_isConsumedBeforePostTool() {
+        givenToolBehavior(InterruptBehavior.THREAD_INTERRUPT);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            // The execution is cancelled as the tool returns: the pre-registered Thread::interrupt terminator fires on
+            // this thread and the tool returns normally, leaving the flag behind.
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            final AtomicBoolean flagAtPostTool = recordFlagAtPostTool();
+
+            try {
+                final ToolUseResult result = ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(result.isSuccess()).isTrue();
+                verify(hookExecutionManager).executePostTool(any());
+                assertThat(flagAtPostTool.get()).as("flag seen by PostTool").isFalse();
+                assertThat(real.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: an interrupt on an untripped signal is the caller's, and is left on the thread")
+    void invoke_interruptWithoutCancellation_isLeftForTheCaller() {
+        givenToolBehavior(InterruptBehavior.EXTERNALLY_TERMINATED);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            // No terminator set this: the embedder interrupted its own thread. Consuming it here would lose it.
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                Thread.currentThread().interrupt();
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            final AtomicBoolean flagAtPostTool = recordFlagAtPostTool();
+
+            try {
+                ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                verify(hookExecutionManager).executePostTool(any());
+                assertThat(flagAtPostTool.get()).isTrue();
+                assertThat(Thread.currentThread().isInterrupted()).as("caller's flag kept").isTrue();
+                assertThat(real.getSignal().isCancelled()).as("not promoted").isFalse();
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: a tool without a registrar keeps its flag even when the execution is cancelled")
+    void invoke_toolWithoutRegistrar_flagUntouched() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                Thread.currentThread().interrupt();
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            final AtomicBoolean flagAtPostTool = recordFlagAtPostTool();
+
+            try {
+                ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                verify(hookExecutionManager).executePostTool(any());
+                assertThat(flagAtPostTool.get()).isTrue();
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: a terminator's interrupt during the permission chain is consumed before PermissionDenied")
+    void invoke_terminatorInterruptBeforeDeny_isConsumedBeforePermissionDenied() {
+        givenToolBehavior(InterruptBehavior.THREAD_INTERRUPT);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            when(hookExecutionManager.executePermissionRequest(any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                return List.of();
+            });
+            when(hookExecutionManager.hasBlockedResult(any())).thenReturn(true);
+            final AtomicBoolean flagAtDenied = new AtomicBoolean(true);
+            when(hookExecutionManager.executePermissionDenied(any())).thenAnswer(inv -> {
+                flagAtDenied.set(Thread.currentThread().isInterrupted());
+                return List.of();
+            });
+
+            try {
+                final ToolUseResult result = ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(result.isError()).isTrue();
+                assertThat(flagAtDenied.get()).as("flag seen by PermissionDenied").isFalse();
+                verify(toolExecutionManager, never()).execute(any(), any(), any(), any());
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3/PF-5: a cancelled execution's call is refused by the approval gate without a prompt, flag cleared")
+    void invoke_cancelledBeforeApproval_refusedWithoutPromptAndFlagClearedBeforePermissionDenied() {
+        givenToolBehavior(InterruptBehavior.THREAD_INTERRUPT, SideEffectLevel.MUTATING);
+        final AtomicInteger prompts = new AtomicInteger();
+        final SingleToolInvoker gated = new SingleToolInvoker(toolExecutionManager, hookExecutionManager,
+                new SideEffectApprovalGate(prompt -> {
+                    prompts.incrementAndGet();
+                    return Decision.ALLOW;
+                }));
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            // Cancelled during the permission chain: the pre-registered Thread::interrupt terminator fires here.
+            when(hookExecutionManager.executePermissionRequest(any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                return List.of();
+            });
+            final AtomicBoolean flagAtDenied = new AtomicBoolean(true);
+            when(hookExecutionManager.executePermissionDenied(any())).thenAnswer(inv -> {
+                flagAtDenied.set(Thread.currentThread().isInterrupted());
+                return List.of();
+            });
+            final ToolContext context = ToolContext.builder().put(ToolContextKeys.SESSION_ID, SessionId.of("s1"))
+                    .put(InterruptToolKeys.CANCELLATION_SIGNAL, real.getSignal()).build();
+            final ToolInvocationSpec spec = ToolInvocationSpec.builder().origin(ToolCallOrigin.direct())
+                    .invokerType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(hookRegistry)
+                    .executionAttributes(Map.of()).toolRegistry(toolRegistry).sessionRegistry(sessionRegistry)
+                    .allowedTools(List.of()).coordinator(real).toolContext(context).toolUse(toolUse(Map.of()))
+                    .iterationCount(1).build();
+
+            try {
+                final ToolUseResult result = ToolDispatchResults.toToolUseResult(gated.invoke(spec));
+
+                assertThat(result.isError()).isTrue();
+                assertThat(result.getContent()).contains("cancelled");
+                assertThat(prompts.get()).as("no prompt for a cancelled run").isZero();
+                verify(hookExecutionManager).executePermissionDenied(any());
+                assertThat(flagAtDenied.get()).as("flag seen by PermissionDenied").isFalse();
+                verify(toolExecutionManager, never()).execute(any(), any(), any(), any());
+            } finally {
+                Thread.interrupted();
+            }
+        }
     }
 
     @Test

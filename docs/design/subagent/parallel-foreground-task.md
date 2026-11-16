@@ -537,6 +537,9 @@ agent-scoped base 컨텍스트(`agent/impl/orca/OrcaAgentRuntimeFactory.java:116
 | 트레이싱 on | 부모 span 은 값으로 전달되므로 스레드와 무관 (§6.3) |
 | factory 를 거치지 않는 조립 (`OrcaAgentExecutor.builder().parallelToolDispatcher(...)`) | 조립자가 직접 `DedicatedThreadDispatcher` 를 감싸 주입하고 manager 플래그도 직접 켠다. 포크 쪽은 `withParallelToolDispatcher` — 기존 feature 가이드 §2.2 와 같은 책임 분담 |
 
+*(2026-11-16)* "승인 프롬프트 중 취소" 의 부모 수준 대기자는 이제 깨어난다 — 대기가 대기자 자신의 실행 취소 신호에도 묶였고,
+실행이 이미 취소된 호출은 묻지도 않는다(PF-5). 이미 묻고 있는 쪽은 여전히 `readLine()` 에 막힌다. 표는 설계 시점의 기록으로 둔다.
+
 ---
 
 ## 6. 설계 단계 검증 항목 아홉 가지 — 코드로 확인한 결론
@@ -630,6 +633,13 @@ stdin 읽기가 섞일 수 있다(→ §3.12). 다른 포크의 `[Tool]` 한 줄
 PostTool 을 건너뛸 수 있고(`interrupt.md` §8.7 의 두 번째 겹은 PreTool 쪽만 막는다), ⓑ 는 리스너가 블로킹하지 않는 한
 영향이 없다. 오늘 부모 스레드에도 똑같이 있다(§8 Q9, PF-3).
 
+**닫음 (2026-11-16, PF-3).** ⓐ 의 창은 닫혔다 — 처방은 Q9 가 적은 "소비 · 승격" 이 아니었다. `TerminatorRegistrar.close()` 가
+장벽이 되고, `SingleToolInvoker` 가 PostTool 전에 registrar 를 닫은 뒤 **실행의 신호가 떠 있을 때만** 플래그를 소비한다(승격은
+하지 않는다). 남은 창(다른 registrar · `DedicatedThreadDispatcher` 가 넘기는 interrupt)과 근거는
+[`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-3 이다.
+위 문단의 *"fail-open 이 PostTool 을 건너뛸 수 있다"* 는 그 시점에도 정확하지 않았다 — `interrupt.md` §8.7 이후 끊긴 훅 대기는
+BLOCKED 다.
+
 ### 6.8 `BudgetTracker` / 토큰 · 비용 집계의 공유와 스레드 안전성
 
 `BudgetTracker` 는 동기화 없는 필드이고(`agent/budget/BudgetTracker.java:56-64`) 생성 지점은 턴(`OrcaAgentExecutor.java:1170`)
@@ -696,6 +706,9 @@ feedback 은 그 호출의 결과에만 붙는다(`:74-83`).
 | Q12 | 포크 `ToolContext` 에 `FORK_DEPTH` 키가 늘 보이는 것을 "기능 off 시 바이트 동일" 로 받아들일 수 있는가? | 받아들인다 — 근거는 §3.16 ③. 대안(`wantsForkDepth()` default 메서드)은 쓰지 않는다 |
 | Q13 | 기능이 꺼진 **도달 가능한** 구성에서 "같은 질문 두 번" 이 "한 번" 으로 바뀌는 것을 결함 수정으로 받아들이는가? | 받아들인다(§3.16 ⑤). 두 `readLine` 이 섞이는 오늘의 동작은 누구도 의도하지 않았고, 답의 범위는 넓어지지 않는다(게이트의 답은 이미 (스코프, 도구) 단위 · "whatever its arguments" — `SideEffectApprovalGate.java:247-249`). 엄밀한 off 바이트 동일을 원하면 게이트에 스위치를 들여야 하는데, 그 결함을 꺼진 배치에 남기는 값이 그 엄밀함보다 비싸다 |
 
+*(2026-11-16)* Q9 와 §9.1 의 4 는 PF-3 · PF-5 로 닫혔다. 표는 설계 시점의 기록으로 둔다 — 현재의 사실과 처방이 어떻게
+달라졌는지는 [`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) 에 있다.
+
 ---
 
 ## 9. 구현이 이 설계와 갈라진 자리
@@ -719,6 +732,9 @@ feedback 은 그 호출의 결과에만 붙는다(`:74-83`).
 | 10 | §3.12 의사코드 — 묻던 쪽이 던지면 대기자는 `ExecutionException` → `allowed = false` (fail-safe DENY) | 대기자는 거절되지 않고 다시 조회한 뒤 스스로 묻는다. 묻던 쪽의 예외는 오늘처럼 invoker 의 catch-all 로 간다 | 실패한 프롬프트는 답이 없는 것이지 거절이 아니다. 대기자에게 "not approved by the user" 를 주면 모델이 사용자가 거절한 것으로 읽고 재시도하지 않는다. 다시 묻는 쪽도 fail-safe 다 — 승인은 여전히 사람의 답으로만 생긴다 |
 | 11 | §3.10 — `createDefaultSubagentExecutionManager` 를 오버라이드한 서브클래스는 다루지 않음 | `OrcaAgentExecutorFactory.withDedicatedThreadConfig` javadoc 에 한 문장 — 그런 서브클래스의 포크는 fan-out 도 task id 라벨도 받지 않는다 | 트레이싱 선례와 같은 책임 분담이다 |
 | 12 | §3.5 — 포크 쪽 `onCompleted` 는 다루지 않음 | `DedicatedThreadDispatcher` 클래스 javadoc 에 한 문장 — `maxForkDepth >= 2` 에서 포크 실행기의 `stream(lc, …)` 콜백도 전용 스레드에서 돈다 | 풀 경로와 같은 이유(no-op 싱크 또는 thread-safe 저장소 append)로 안전하다는 것을 적어 둔다 |
+
+*(2026-11-16)* 4 의 "동작은 바꾸지 않았다" 는 PF-5 로 바뀌었다 — 부모 수준 대기자도 실행 취소 신호에 깨어난다. 근거는
+[`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-5 이다.
 
 ### 9.2 문서
 

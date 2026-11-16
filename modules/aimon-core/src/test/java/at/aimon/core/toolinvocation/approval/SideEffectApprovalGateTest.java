@@ -24,9 +24,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -120,6 +123,11 @@ class SideEffectApprovalGateTest {
 
     private static ToolContext turnContext(String sessionId) {
         return ToolContext.builder().put(ToolContextKeys.SESSION_ID, SessionId.of(sessionId)).build();
+    }
+
+    private static ToolContext signalledForkContext(String invokingSessionId, DefaultInterruptCoordinator execution) {
+        return ToolContext.builder().put(ToolContextKeys.INVOKING_SESSION_ID, SessionId.of(invokingSessionId))
+                .put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build();
     }
 
     private static ToolContext forkContext(String invokingSessionId) {
@@ -835,6 +843,103 @@ class SideEffectApprovalGateTest {
             handler.release.countDown();
             assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
             assertThat(handler.calls.get()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("PF-5: a waiter whose execution is cancelled wakes without a thread interrupt and is refused")
+        void waiterWakesOnCancellationSignal() throws Exception {
+            final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler, store);
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
+            assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // The waiter's thread has no terminator on it — only its execution's signal can reach it.
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+                final Thread waiter = new Thread(
+                        () -> waiterResult.set(ask(gate, write, signalledForkContext("s1", parent))));
+                waiter.start();
+                awaitParked(waiter);
+                parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+                waiter.join(5_000);
+
+                assertThat(waiter.isAlive()).as("waiter woke before anyone answered").isFalse();
+                assertThat(waiterResult.get()).hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+                assertThat(store.lookup("session:s1", TOOL_NAME)).isEmpty();
+            }
+
+            handler.release.countDown();
+            assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
+            assertThat(handler.calls.get()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("PF-5: a caller whose execution is already cancelled does not wait for another caller's prompt")
+        void alreadyCancelledCallerDoesNotWaitForAnotherAsker() throws Exception {
+            final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler,
+                    new InMemoryToolApprovalStore());
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
+            assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+                // On a worker with a short bound: on code that waits, this must fail fast rather than hang the build.
+                final Future<Optional<String>> waiter = callers
+                        .submit(() -> ask(gate, write, signalledForkContext("s1", parent)));
+
+                assertThat(waiter.get(2, TimeUnit.SECONDS))
+                        .hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+            } finally {
+                handler.release.countDown();
+            }
+            assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("PF-5: a caller whose execution is already cancelled does not ask, even with no one else asking")
+        void alreadyCancelledCallerDoesNotAsk() {
+            final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler, store);
+            try (DefaultInterruptCoordinator execution = new DefaultInterruptCoordinator()) {
+                execution.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+
+                assertThat(ask(gate, tool(TOOL_NAME, SideEffectLevel.MUTATING), signalledForkContext("s1", execution)))
+                        .hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+                assertThat(handler.callCount()).isZero();
+                assertThat(store.lookup("session:s1", TOOL_NAME)).isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("PF-5: a waiter with a live, untripped signal still shares the asker's answer")
+        void waiterWithLiveSignalSharesAnswer() throws Exception {
+            final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler,
+                    new InMemoryToolApprovalStore());
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
+            assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+                final Thread waiter = new Thread(
+                        () -> waiterResult.set(ask(gate, write, signalledForkContext("s1", parent))));
+                waiter.start();
+                awaitParked(waiter);
+                handler.release.countDown();
+                waiter.join(5_000);
+
+                assertThat(waiterResult.get()).isEmpty();
+                assertThat(handler.calls.get()).isEqualTo(1);
+            } finally {
+                handler.release.countDown();
+            }
+            assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
         }
 
         @Test

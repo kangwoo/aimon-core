@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
@@ -143,5 +146,113 @@ class DefaultTerminatorRegistrarTest {
 
         assertThatThrownBy(() -> registrar.register(null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> registrar.unregister(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("PF-3: close() waits for a terminator being fired by a trip, so none lands after it returns")
+    void closeWaitsForTerminatorFiredByTrip() throws Exception {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean terminatorDone = new AtomicBoolean();
+        registrar.register(blockingTerminator(entered, release, terminatorDone));
+        Thread firer = new Thread(() -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT));
+        try {
+            firer.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertCloseWaitsFor(registrar, release, terminatorDone);
+        } finally {
+            release.countDown();
+            firer.join(5_000);
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: close() also waits for a terminator fired immediately by register() on a tripped signal")
+    void closeWaitsForTerminatorFiredByRegister() throws Exception {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar();
+        coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean terminatorDone = new AtomicBoolean();
+        Thread registering = new Thread(() -> registrar.register(blockingTerminator(entered, release, terminatorDone)));
+        try {
+            registering.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertCloseWaitsFor(registrar, release, terminatorDone);
+        } finally {
+            release.countDown();
+            registering.join(5_000);
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: a second close() also waits for the in-flight terminator")
+    void secondCloseAlsoWaits() throws Exception {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean terminatorDone = new AtomicBoolean();
+        registrar.register(blockingTerminator(entered, release, terminatorDone));
+        Thread firer = new Thread(() -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT));
+        Thread firstCloser = new Thread(registrar::close);
+        try {
+            firer.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            firstCloser.start();
+            awaitBlocked(firstCloser);
+
+            assertCloseWaitsFor(registrar, release, terminatorDone);
+        } finally {
+            release.countDown();
+            firer.join(5_000);
+            firstCloser.join(5_000);
+        }
+    }
+
+    private static void awaitBlocked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.BLOCKED && thread.isAlive() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(thread.getState()).as(thread.getName() + " blocked on the barrier").isEqualTo(Thread.State.BLOCKED);
+    }
+
+    /** A terminator that signals {@code entered}, blocks until {@code release}, then records that it finished. */
+    private static Terminator blockingTerminator(CountDownLatch entered, CountDownLatch release, AtomicBoolean done) {
+        return () -> {
+            entered.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            done.set(true);
+        };
+    }
+
+    /**
+     * Calls close() on another thread while a terminator is in flight, waits until that thread is blocked (it can only
+     * block on the barrier), releases the terminator and checks close() returned only after it finished.
+     */
+    private static void assertCloseWaitsFor(TerminatorRegistrar registrar, CountDownLatch release,
+            AtomicBoolean terminatorDone) throws InterruptedException {
+        AtomicBoolean doneWhenCloseReturned = new AtomicBoolean();
+        Thread closer = new Thread(() -> {
+            registrar.close();
+            doneWhenCloseReturned.set(terminatorDone.get());
+        });
+        closer.start();
+        awaitBlocked(closer);
+
+        release.countDown();
+        closer.join(5_000);
+        assertThat(closer.isAlive()).isFalse();
+        assertThat(doneWhenCloseReturned.get()).isTrue();
     }
 }

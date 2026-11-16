@@ -16,6 +16,15 @@ import org.slf4j.LoggerFactory;
  * the signal. Registration that races with a concurrent interrupt request is resolved inside {@link #register}: if
  * the signal flips between the pre-check and the list insertion, the terminator is invoked immediately on the
  * registering thread.
+ *
+ * <p>
+ * {@link #close()} is also a barrier: when it returns, no terminator of this registrar is running and none will run.
+ * {@link #fireAll()} invokes terminators outside {@code lock} (so a slow terminator never holds up registration), and
+ * without the barrier a terminator from a snapshot taken just before {@code close()} could still land afterwards —
+ * for {@code Thread::interrupt}, on a thread that has already moved on to PostTool hooks (PF-3). The barrier is a
+ * second monitor, {@code fireLock}, held for the whole of {@code fireAll} and of the immediate fire in
+ * {@link #register}; terminators return promptly by contract, so the wait is short. Lock order is always
+ * {@code fireLock} then {@code lock}; {@code close()} takes them one after the other, never nested.
  */
 final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
 
@@ -24,6 +33,7 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
     private final DefaultInterruptCoordinator coordinator;
     private final CancellationSignal signal;
     private final Object lock = new Object();
+    private final Object fireLock = new Object();
     private final List<Terminator> terminators = new ArrayList<>();
     private boolean fired;
     private boolean closed;
@@ -36,20 +46,23 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
     @Override
     public void register(Terminator terminator) {
         Objects.requireNonNull(terminator, "terminator must not be null");
-        final boolean fireImmediately;
-        synchronized (lock) {
-            if (closed) {
-                throw new IllegalStateException("Registrar already closed");
+        // Under fireLock, like fireAll: an immediate fire is still a fire, and close() must be able to wait it out.
+        synchronized (fireLock) {
+            final boolean fireImmediately;
+            synchronized (lock) {
+                if (closed) {
+                    throw new IllegalStateException("Registrar already closed");
+                }
+                if (fired || signal.isCancelled()) {
+                    fireImmediately = true;
+                } else {
+                    terminators.add(terminator);
+                    fireImmediately = false;
+                }
             }
-            if (fired || signal.isCancelled()) {
-                fireImmediately = true;
-            } else {
-                terminators.add(terminator);
-                fireImmediately = false;
+            if (fireImmediately) {
+                safeTerminate(terminator);
             }
-        }
-        if (fireImmediately) {
-            safeTerminate(terminator);
         }
     }
 
@@ -66,14 +79,21 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
 
     @Override
     public void close() {
+        final boolean first;
         synchronized (lock) {
-            if (closed) {
-                return;
-            }
+            first = !closed;
             closed = true;
             terminators.clear();
         }
-        coordinator.removeRegistrar(this);
+        // Wait out a fire already under way; one that has not yet taken lock sees closed. Every call passes the
+        // barrier, not just the first, so a second closer cannot return while a terminator is still running. A
+        // terminator that closes its own registrar holds fireLock already, and re-enters.
+        synchronized (fireLock) {
+            // barrier only
+        }
+        if (first) {
+            coordinator.removeRegistrar(this);
+        }
     }
 
     /**
@@ -82,17 +102,19 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
      * registering thread.
      */
     void fireAll() {
-        final List<Terminator> snapshot;
-        synchronized (lock) {
-            if (fired || closed) {
-                return;
+        synchronized (fireLock) {
+            final List<Terminator> snapshot;
+            synchronized (lock) {
+                if (fired || closed) {
+                    return;
+                }
+                fired = true;
+                snapshot = new ArrayList<>(terminators);
+                terminators.clear();
             }
-            fired = true;
-            snapshot = new ArrayList<>(terminators);
-            terminators.clear();
-        }
-        for (Terminator terminator : snapshot) {
-            safeTerminate(terminator);
+            for (Terminator terminator : snapshot) {
+                safeTerminate(terminator);
+            }
         }
     }
 

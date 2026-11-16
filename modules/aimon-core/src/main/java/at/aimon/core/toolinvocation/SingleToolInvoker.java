@@ -54,9 +54,12 @@ import at.aimon.core.tools.ToolContextKeys;
  * <li>Resolve the target tool's {@link InterruptBehavior} from the tool registry. Tools declaring
  * {@link InterruptBehavior#THREAD_INTERRUPT} or {@link InterruptBehavior#EXTERNALLY_TERMINATED} receive a fresh
  * {@link TerminatorRegistrar} from the coordinator injected into the enriched context; THREAD_INTERRUPT tools also get
- * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is always closed in a finally
- * block so terminators cannot leak into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the
- * registrar allocation is skipped and the downstream manager produces the canonical "tool not found" error.
+ * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is closed before the hooks
+ * that report on the call (PostTool, PermissionDenied), so no terminator lands in the middle of them; once the
+ * execution is cancelled, the interrupt flag a terminator left on the thread is consumed there, since the execution's
+ * signal already carries that cancellation. The registrar is also closed in a finally block so terminators cannot leak
+ * into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the registrar allocation is skipped
+ * and the downstream manager produces the canonical "tool not found" error.
  * <li>Fire PermissionRequest hooks; a deny short-circuits dispatch and notifies the PermissionDenied advisory chain.
  * <li>Consult the {@link SideEffectApprovalGate}, when one is configured, so a tool that declares a side effect is not
  * run until the user has approved it. Placed after the hook chain deliberately: a hook that would deny outright should
@@ -228,6 +231,7 @@ public final class SingleToolInvoker {
                         .executePermissionRequest(permissionRequestContext);
                 feedback.addAll(HookFeedback.collectAdvisory(permissionResults));
                 if (hookExecutionManager.hasBlockedResult(permissionResults)) {
+                    quiesce(registrar, spec);
                     return denyByPermission(spec, permissionResults);
                 }
 
@@ -241,6 +245,7 @@ public final class SingleToolInvoker {
                     final Optional<String> refusal = approvalGate.denialReason(descriptor, toolUse, spec.getOrigin(),
                             enrichedContext);
                     if (refusal.isPresent()) {
+                        quiesce(registrar, spec);
                         return denyByApproval(spec, refusal.get());
                     }
                 }
@@ -276,6 +281,9 @@ public final class SingleToolInvoker {
                     toolUseResult = toToolUseResult(toolExecutionResult);
                 }
 
+                // The tool is done: stop its terminators before PostTool, so a late interrupt cannot land in the middle
+                // of the hooks (PF-3).
+                quiesce(registrar, spec);
                 return applyPostToolHooks(spec, effectiveToolUse, toolUseResult, feedback);
             } catch (Exception e) {
                 log.error("Error executing tool use: {}", toolUse.getName(), e);
@@ -291,6 +299,33 @@ public final class SingleToolInvoker {
             if (registrar != null) {
                 registrar.close();
             }
+        }
+    }
+
+    /**
+     * Closes the call's registrar and, once the execution is cancelled, consumes the thread's interrupt flag, before
+     * the hooks that report on the call run. No-op when the call had no registrar.
+     *
+     * <p>
+     * {@link TerminatorRegistrar#close()} waits out a terminator already being fired, so afterwards this registrar
+     * cannot set the flag again. The flag is then consumed <em>only when the execution's signal has tripped</em>. A
+     * terminator fires only on a trip, and whatever set the flag — a terminator, or the caller too — the signal then
+     * already carries the cancellation, so the flag is a leftover that would make {@code DefaultHookExecutor} answer
+     * the hooks' waits with BLOCKED (interrupt design §8.7), and an output-masking PostTool hook would then not run on
+     * a result the tool already produced. A flag on an untripped signal did not come from a terminator: it is the
+     * caller's own interrupt, and is left for the checkpoint or sweep that owns it (§8.2, §8.3). Promoting it here
+     * would move it into a coordinator nobody may read — the slash-command path's is private and closed when the
+     * command ends — and lose it.
+     */
+    private static void quiesce(TerminatorRegistrar registrar, ToolInvocationSpec spec) {
+        if (registrar == null) {
+            return;
+        }
+        registrar.close();
+        final CancellationSignal signal = spec.getCoordinator().getSignal();
+        if (signal != null && signal.isCancelled() && Thread.interrupted()) {
+            log.debug("Consumed an interrupt left by a terminator after the execution was cancelled. toolUseId={}",
+                    spec.getToolUse().getId());
         }
     }
 

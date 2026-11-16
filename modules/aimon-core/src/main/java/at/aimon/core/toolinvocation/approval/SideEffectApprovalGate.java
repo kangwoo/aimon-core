@@ -13,8 +13,10 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.InterruptAccess;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -110,9 +112,11 @@ import at.aimon.core.tools.ToolContextKeys;
  * caller asks, the others wait for that answer and share it, and nothing is remembered twice. Different questions —
  * another scope, or another tool in the same scope — never wait for each other here; putting several distinct prompts
  * on one console one at a time is the {@link AskPromptHandler}'s job. A caller interrupted while waiting for someone
- * else's prompt returns a refusal rather than an approval and remembers nothing. An asker whose run was cancelled
- * while it asked — interrupted, so its handler's answer is not the user's — remembers nothing either, and neither a
- * cancelled nor a failed prompt is handed to the waiters as the user's answer: they go back and ask for themselves.
+ * else's prompt, or whose execution's cancellation signal trips while it waits, returns a refusal rather than an
+ * approval and remembers nothing; a caller whose execution is already cancelled neither waits nor asks. An asker whose
+ * run was cancelled while it asked — interrupted, so its handler's answer is not the user's — remembers nothing
+ * either, and neither a cancelled nor a failed prompt is handed to the waiters as the user's answer: they go back and
+ * ask for themselves.
  *
  * <p>
  * When the run is a fork labelled with its task id ({@link ForkAccess#TASK_ID_ATTRIBUTE}, present only when parallel
@@ -269,6 +273,12 @@ public final class SideEffectApprovalGate {
             return Optional.of(notApprovedForCodeMessage(toolName, approvalKey));
         }
 
+        final CancellationSignal cancellation = InterruptAccess.signalOf(context);
+        if (cancellation.isCancelled()) {
+            // A cancelled run puts nothing in front of the person: the call would be refused anyway, and a prompt here
+            // would make the cancellation wait for an answer.
+            return Optional.of(cancelledMessage(approvalKey));
+        }
         final String prompt = promptFor(labelOf(context), toolName, approvalKey, descriptor.getApprovalVia(), toolUse,
                 declared, destructive);
         if (scopeKey.isEmpty()) {
@@ -279,11 +289,16 @@ public final class SideEffectApprovalGate {
         final String key = scopeKey.get();
         final String question = key + '\0' + approvalKey;
         while (true) {
+            if (cancellation.isCancelled()) {
+                // Checked on every pass: a waiter sent round again by an asker that got no answer may have been
+                // cancelled meanwhile, and must not become the one who asks.
+                return Optional.of(cancelledMessage(approvalKey));
+            }
             final CompletableFuture<Outcome> mine = new CompletableFuture<>();
             final CompletableFuture<Outcome> prior = inFlight.putIfAbsent(question, mine);
             if (prior != null) {
                 // The same question is already in front of the user: wait for that answer instead of asking again.
-                final Optional<Outcome> shared = awaitShared(prior);
+                final Optional<Outcome> shared = awaitShared(prior, cancellation);
                 if (shared.isEmpty()) {
                     // This run was cancelled while it waited: a refusal, never an approval, and nothing remembered.
                     return Optional.of(cancelledMessage(approvalKey));
@@ -348,11 +363,25 @@ public final class SideEffectApprovalGate {
     }
 
     /**
-     * Waits for the outcome of a question another caller is asking right now. Empty when this caller is interrupted
-     * while waiting — its run was cancelled; the flag is restored for the caller.
+     * Waits for the outcome of a question another caller is asking right now. Empty when this caller's run is cancelled
+     * while it waits — either its thread is interrupted (the flag is restored for the caller) or its execution's
+     * cancellation signal trips.
+     *
+     * <p>
+     * The signal matters because a waiter's thread may have no terminator on it yet: the gate runs before the tool
+     * does, and a tool such as {@code Task} registers its terminator only once it runs. Without the signal, a cancelled
+     * parent's waiters would sleep until a person answered the asker's prompt (PF-5). A cancelled run is refused even
+     * when the answer arrived at the same moment — a refusal is never an approval, and nothing is remembered for it.
      */
-    private static Optional<Outcome> awaitShared(CompletableFuture<Outcome> prior) {
+    private static Optional<Outcome> awaitShared(CompletableFuture<Outcome> prior, CancellationSignal cancellation) {
+        final CompletableFuture<Void> cancelled = new CompletableFuture<>();
+        // Fires synchronously when the signal has already tripped, so a cancelled run never starts waiting.
+        final CancellationSignal.Registration registration = cancellation.onCancel(() -> cancelled.complete(null));
         try {
+            CompletableFuture.anyOf(prior, cancelled).get();
+            if (cancellation.isCancelled()) {
+                return Optional.empty();
+            }
             return Optional.of(prior.get());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -360,6 +389,8 @@ public final class SideEffectApprovalGate {
         } catch (ExecutionException e) {
             // Never completed exceptionally; treated as no answer so the caller asks for itself.
             return Optional.of(Outcome.NO_ANSWER);
+        } finally {
+            registration.remove();
         }
     }
 
@@ -472,7 +503,7 @@ public final class SideEffectApprovalGate {
 
     /** The refusal the model sees when its run was cancelled before the user answered. */
     private static String cancelledMessage(String toolName) {
-        return "Tool '" + toolName + "' was not approved: this run was cancelled while waiting for the user's answer.";
+        return "Tool '" + toolName + "' was not approved: this run was cancelled before the user answered.";
     }
 
     /**
