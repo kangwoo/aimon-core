@@ -7,6 +7,13 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Build: `aimon-knowledge-opensearch` ships `reactive-streams` for opensearch-java 3.11.0
+
+- **opensearch-java 3.10.0 → 3.11.0, plus `org.reactivestreams:reactive-streams:1.0.4` at runtime scope.** 3.11.0's
+  `OpenSearchClient` and its Apache HttpClient 5 transport link `org.reactivestreams.Publisher` (the new streaming bulk
+  API), but its POM does not declare the jar, so `OpenSearchClientFactory` failed with `NoClassDefFoundError` while
+  building the transport. The module now declares it itself; drop the entry once an opensearch-java release does (#356).
+
 ## [0.3.4] - 2026-11-10
 
 ### Added: drain mode and node turn admission on `SessionRouter`
