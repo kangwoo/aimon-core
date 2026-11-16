@@ -876,8 +876,8 @@ class SideEffectApprovalGateTest {
         }
 
         @Test
-        @DisplayName("PF-5: a waiter whose execution is already cancelled does not wait at all")
-        void alreadyCancelledWaiterDoesNotWait() throws Exception {
+        @DisplayName("PF-5: a caller whose execution is already cancelled does not wait for another caller's prompt")
+        void alreadyCancelledCallerDoesNotWaitForAnotherAsker() throws Exception {
             final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
             final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler,
                     new InMemoryToolApprovalStore());

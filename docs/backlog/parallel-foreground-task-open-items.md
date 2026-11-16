@@ -99,7 +99,9 @@ registrar 의 terminator 가 돌고 있지도 않고 이후로 돌지도 않는�
   도구의 PostTool 에 떨어지는 것 — 는 여전히 PostTool 을 BLOCKED 로 만들 수 있다. 어느 쪽이든 이미 취소되는 실행이다.
   도구가 예외로 끝나는 경로(`catch (Exception)`)는 뒤에 훅이 없어 손대지 않았다.
 - **대가.** 취소된 실행에서도 PostTool · PermissionDenied 훅이 이제 끝까지 돈다 — 예전에는 대기가 곧바로 BLOCKED 로 끝났다.
-  그래서 취소가 호출마다 최대 훅 타임아웃만큼 늦어질 수 있고, 병렬 `Task` 라면 전용 스레드마다 그렇다. 훅은 trip 뒤 신호를 받지
+  취소가 PostTool **전에** 온 경우만이 아니다. registrar 가 PostTool 전에 닫히므로 PostTool **도중에** 온 취소도
+  `THREAD_INTERRUPT` 도구(오늘은 `BashTool`)의 훅 대기를 더는 끊지 않는다 — 최종 리뷰가 짚었다. 그래서 취소가 호출마다 최대 훅
+  타임아웃만큼 늦어질 수 있고, 병렬 `Task` 라면 전용 스레드마다 그렇다. 훅은 trip 뒤 신호를 받지
   않으므로(`CancellationSignals.liveOrEmpty`) 스스로 끊지도 못한다. 이 창을 닫은 것의 정의상 대가다.
 - **심각도 (규칙 셋).** 낮음 — 그리고 그대로였다. 이 창은 실행이 이미 취소된 경우에만 닿고(terminator 는 trip 에서만 발화한다),
   잃는 것은 출력 가림 같은 PostTool 의 효과다. 전용 스레드가 넓힌 창도 아니다 — 순차 경로에도 같았다. 확인은 읽기와 위 테스트로
@@ -142,9 +144,9 @@ PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptH
 **닫음 (2026-11-16).** `SideEffectApprovalGate.awaitShared` 가 이제 묻던 쪽의 답 **또는** 대기자 자신의 실행 취소 신호
 (`InterruptAccess.signalOf(context)`) 중 먼저 오는 것에 깬다. 그리고 실행이 이미 취소된 호출은 묻지도 않는다 — 프롬프트를
 만들기 전과 대기 루프의 매 회차에 신호를 본다. 신호에 건 리스너는 대기가 끝나면 지운다. 신호가 이미 떠 있으면
-리스너가 등록 즉시 불리므로 대기에 들어가지 않는다. 취소된 실행은 답이 같은 순간에 왔더라도 거부되고 아무것도 기억하지 않는다
+리스너가 등록 즉시 불리므로 대기에 들어가지 않는다(읽기로 확인 — 루프 앞의 검사가 대부분을 먼저 거른다). 취소된 실행은 답이 같은 순간에 왔더라도 거부되고 아무것도 기억하지 않는다
 — 스레드 인터럽트로 깬 대기자와 같은 규칙이다. 테스트: `SideEffectApprovalGateTest.waiterWakesOnCancellationSignal` ·
-`alreadyCancelledWaiterDoesNotWait` · `alreadyCancelledCallerDoesNotAsk` (모두 수정 전 코드에서 실패), `waiterWithLiveSignalSharesAnswer` (취소되지 않은 대기자는
+`alreadyCancelledCallerDoesNotWaitForAnotherAsker` · `alreadyCancelledCallerDoesNotAsk` (모두 수정 전 코드에서 실패), `waiterWithLiveSignalSharesAnswer` (취소되지 않은 대기자는
 여전히 답을 나눠 받는다 — 수정 전에도 성립하던 성질).
 
 - **재검토 트리거를 기다리지 않았다.** 항목의 트리거(사람 대신 원격 승인 채널)는 아직 오지 않았다. 고칠 자리가 한 메서드이고
@@ -157,7 +159,9 @@ PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptH
   부모의 신호다.
 - **심각도 (규칙 셋).** 낮음 — 그리고 그대로였다. 오늘의 CLI 에서는 묻던 쪽이 `readLine()` 에 막혀 있으므로 대기자가 늦게
   깨어도 턴이 더 늦게 끝나지는 않는다(묻던 쪽의 답이 어차피 턴의 끝을 정한다). 달라진 것은 취소가 더는 사람의 답을 기다리지
-  않는다는 것이고, 이 차이가 실제 지연이 되는 것은 위의 트리거가 올 때다. 확인은 읽기와 위 테스트로 했다.
+  않는다는 것이고, 이 차이가 실제 지연이 되는 것은 위의 트리거가 올 때다. 단, **이미 묻고 있는** 쪽은 여전히 사람의 답을
+  기다린다 — `channel.resolve` 는 신호에 반응하지 않고, `Task` 처럼 아직 terminator 가 없는 도구라면 interrupt 도 오지 않는다.
+  그 답은 진짜 사용자의 답이므로 기억된다. 이것은 대화형이 아닌 `AskPromptHandler` 가 생길 때 함께 볼 일이다. 확인은 읽기와 위 테스트로 했다.
 
 ---
 

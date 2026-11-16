@@ -404,11 +404,9 @@ BLOCKED 를 강제하지 않는 자문 체인(PostTool·OnStop·세션/서브에
 "답을 못 받았다" 는 그 명령에 해당하지 않는다. 규칙은 [`hook-cancellation.md`](../hook/hook-cancellation.md) 가 소유한다. 신호로 온
 인터럽트와 스레드로만 온 인터럽트에서 턴의 결과가 갈리는 것도 그 문서 §4.1 에 있다.
 
----
+### 8.8 PostTool 앞의 소비
 
-### 8.8 PostTool 앞의 소비 (2026-11-16)
-
-도구가 돌아온 뒤 PostTool 전에 플래그를 쓸어내는 지점이 하나 더 있다. `SingleToolInvoker` 는 registrar 가 있었던 도구
+*(2026-11-16, PF-3)* 도구가 돌아온 뒤 PostTool 전에 플래그를 쓸어내는 지점이 하나 더 있다. `SingleToolInvoker` 는 registrar 가 있었던 도구
 (`THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED`)에 한해, 호출을 보고하는 훅(PostTool, 거부 경로의 PermissionDenied) **전에**
 registrar 를 닫고, **실행의 신호가 이미 떠 있을 때만** 플래그를 소비한다. 그렇지 않으면 늦게 떨어진 terminator 의 interrupt 가
 §8.7 의 BLOCKED 를 불러 출력 가림 같은 PostTool 의 효과가 이미 만들어진 결과에 적용되지 않는다.
@@ -423,8 +421,13 @@ registrar 를 닫고, **실행의 신호가 이미 떠 있을 때만** 플래그
 - **registrar 가 없는 도구는 손대지 않는다.** 워커 풀에서 도는 도구의 플래그는 그 워커에 대한 실제 인터럽트다(§8.5 의 전제).
 - **남은 창.** 장벽은 자기 registrar 만 막는다. 다른 registrar 나 `DedicatedThreadDispatcher` 가 같은 스레드에 넘기는 interrupt 는
   여전히 PostTool 을 BLOCKED 로 만들 수 있다. 어느 쪽이든 이미 취소되는 실행이다.
+- **대가.** registrar 가 PostTool 전에 닫히므로, 취소가 PostTool **전에** 왔든 **도중에** 왔든 그 훅들은 끝까지 돈다 — 예전에는
+  `toolThread::interrupt` 가 대기를 곧바로 BLOCKED 로 끝냈다. 보고 훅은 trip 뒤 신호를 받지 않으므로 스스로 끊지도 못하고, 취소는
+  호출마다 최대 훅 타임아웃만큼 늦어질 수 있다. 훅을 끊지 않는 것이 이 절의 목적이므로 정의상의 대가다.
 
 근거와 테스트는 [`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-3 이다.
+
+---
 
 ## 9. LLM 호출 자체의 중단
 

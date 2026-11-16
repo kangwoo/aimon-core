@@ -548,6 +548,7 @@ class SingleToolInvokerTest {
             try {
                 ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
 
+                verify(hookExecutionManager).executePostTool(any());
                 assertThat(flagAtPostTool.get()).isTrue();
             } finally {
                 Thread.interrupted();

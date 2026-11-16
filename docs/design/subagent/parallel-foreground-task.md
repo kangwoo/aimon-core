@@ -537,6 +537,9 @@ agent-scoped base 컨텍스트(`agent/impl/orca/OrcaAgentRuntimeFactory.java:116
 | 트레이싱 on | 부모 span 은 값으로 전달되므로 스레드와 무관 (§6.3) |
 | factory 를 거치지 않는 조립 (`OrcaAgentExecutor.builder().parallelToolDispatcher(...)`) | 조립자가 직접 `DedicatedThreadDispatcher` 를 감싸 주입하고 manager 플래그도 직접 켠다. 포크 쪽은 `withParallelToolDispatcher` — 기존 feature 가이드 §2.2 와 같은 책임 분담 |
 
+*(2026-11-16)* "승인 프롬프트 중 취소" 의 부모 수준 대기자는 이제 깨어난다 — 대기가 대기자 자신의 실행 취소 신호에도 묶였고,
+실행이 이미 취소된 호출은 묻지도 않는다(PF-5). 이미 묻고 있는 쪽은 여전히 `readLine()` 에 막힌다. 표는 설계 시점의 기록으로 둔다.
+
 ---
 
 ## 6. 설계 단계 검증 항목 아홉 가지 — 코드로 확인한 결론
@@ -729,6 +732,9 @@ feedback 은 그 호출의 결과에만 붙는다(`:74-83`).
 | 10 | §3.12 의사코드 — 묻던 쪽이 던지면 대기자는 `ExecutionException` → `allowed = false` (fail-safe DENY) | 대기자는 거절되지 않고 다시 조회한 뒤 스스로 묻는다. 묻던 쪽의 예외는 오늘처럼 invoker 의 catch-all 로 간다 | 실패한 프롬프트는 답이 없는 것이지 거절이 아니다. 대기자에게 "not approved by the user" 를 주면 모델이 사용자가 거절한 것으로 읽고 재시도하지 않는다. 다시 묻는 쪽도 fail-safe 다 — 승인은 여전히 사람의 답으로만 생긴다 |
 | 11 | §3.10 — `createDefaultSubagentExecutionManager` 를 오버라이드한 서브클래스는 다루지 않음 | `OrcaAgentExecutorFactory.withDedicatedThreadConfig` javadoc 에 한 문장 — 그런 서브클래스의 포크는 fan-out 도 task id 라벨도 받지 않는다 | 트레이싱 선례와 같은 책임 분담이다 |
 | 12 | §3.5 — 포크 쪽 `onCompleted` 는 다루지 않음 | `DedicatedThreadDispatcher` 클래스 javadoc 에 한 문장 — `maxForkDepth >= 2` 에서 포크 실행기의 `stream(lc, …)` 콜백도 전용 스레드에서 돈다 | 풀 경로와 같은 이유(no-op 싱크 또는 thread-safe 저장소 append)로 안전하다는 것을 적어 둔다 |
+
+*(2026-11-16)* 4 의 "동작은 바꾸지 않았다" 는 PF-5 로 바뀌었다 — 부모 수준 대기자도 실행 취소 신호에 깨어난다. 근거는
+[`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-5 이다.
 
 ### 9.2 문서
 
