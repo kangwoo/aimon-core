@@ -22,8 +22,9 @@ import org.slf4j.LoggerFactory;
  * {@link #fireAll()} invokes terminators outside {@code lock} (so a slow terminator never holds up registration), and
  * without the barrier a terminator from a snapshot taken just before {@code close()} could still land afterwards —
  * for {@code Thread::interrupt}, on a thread that has already moved on to PostTool hooks (PF-3). The barrier is a
- * second monitor, {@code fireLock}, held for the whole of {@code fireAll}; terminators return promptly by contract,
- * so the wait is short.
+ * second monitor, {@code fireLock}, held for the whole of {@code fireAll} and of the immediate fire in
+ * {@link #register}; terminators return promptly by contract, so the wait is short. Lock order is always
+ * {@code fireLock} then {@code lock}; {@code close()} takes them one after the other, never nested.
  */
 final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
 
@@ -45,20 +46,23 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
     @Override
     public void register(Terminator terminator) {
         Objects.requireNonNull(terminator, "terminator must not be null");
-        final boolean fireImmediately;
-        synchronized (lock) {
-            if (closed) {
-                throw new IllegalStateException("Registrar already closed");
+        // Under fireLock, like fireAll: an immediate fire is still a fire, and close() must be able to wait it out.
+        synchronized (fireLock) {
+            final boolean fireImmediately;
+            synchronized (lock) {
+                if (closed) {
+                    throw new IllegalStateException("Registrar already closed");
+                }
+                if (fired || signal.isCancelled()) {
+                    fireImmediately = true;
+                } else {
+                    terminators.add(terminator);
+                    fireImmediately = false;
+                }
             }
-            if (fired || signal.isCancelled()) {
-                fireImmediately = true;
-            } else {
-                terminators.add(terminator);
-                fireImmediately = false;
+            if (fireImmediately) {
+                safeTerminate(terminator);
             }
-        }
-        if (fireImmediately) {
-            safeTerminate(terminator);
         }
     }
 

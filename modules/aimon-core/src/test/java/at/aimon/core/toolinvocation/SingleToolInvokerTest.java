@@ -4,8 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,11 +22,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DataReach;
@@ -275,7 +276,7 @@ class SingleToolInvokerTest {
         when(toolExecutionManager.execute(any(), any(), any(), any()))
                 .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
         try (DefaultInterruptCoordinator execution = new DefaultInterruptCoordinator()) {
-            execution.requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason.USER_SIGINT);
+            execution.requestInterrupt(InterruptReason.USER_SIGINT);
 
             ToolDispatchResults.toToolUseResult(invoker.invoke(specIn(
                     ToolContext.builder().put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build())));
@@ -451,44 +452,128 @@ class SingleToolInvokerTest {
         assertThat(result.isSuccess()).isTrue();
         verify(coordinator).newTerminatorRegistrar();
         verify(registrar).register(any());
-        // Closed once the tool returns (before PostTool) and again, as a no-op, on the way out.
-        verify(registrar, atLeastOnce()).close();
+        // Closed once the tool returns, before PostTool, and again — a no-op — on the way out.
+        final InOrder order = inOrder(registrar, hookExecutionManager);
+        order.verify(registrar).close();
+        order.verify(hookExecutionManager).executePostTool(any());
         final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), any(), any());
         assertThat(ctxCaptor.getValue().get(InterruptToolKeys.TERMINATOR_REGISTRAR)).contains(registrar);
     }
 
-    @Test
-    @DisplayName("PF-3: an interrupt left on the thread after the tool returns is promoted to the signal before PostTool")
-    void invoke_lateInterruptAfterToolReturns_isPromotedBeforePostTool() {
-        givenToolBehavior(InterruptBehavior.EXTERNALLY_TERMINATED);
-        final DefaultInterruptCoordinator real = new DefaultInterruptCoordinator();
-        when(coordinator.newTerminatorRegistrar()).thenAnswer(inv -> real.newTerminatorRegistrar());
-        when(coordinator.getSignal()).thenAnswer(inv -> real.getSignal());
-        doAnswer(inv -> {
-            real.requestInterrupt(inv.getArgument(0));
-            return null;
-        }).when(coordinator).requestInterrupt(any());
-        // The tool returns with the flag set, as a terminator fired just before it unregistered would leave it.
-        when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
-            Thread.currentThread().interrupt();
-            return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
-        });
-        final AtomicBoolean flagAtPostTool = new AtomicBoolean(true);
+    private ToolInvocationSpec specOn(InterruptCoordinator onCoordinator) {
+        return ToolInvocationSpec.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(hookRegistry).executionAttributes(Map.of())
+                .toolRegistry(toolRegistry).sessionRegistry(sessionRegistry).allowedTools(List.of())
+                .coordinator(onCoordinator).toolContext(ToolContext.empty()).toolUse(toolUse(Map.of()))
+                .iterationCount(1).build();
+    }
+
+    /** Records whether the thread carried an interrupt flag when PostTool hooks were fired. */
+    private AtomicBoolean recordFlagAtPostTool() {
+        final AtomicBoolean flag = new AtomicBoolean();
         when(hookExecutionManager.executePostTool(any())).thenAnswer(inv -> {
-            flagAtPostTool.set(Thread.currentThread().isInterrupted());
+            flag.set(Thread.currentThread().isInterrupted());
             return List.of();
         });
+        return flag;
+    }
 
-        try {
-            final ToolUseResult result = ToolDispatchResults
-                    .toToolUseResult(invoker.invoke(spec(toolUse(Map.of()), List.of())));
+    @Test
+    @DisplayName("PF-3: a terminator's interrupt that lands as the tool returns is consumed before PostTool")
+    void invoke_terminatorInterruptAfterCancellation_isConsumedBeforePostTool() {
+        givenToolBehavior(InterruptBehavior.THREAD_INTERRUPT);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            // The execution is cancelled as the tool returns: the pre-registered Thread::interrupt terminator fires on
+            // this thread and the tool returns normally, leaving the flag behind.
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            final AtomicBoolean flagAtPostTool = recordFlagAtPostTool();
 
-            assertThat(result.isSuccess()).isTrue();
-            assertThat(flagAtPostTool.get()).as("flag seen by PostTool").isFalse();
-            assertThat(real.getSignal().isCancelled()).as("interrupt kept in the signal").isTrue();
-        } finally {
-            Thread.interrupted();
+            try {
+                final ToolUseResult result = ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(result.isSuccess()).isTrue();
+                assertThat(flagAtPostTool.get()).as("flag seen by PostTool").isFalse();
+                assertThat(real.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: an interrupt on an untripped signal is the caller's, and is left on the thread")
+    void invoke_interruptWithoutCancellation_isLeftForTheCaller() {
+        givenToolBehavior(InterruptBehavior.EXTERNALLY_TERMINATED);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            // No terminator set this: the embedder interrupted its own thread. Consuming it here would lose it.
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                Thread.currentThread().interrupt();
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            recordFlagAtPostTool();
+
+            try {
+                ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(Thread.currentThread().isInterrupted()).as("caller's flag kept").isTrue();
+                assertThat(real.getSignal().isCancelled()).as("not promoted").isFalse();
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: a tool without a registrar keeps its flag even when the execution is cancelled (§8.5)")
+    void invoke_toolWithoutRegistrar_flagUntouched() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            when(toolExecutionManager.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                Thread.currentThread().interrupt();
+                return ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok"));
+            });
+            final AtomicBoolean flagAtPostTool = recordFlagAtPostTool();
+
+            try {
+                ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(flagAtPostTool.get()).isTrue();
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PF-3: a terminator's interrupt during the permission chain is consumed before PermissionDenied")
+    void invoke_terminatorInterruptBeforeDeny_isConsumedBeforePermissionDenied() {
+        givenToolBehavior(InterruptBehavior.THREAD_INTERRUPT);
+        try (DefaultInterruptCoordinator real = new DefaultInterruptCoordinator()) {
+            when(hookExecutionManager.executePermissionRequest(any())).thenAnswer(inv -> {
+                real.requestInterrupt(InterruptReason.USER_SIGINT);
+                return List.of();
+            });
+            when(hookExecutionManager.hasBlockedResult(any())).thenReturn(true);
+            final AtomicBoolean flagAtDenied = new AtomicBoolean(true);
+            when(hookExecutionManager.executePermissionDenied(any())).thenAnswer(inv -> {
+                flagAtDenied.set(Thread.currentThread().isInterrupted());
+                return List.of();
+            });
+
+            try {
+                final ToolUseResult result = ToolDispatchResults.toToolUseResult(invoker.invoke(specOn(real)));
+
+                assertThat(result.isError()).isTrue();
+                assertThat(flagAtDenied.get()).as("flag seen by PermissionDenied").isFalse();
+                verify(toolExecutionManager, never()).execute(any(), any(), any(), any());
+            } finally {
+                Thread.interrupted();
+            }
         }
     }
 

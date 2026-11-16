@@ -125,6 +125,11 @@ class SideEffectApprovalGateTest {
         return ToolContext.builder().put(ToolContextKeys.SESSION_ID, SessionId.of(sessionId)).build();
     }
 
+    private static ToolContext signalledForkContext(String invokingSessionId, DefaultInterruptCoordinator execution) {
+        return ToolContext.builder().put(ToolContextKeys.INVOKING_SESSION_ID, SessionId.of(invokingSessionId))
+                .put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build();
+    }
+
     private static ToolContext forkContext(String invokingSessionId) {
         return ToolContext.builder().put(ToolContextKeys.INVOKING_SESSION_ID, SessionId.of(invokingSessionId)).build();
     }
@@ -851,20 +856,19 @@ class SideEffectApprovalGateTest {
             assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
 
             // The waiter's thread has no terminator on it — only its execution's signal can reach it.
-            final DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator();
-            final ToolContext waiterContext = ToolContext.builder()
-                    .put(ToolContextKeys.INVOKING_SESSION_ID, SessionId.of("s1"))
-                    .put(InterruptToolKeys.CANCELLATION_SIGNAL, parent.getSignal()).build();
-            final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
-            final Thread waiter = new Thread(() -> waiterResult.set(ask(gate, write, waiterContext)));
-            waiter.start();
-            awaitParked(waiter);
-            parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
-            waiter.join(5_000);
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+                final Thread waiter = new Thread(
+                        () -> waiterResult.set(ask(gate, write, signalledForkContext("s1", parent))));
+                waiter.start();
+                awaitParked(waiter);
+                parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+                waiter.join(5_000);
 
-            assertThat(waiter.isAlive()).as("waiter woke before anyone answered").isFalse();
-            assertThat(waiterResult.get()).hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
-            assertThat(store.lookup("session:s1", TOOL_NAME)).isEmpty();
+                assertThat(waiter.isAlive()).as("waiter woke before anyone answered").isFalse();
+                assertThat(waiterResult.get()).hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+                assertThat(store.lookup("session:s1", TOOL_NAME)).isEmpty();
+            }
 
             handler.release.countDown();
             assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
@@ -881,16 +885,44 @@ class SideEffectApprovalGateTest {
             final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
             assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
 
-            final DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator();
-            parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
-            final ToolContext waiterContext = ToolContext.builder()
-                    .put(ToolContextKeys.INVOKING_SESSION_ID, SessionId.of("s1"))
-                    .put(InterruptToolKeys.CANCELLATION_SIGNAL, parent.getSignal()).build();
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                parent.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+                // On a worker with a short bound: on code that waits, this must fail fast rather than hang the build.
+                final Future<Optional<String>> waiter = callers
+                        .submit(() -> ask(gate, write, signalledForkContext("s1", parent)));
 
-            assertThat(ask(gate, write, waiterContext))
-                    .hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+                assertThat(waiter.get(2, TimeUnit.SECONDS))
+                        .hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+            } finally {
+                handler.release.countDown();
+            }
+            assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
+        }
 
-            handler.release.countDown();
+        @Test
+        @DisplayName("PF-5: a waiter with a live, untripped signal still shares the asker's answer")
+        void waiterWithLiveSignalSharesAnswer() throws Exception {
+            final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler,
+                    new InMemoryToolApprovalStore());
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
+            assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            try (DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+                final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+                final Thread waiter = new Thread(
+                        () -> waiterResult.set(ask(gate, write, signalledForkContext("s1", parent))));
+                waiter.start();
+                awaitParked(waiter);
+                handler.release.countDown();
+                waiter.join(5_000);
+
+                assertThat(waiterResult.get()).isEmpty();
+                assertThat(handler.calls.get()).isEqualTo(1);
+            } finally {
+                handler.release.countDown();
+            }
             assertThat(asker.get(5, TimeUnit.SECONDS)).isEmpty();
         }
 

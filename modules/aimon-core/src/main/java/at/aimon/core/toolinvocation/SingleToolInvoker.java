@@ -11,10 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.interrupt.CancellationSignal;
-import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
-import at.aimon.core.agent.interrupt.InterruptCoordinator;
-import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
@@ -57,9 +54,12 @@ import at.aimon.core.tools.ToolContextKeys;
  * <li>Resolve the target tool's {@link InterruptBehavior} from the tool registry. Tools declaring
  * {@link InterruptBehavior#THREAD_INTERRUPT} or {@link InterruptBehavior#EXTERNALLY_TERMINATED} receive a fresh
  * {@link TerminatorRegistrar} from the coordinator injected into the enriched context; THREAD_INTERRUPT tools also get
- * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is always closed in a finally
- * block so terminators cannot leak into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the
- * registrar allocation is skipped and the downstream manager produces the canonical "tool not found" error.
+ * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is closed before the hooks
+ * that report on the call (PostTool, PermissionDenied), so no terminator lands in the middle of them; once the
+ * execution is cancelled, the interrupt flag a terminator left on the thread is consumed there, since the execution's
+ * signal already carries that cancellation. The registrar is also closed in a finally block so terminators cannot leak
+ * into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the registrar allocation is skipped
+ * and the downstream manager produces the canonical "tool not found" error.
  * <li>Fire PermissionRequest hooks; a deny short-circuits dispatch and notifies the PermissionDenied advisory chain.
  * <li>Consult the {@link SideEffectApprovalGate}, when one is configured, so a tool that declares a side effect is not
  * run until the user has approved it. Placed after the hook chain deliberately: a hook that would deny outright should
@@ -231,6 +231,7 @@ public final class SingleToolInvoker {
                         .executePermissionRequest(permissionRequestContext);
                 feedback.addAll(HookFeedback.collectAdvisory(permissionResults));
                 if (hookExecutionManager.hasBlockedResult(permissionResults)) {
+                    quiesce(registrar, spec);
                     return denyByPermission(spec, permissionResults);
                 }
 
@@ -244,6 +245,7 @@ public final class SingleToolInvoker {
                     final Optional<String> refusal = approvalGate.denialReason(descriptor, toolUse, spec.getOrigin(),
                             enrichedContext);
                     if (refusal.isPresent()) {
+                        quiesce(registrar, spec);
                         return denyByApproval(spec, refusal.get());
                     }
                 }
@@ -279,13 +281,9 @@ public final class SingleToolInvoker {
                     toolUseResult = toToolUseResult(toolExecutionResult);
                 }
 
-                if (registrar != null) {
-                    // The tool is done: stop its terminators before PostTool, so a late interrupt cannot land in the
-                    // middle of the hooks (PF-3). close() waits out a terminator already being fired; the flag it
-                    // may have left is then final, and is absorbed into the signal rather than left to cut a hook.
-                    registrar.close();
-                    absorbLateInterrupt(spec.getCoordinator(), toolUse);
-                }
+                // The tool is done: stop its terminators before PostTool, so a late interrupt cannot land in the middle
+                // of the hooks (PF-3).
+                quiesce(registrar, spec);
                 return applyPostToolHooks(spec, effectiveToolUse, toolUseResult, feedback);
             } catch (Exception e) {
                 log.error("Error executing tool use: {}", toolUse.getName(), e);
@@ -305,30 +303,29 @@ public final class SingleToolInvoker {
     }
 
     /**
-     * Consumes an interrupt that reached this thread after the tool returned and moves it into the execution's
-     * cancellation signal (interrupt design §8.1–§8.2: consume unconditionally, promote when the signal has not yet
-     * tripped).
+     * Closes the call's registrar and consumes the interrupt flag one of its terminators left, before the hooks that
+     * report on the call run. No-op when the call had no registrar.
      *
      * <p>
-     * Without this, the flag would still be set when PostTool hooks run; {@code DefaultHookExecutor} answers an
-     * interrupted wait with BLOCKED (§8.7), so a hook that masks output would not run on a result the tool has already
-     * produced. Moving the fact into the signal loses nothing: the loop's tail check reads the signal, and PostTool
-     * already stops handing that signal to hooks once it has tripped. Called only for tools that had a registrar —
-     * the only ones a terminator can interrupt — so a worker-pool thread's own interrupt is left alone (§8.5).
+     * {@link TerminatorRegistrar#close()} waits out a terminator already being fired, so afterwards this registrar
+     * cannot set the flag again. The flag is then consumed <em>only when the execution's signal has tripped</em>: a
+     * terminator fires only on a trip, so in that case the signal already carries the cancellation and the flag is a
+     * leftover that would make {@code DefaultHookExecutor} answer the hooks' waits with BLOCKED (interrupt design §8.7)
+     * — an output-masking PostTool hook would then not run on a result the tool already produced. A flag on an
+     * untripped signal did not come from a terminator: it is the caller's own interrupt, and is left for the
+     * checkpoint or sweep that owns it (§8.2, §8.3). Promoting it here would move it into a coordinator nobody may
+     * read — the slash-command path's is private and closed when the command ends — and lose it.
      */
-    private static void absorbLateInterrupt(InterruptCoordinator coordinator, ToolUse toolUse) {
-        final CancellationSignal signal = coordinator.getSignal();
-        if (signal == null) {
-            // No signal to carry the fact: leave the flag as it is rather than turn a finished result into an error.
+    private static void quiesce(TerminatorRegistrar registrar, ToolInvocationSpec spec) {
+        if (registrar == null) {
             return;
         }
-        if (!CancellationSignals.isCancelledOrInterrupted(signal) || signal.isCancelled()) {
-            return;
+        registrar.close();
+        final CancellationSignal signal = spec.getCoordinator().getSignal();
+        if (signal != null && signal.isCancelled() && Thread.interrupted()) {
+            log.debug("Consumed an interrupt left by a terminator after the execution was cancelled. toolUseId={}",
+                    spec.getToolUse().getId());
         }
-        log.debug(
-                "Promoting a thread interrupt left after tool '{}' returned into the cancellation signal. toolUseId={}",
-                toolUse.getName(), toolUse.getId());
-        coordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED);
     }
 
     /**

@@ -112,9 +112,11 @@ import at.aimon.core.tools.ToolContextKeys;
  * caller asks, the others wait for that answer and share it, and nothing is remembered twice. Different questions —
  * another scope, or another tool in the same scope — never wait for each other here; putting several distinct prompts
  * on one console one at a time is the {@link AskPromptHandler}'s job. A caller interrupted while waiting for someone
- * else's prompt returns a refusal rather than an approval and remembers nothing. An asker whose run was cancelled
- * while it asked — interrupted, so its handler's answer is not the user's — remembers nothing either, and neither a
- * cancelled nor a failed prompt is handed to the waiters as the user's answer: they go back and ask for themselves.
+ * else's prompt, or whose execution's cancellation signal trips while it waits, returns a refusal rather than an
+ * approval and remembers nothing; a caller whose execution is already cancelled does not wait at all. An asker whose
+ * run was cancelled while it asked — interrupted, so its handler's answer is not the user's — remembers nothing
+ * either, and neither a cancelled nor a failed prompt is handed to the waiters as the user's answer: they go back and
+ * ask for themselves.
  *
  * <p>
  * When the run is a fork labelled with its task id ({@link ForkAccess#TASK_ID_ATTRIBUTE}, present only when parallel
