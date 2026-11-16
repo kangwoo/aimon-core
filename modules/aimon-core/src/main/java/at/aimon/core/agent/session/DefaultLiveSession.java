@@ -23,6 +23,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.MessageQueueListener;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -1180,7 +1181,9 @@ public final class DefaultLiveSession implements LiveSession {
                 published.requestInterrupt(reason, detail);
                 return true;
             }
-            pendingInterrupt.compareAndSet(null, new PendingInterrupt(reason, detail));
+            // Normalised now rather than held raw until the coordinator is published: bounded while it waits.
+            pendingInterrupt.compareAndSet(null,
+                    new PendingInterrupt(reason, InterruptDetail.normalize(detail).orElse(null)));
             // The coordinator may have been published between the read above and the write: deliver it ourselves.
             final InterruptCoordinator publishedMeanwhile = coordinator;
             if (publishedMeanwhile == null) {

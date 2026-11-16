@@ -12,11 +12,12 @@ import java.util.Optional;
  *
  * <p>
  * The text comes from whoever asked for the interrupt, and it travels to other nodes and into log lines, so it is
- * treated as untrusted. {@link #normalize(String)} is applied wherever a detail enters: the coordinator, the router
- * before it sends one across the bus, and the {@code ExecutionCompleted} builder (which covers a detail relayed from a
- * peer). It is idempotent, so applying it again on the way through changes nothing, and every reader sees the same
- * bounded single-line value. It never rejects: an interrupt must land however malformed its explanation, so an
- * oversized detail is cut rather than refused.
+ * treated as untrusted. {@link #normalize(String)} is applied wherever a detail enters: the coordinator, a live session
+ * holding an interrupt for a coordinator not yet published, the router before it sends one across the bus and again
+ * on receipt, and the {@code ExecutionCompleted} builder (which covers a detail relayed from a peer). It is idempotent,
+ * so applying it again on the way through changes nothing, and every reader sees the same bounded single-line value.
+ * It never rejects: an interrupt must land however malformed its explanation, so an oversized detail is cut rather
+ * than refused.
  */
 public final class InterruptDetail {
 

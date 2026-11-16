@@ -130,7 +130,9 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         final StringBuilder sb = new StringBuilder().append("completionReason=").append(completionReason)
                 .append(", totalIterations=").append(totalIterations).append(", elapsed=").append(elapsed);
         interruptReason.ifPresent(r -> sb.append(", interruptReason=").append(r));
-        interruptDetail.ifPresent(d -> sb.append(", interruptDetail=").append(d));
+        // Quoted with quotes and backslashes escaped, so a detail cannot pose as further fields of this line.
+        interruptDetail.ifPresent(d -> sb.append(", interruptDetail=\"")
+                .append(d.replace("\\", "\\\\").replace("\"", "\\\"")).append('"'));
         return sb.toString();
     }
 

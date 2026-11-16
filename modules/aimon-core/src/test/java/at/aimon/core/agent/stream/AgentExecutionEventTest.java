@@ -514,7 +514,7 @@ class AgentExecutionEventTest {
             assertThat(withDetail.getInterruptReason()).contains(InterruptReason.USER_SIGINT);
             assertThat(withDetail.getInterruptDetail()).contains("wrong directory");
             assertThat(withDetail).isNotEqualTo(without);
-            assertThat(withDetail.toString()).contains("interruptDetail=wrong directory");
+            assertThat(withDetail.toString()).contains("interruptDetail=\"wrong directory\"");
         }
 
         @Test

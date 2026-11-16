@@ -35,13 +35,14 @@ delegates, so implementations outside this repository keep interrupting and only
   `(SessionId, InterruptReason, String)` and `(SessionId, TurnId, InterruptReason)`, and `LiveSession.interrupt(any(),
   any())` matches both `(InterruptReason, String)` and `(TurnId, InterruptReason)`; type the matchers. Mocks do not run
   default methods, so a mocked `LiveSession` behind `DefaultSessionRouter` and a mocked `SessionRouter` behind
-  `DefaultAimonSessions` are now called through the detail overloads: verify `interrupt(..., null)` instead of the
+  `DefaultAimonSessions` are now called through the detail overloads, as is a mocked `InterruptCoordinator` behind
+  `DefaultLiveSession` (`requestInterrupt(reason, detail)`): verify the detail overload with `null` instead of the
   overload without a detail.
 - **Not on the result.** `AgentExecutionResult` still says only `CompletionReason.INTERRUPTED`; read the reason and
   detail from the `ExecutionCompleted` event.
-- **Across nodes.** The router normalises the detail before it crosses the signal bus, as an optional `detail` key on the
-  `INTERRUPT` signal. `ExecutionCompleted` relays carry the two new fields as optional keys. A node on an older build
-  ignores both and still interrupts.
+- **Across nodes.** The detail travels as an optional `detail` key on the `INTERRUPT` signal; the router normalises it
+  before sending and again on receipt. `ExecutionCompleted` relays carry the two new fields as optional keys. A node on
+  an older build ignores both and still interrupts.
 - **Not yet carried.** Scheduled-task cancellation and parent-to-child cascade (`PARENT_CANCELLED`) do not carry a
   detail yet (`docs/backlog/interrupt-open-items.md` item 10).
 

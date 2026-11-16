@@ -3219,9 +3219,13 @@ public class OrcaAgentExecutor
         final String interruptDetail = interruptReason == null
                 ? null
                 : signal.getDetail().flatMap(InterruptDetail::normalize).orElse(null);
-        // The detail goes last and quoted, so a detail shaped like "x, iterations=0" cannot pass for the fields.
-        log.info("Execution interrupted: reason={}, iterations={}, tokens={}, detail=\"{}\"", interruptReason,
-                iterationCount, accumulatedTokens.getTotalTokens(), interruptDetail);
+        // The detail goes last, quoted and escaped, so a detail shaped like "x, iterations=0" or containing a quote
+        // cannot pass for further fields; "-" when there is none, rather than a detail that reads "null".
+        final String loggedDetail = interruptDetail == null
+                ? "-"
+                : '"' + interruptDetail.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+        log.info("Execution interrupted: reason={}, iterations={}, tokens={}, detail={}", interruptReason,
+                iterationCount, accumulatedTokens.getTotalTokens(), loggedDetail);
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
 
