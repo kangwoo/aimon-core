@@ -8,6 +8,8 @@ dependencies {
 
     // OpenSearch Java client (3.x ships its own Apache HttpClient 5 transport — no low-level rest client)
     implementation(libs.opensearch.client)
+    // Undeclared by opensearch-java 3.11.0 but needed to build its transport — see the catalog entry.
+    runtimeOnly(libs.reactive.streams)
 
     // Logging
     implementation(libs.slf4j.api)

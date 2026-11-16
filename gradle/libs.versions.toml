@@ -39,7 +39,7 @@ hikari = "7.1.0"
 mongodb = "5.14.0"
 
 # Cloud & Storage
-aws-sdk = "2.57.10"
+aws-sdk = "2.59.0"
 
 # Testing
 # Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
@@ -214,7 +214,12 @@ jtokkit = "1.1.0"
 graaljs = "25.5.5.0.3"
 
 # Search
-opensearch = "3.10.0"
+opensearch = "3.11.0"
+# opensearch-java 3.11.0 links org.reactivestreams.Publisher from OpenSearchClient and from the
+# ApacheHttpClient5Transport build path (the new streaming bulk API) but its POM does not declare
+# reactive-streams, so without this the transport fails to build with NoClassDefFoundError (measured
+# 2026-11-16, #356). Drop it once an opensearch-java release declares the dependency itself.
+reactive-streams = "1.0.4"
 
 # Logging
 slf4j = "2.0.20"
@@ -361,6 +366,7 @@ graaljs-js = { module = "org.graalvm.js:js", version.ref = "graaljs" }
 
 # Search
 opensearch-client = { module = "org.opensearch.client:opensearch-java", version.ref = "opensearch" }
+reactive-streams = { module = "org.reactivestreams:reactive-streams", version.ref = "reactive-streams" }
 
 # Logging
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
