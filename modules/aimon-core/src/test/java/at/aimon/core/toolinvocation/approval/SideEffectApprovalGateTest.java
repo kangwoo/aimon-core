@@ -900,6 +900,22 @@ class SideEffectApprovalGateTest {
         }
 
         @Test
+        @DisplayName("PF-5: a caller whose execution is already cancelled does not ask, even with no one else asking")
+        void alreadyCancelledCallerDoesNotAsk() {
+            final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler, store);
+            try (DefaultInterruptCoordinator execution = new DefaultInterruptCoordinator()) {
+                execution.requestInterrupt(InterruptReason.PARENT_CANCELLED);
+
+                assertThat(ask(gate, tool(TOOL_NAME, SideEffectLevel.MUTATING), signalledForkContext("s1", execution)))
+                        .hasValueSatisfying(reason -> assertThat(reason).contains("cancelled"));
+                assertThat(handler.callCount()).isZero();
+                assertThat(store.lookup("session:s1", TOOL_NAME)).isEmpty();
+            }
+        }
+
+        @Test
         @DisplayName("PF-5: a waiter with a live, untripped signal still shares the asker's answer")
         void waiterWithLiveSignalSharesAnswer() throws Exception {
             final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);

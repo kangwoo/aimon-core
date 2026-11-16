@@ -190,6 +190,39 @@ class DefaultTerminatorRegistrarTest {
         }
     }
 
+    @Test
+    @DisplayName("PF-3: a second close() also waits for the in-flight terminator")
+    void secondCloseAlsoWaits() throws Exception {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean terminatorDone = new AtomicBoolean();
+        registrar.register(blockingTerminator(entered, release, terminatorDone));
+        Thread firer = new Thread(() -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT));
+        Thread firstCloser = new Thread(registrar::close);
+        try {
+            firer.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            firstCloser.start();
+            awaitBlocked(firstCloser);
+
+            assertCloseWaitsFor(registrar, release, terminatorDone);
+        } finally {
+            release.countDown();
+            firer.join(5_000);
+            firstCloser.join(5_000);
+        }
+    }
+
+    private static void awaitBlocked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.BLOCKED && thread.isAlive() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(thread.getState()).as(thread.getName() + " blocked on the barrier").isEqualTo(Thread.State.BLOCKED);
+    }
+
     /** A terminator that signals {@code entered}, blocks until {@code release}, then records that it finished. */
     private static Terminator blockingTerminator(CountDownLatch entered, CountDownLatch release, AtomicBoolean done) {
         return () -> {
@@ -215,12 +248,7 @@ class DefaultTerminatorRegistrarTest {
             doneWhenCloseReturned.set(terminatorDone.get());
         });
         closer.start();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (closer.getState() != Thread.State.BLOCKED && closer.isAlive() && System.nanoTime() < deadline) {
-            Thread.onSpinWait();
-        }
-        assertThat(closer.getState()).as("close() must block on the in-flight terminator")
-                .isEqualTo(Thread.State.BLOCKED);
+        awaitBlocked(closer);
 
         release.countDown();
         closer.join(5_000);

@@ -79,18 +79,21 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
 
     @Override
     public void close() {
+        final boolean first;
         synchronized (lock) {
-            if (closed) {
-                return;
-            }
+            first = !closed;
             closed = true;
             terminators.clear();
         }
-        // Wait out a fireAll that took its snapshot before we closed; one that has not yet taken it sees closed.
+        // Wait out a fire already under way; one that has not yet taken lock sees closed. Every call passes the
+        // barrier, not just the first, so a second closer cannot return while a terminator is still running. A
+        // terminator that closes its own registrar holds fireLock already, and re-enters.
         synchronized (fireLock) {
             // barrier only
         }
-        coordinator.removeRegistrar(this);
+        if (first) {
+            coordinator.removeRegistrar(this);
+        }
     }
 
     /**

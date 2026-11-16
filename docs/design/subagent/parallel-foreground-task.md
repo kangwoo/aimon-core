@@ -630,6 +630,13 @@ stdin 읽기가 섞일 수 있다(→ §3.12). 다른 포크의 `[Tool]` 한 줄
 PostTool 을 건너뛸 수 있고(`interrupt.md` §8.7 의 두 번째 겹은 PreTool 쪽만 막는다), ⓑ 는 리스너가 블로킹하지 않는 한
 영향이 없다. 오늘 부모 스레드에도 똑같이 있다(§8 Q9, PF-3).
 
+**닫음 (2026-11-16, PF-3).** ⓐ 의 창은 닫혔다 — 처방은 Q9 가 적은 "소비 · 승격" 이 아니었다. `TerminatorRegistrar.close()` 가
+장벽이 되고, `SingleToolInvoker` 가 PostTool 전에 registrar 를 닫은 뒤 **실행의 신호가 떠 있을 때만** 플래그를 소비한다(승격은
+하지 않는다). 남은 창(다른 registrar · `DedicatedThreadDispatcher` 가 넘기는 interrupt)과 근거는
+[`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-3 이다.
+위 문단의 *"fail-open 이 PostTool 을 건너뛸 수 있다"* 는 그 시점에도 정확하지 않았다 — `interrupt.md` §8.7 이후 끊긴 훅 대기는
+BLOCKED 다.
+
 ### 6.8 `BudgetTracker` / 토큰 · 비용 집계의 공유와 스레드 안전성
 
 `BudgetTracker` 는 동기화 없는 필드이고(`agent/budget/BudgetTracker.java:56-64`) 생성 지점은 턴(`OrcaAgentExecutor.java:1170`)
@@ -695,6 +702,9 @@ feedback 은 그 호출의 결과에만 붙는다(`:74-83`).
 | Q11 | harvest 꼬리 라우팅(§3.11)을 이번에 넣을 것인가, 후속으로 미룰 것인가? | 넣는다 — 기능 off 에서 경로가 같고(§3.16 ⑩) off 이벤트 열 테스트가 있다(§7). 범위를 줄여야 하면 뺄 수 있는 독립 항목이다 |
 | Q12 | 포크 `ToolContext` 에 `FORK_DEPTH` 키가 늘 보이는 것을 "기능 off 시 바이트 동일" 로 받아들일 수 있는가? | 받아들인다 — 근거는 §3.16 ③. 대안(`wantsForkDepth()` default 메서드)은 쓰지 않는다 |
 | Q13 | 기능이 꺼진 **도달 가능한** 구성에서 "같은 질문 두 번" 이 "한 번" 으로 바뀌는 것을 결함 수정으로 받아들이는가? | 받아들인다(§3.16 ⑤). 두 `readLine` 이 섞이는 오늘의 동작은 누구도 의도하지 않았고, 답의 범위는 넓어지지 않는다(게이트의 답은 이미 (스코프, 도구) 단위 · "whatever its arguments" — `SideEffectApprovalGate.java:247-249`). 엄밀한 off 바이트 동일을 원하면 게이트에 스위치를 들여야 하는데, 그 결함을 꺼진 배치에 남기는 값이 그 엄밀함보다 비싸다 |
+
+*(2026-11-16)* Q9 와 §9.1 의 4 는 PF-3 · PF-5 로 닫혔다. 표는 설계 시점의 기록으로 둔다 — 현재의 사실과 처방이 어떻게
+달라졌는지는 [`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) 에 있다.
 
 ---
 

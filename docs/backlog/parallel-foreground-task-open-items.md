@@ -66,14 +66,17 @@
 
 **닫음 (2026-11-16).** 두 가지를 함께 바꿨다. ① `TerminatorRegistrar.close()` 가 **장벽**이 됐다 — 돌아온 시점에는 그
 registrar 의 terminator 가 돌고 있지도 않고 이후로 돌지도 않는다. `DefaultTerminatorRegistrar` 는 `fireAll` 전체와
-`register()` 의 즉시 발화를 두 번째 모니터 `fireLock` 안에서 돌리고, `close()` 는 `closed` 를 세운 뒤 그 모니터를 한 번
-지나간다. terminator 는 계약상 곧바로 돌아오므로 대기는 짧다(계약을 어기고 도구 스레드를 기다리는 terminator 는 이제 교착한다
+`register()` 의 즉시 발화를 두 번째 모니터 `fireLock` 안에서 돌리고, `close()` 는 `closed` 를 세운 뒤 — 두 번째 호출이라도
+— 그 모니터를 한 번 지나간다. terminator 는 계약상 곧바로 돌아오므로 대기는 짧다(계약을 어기고 도구 스레드를 기다리는 terminator 는 이제 교착한다
 — `close()` javadoc 에 적었다). ② `SingleToolInvoker` 는 registrar 가 있었던 도구(`THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED`)에
 한해, 호출을 보고하는 훅 — PostTool, 그리고 거부 경로의 PermissionDenied — **전에** registrar 를 닫고(`quiesce`), **실행의
-신호가 이미 떠 있을 때만** 스레드 플래그를 소비한다. registrar 가 없던 도구의 플래그는 건드리지 않는다(`interrupt.md` §8.5).
-테스트: `DefaultTerminatorRegistrarTest.closeWaitsForTerminatorFiredByTrip` · `closeWaitsForTerminatorFiredByRegister`,
-`SingleToolInvokerTest.invoke_terminatorInterruptAfterCancellation_isConsumedBeforePostTool` ·
-`invoke_terminatorInterruptBeforeDeny_isConsumedBeforePermissionDenied` (넷 다 수정 전 코드에서 실패),
+신호가 이미 떠 있을 때만** 스레드 플래그를 소비한다 — 그때는 누가 세운 플래그든 신호가 이미 취소를 담고 있다. registrar 가
+없던 도구의 플래그는 건드리지 않는다(워커에서 관측되는 플래그는 그 워커의 실제 인터럽트다 — `interrupt.md` §8.5 의 전제).
+새 규칙은 `interrupt.md` §8.8 에 적었다. 테스트: `DefaultTerminatorRegistrarTest.closeWaitsForTerminatorFiredByTrip` ·
+`closeWaitsForTerminatorFiredByRegister`,
+`secondCloseAlsoWaits`, `SingleToolInvokerTest.invoke_terminatorInterruptAfterCancellation_isConsumedBeforePostTool` ·
+`invoke_terminatorInterruptBeforeDeny_isConsumedBeforePermissionDenied` ·
+`invoke_cancelledBeforeApproval_refusedWithoutPromptAndFlagClearedBeforePermissionDenied` (모두 수정 전 코드에서 실패),
 `invoke_interruptWithoutCancellation_isLeftForTheCaller` · `invoke_toolWithoutRegistrar_flagUntouched` (수정 전에도 성립하던
 성질을 고정한다).
 
@@ -85,7 +88,7 @@ registrar 의 terminator 가 돌고 있지도 않고 이후로 돌지도 않는�
   - **소비만으로는 창이 닫히지 않는다.** `fireAll` 은 스냅샷을 lock 안에서 뜨고 terminator 는 lock **밖**에서 부르므로, 스냅샷을
     뜬 발화가 소비 **뒤에** `Thread::interrupt` 를 떨어뜨릴 수 있다. 장벽이 그 순서를 막는다. 코드를 읽어서 나온 것이고, 소비만
     적용한 상태로 경합을 끝까지 재현하지는 않았다. 첫 구현은 장벽을 `fireAll` 에만 걸었는데, 독립 리뷰가 `register()` 의 즉시
-    발화가 그 밖에 있다는 것을 짚었다.
+    발화가 그 밖에 있다는 것을, 두 번째 리뷰가 두 번째 `close()` 는 장벽 앞에서 돌아온다는 것을 짚었다.
   - **승격은 해롭다.** 첫 구현은 처방대로 신호가 안 떠 있어도 플래그를 소비해 `PARENT_CANCELLED` 로 승격했다. 독립 리뷰가 그
     결과를 짚었다 — terminator 는 trip 에서만 발화하므로 **안 뜬 신호 위의 플래그는 terminator 의 것이 아니라 호출자의 것**이고,
     슬래시 커맨드 경로에서는 그 coordinator 가 아무도 읽지 않고 커맨드 끝에 닫힌다. 승격하면 §8.3 의 스윕이 플래그를 못 찾아
@@ -95,6 +98,9 @@ registrar 의 terminator 가 돌고 있지도 않고 이후로 돌지도 않는�
   인터럽트된 부모가 `DedicatedThreadDispatcher` 로 전용 스레드에 넘기는 것, inline lane 에서 부모 `Task` 의 terminator 가 자식
   도구의 PostTool 에 떨어지는 것 — 는 여전히 PostTool 을 BLOCKED 로 만들 수 있다. 어느 쪽이든 이미 취소되는 실행이다.
   도구가 예외로 끝나는 경로(`catch (Exception)`)는 뒤에 훅이 없어 손대지 않았다.
+- **대가.** 취소된 실행에서도 PostTool · PermissionDenied 훅이 이제 끝까지 돈다 — 예전에는 대기가 곧바로 BLOCKED 로 끝났다.
+  그래서 취소가 호출마다 최대 훅 타임아웃만큼 늦어질 수 있고, 병렬 `Task` 라면 전용 스레드마다 그렇다. 훅은 trip 뒤 신호를 받지
+  않으므로(`CancellationSignals.liveOrEmpty`) 스스로 끊지도 못한다. 이 창을 닫은 것의 정의상 대가다.
 - **심각도 (규칙 셋).** 낮음 — 그리고 그대로였다. 이 창은 실행이 이미 취소된 경우에만 닿고(terminator 는 trip 에서만 발화한다),
   잃는 것은 출력 가림 같은 PostTool 의 효과다. 전용 스레드가 넓힌 창도 아니다 — 순차 경로에도 같았다. 확인은 읽기와 위 테스트로
   했고, 실제 가림 훅으로 재현하지는 않았다.
@@ -134,14 +140,18 @@ PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptH
 그때는 대기자만 매달리는 것이 실제 지연이 된다.
 
 **닫음 (2026-11-16).** `SideEffectApprovalGate.awaitShared` 가 이제 묻던 쪽의 답 **또는** 대기자 자신의 실행 취소 신호
-(`InterruptAccess.signalOf(context)`) 중 먼저 오는 것에 깬다. 신호에 건 리스너는 대기가 끝나면 지운다. 신호가 이미 떠 있으면
+(`InterruptAccess.signalOf(context)`) 중 먼저 오는 것에 깬다. 그리고 실행이 이미 취소된 호출은 묻지도 않는다 — 프롬프트를
+만들기 전과 대기 루프의 매 회차에 신호를 본다. 신호에 건 리스너는 대기가 끝나면 지운다. 신호가 이미 떠 있으면
 리스너가 등록 즉시 불리므로 대기에 들어가지 않는다. 취소된 실행은 답이 같은 순간에 왔더라도 거부되고 아무것도 기억하지 않는다
 — 스레드 인터럽트로 깬 대기자와 같은 규칙이다. 테스트: `SideEffectApprovalGateTest.waiterWakesOnCancellationSignal` ·
-`alreadyCancelledWaiterDoesNotWait` (둘 다 수정 전 코드에서 실패), `waiterWithLiveSignalSharesAnswer` (취소되지 않은 대기자는
+`alreadyCancelledWaiterDoesNotWait` · `alreadyCancelledCallerDoesNotAsk` (모두 수정 전 코드에서 실패), `waiterWithLiveSignalSharesAnswer` (취소되지 않은 대기자는
 여전히 답을 나눠 받는다 — 수정 전에도 성립하던 성질).
 
 - **재검토 트리거를 기다리지 않았다.** 항목의 트리거(사람 대신 원격 승인 채널)는 아직 오지 않았다. 고칠 자리가 한 메서드이고
   처방이 기존 인터럽트 경로와 같은 결과를 내므로 먼저 닫았다.
+- **항목이 대기자만 봤다 (규칙 둘).** 항목은 기다리는 쪽만 적었지만, 이미 취소된 호출이 질문의 **소유자**가 되면 — 먼저 묻는
+  사람이 없거나, 묻던 쪽이 답을 못 받아 다시 돌아온 경우 — 사람 앞에 프롬프트를 띄웠고 `Task` 라면 그 스레드에는 아직
+  terminator 가 없어 그 답을 기다렸다. 수정 전부터 그랬다. 첫 구현은 대기자만 고쳤고, 두 번째 독립 리뷰가 짚었다.
 - **처방의 낱말 (규칙 다섯).** 항목은 *"대기를 턴의 취소 신호에도 묶는다"* 고 적었지만 묶은 것은 **실행**의 신호다 — 대기자는
   포크나 루틴일 수도 있고, 컨텍스트가 실어 오는 것은 그 실행의 신호다. 부모 스레드에서 도는 `Task` 의 게이트라면 그것이 곧
   부모의 신호다.

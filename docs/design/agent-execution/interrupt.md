@@ -406,6 +406,26 @@ BLOCKED 를 강제하지 않는 자문 체인(PostTool·OnStop·세션/서브에
 
 ---
 
+### 8.8 PostTool 앞의 소비 (2026-11-16)
+
+도구가 돌아온 뒤 PostTool 전에 플래그를 쓸어내는 지점이 하나 더 있다. `SingleToolInvoker` 는 registrar 가 있었던 도구
+(`THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED`)에 한해, 호출을 보고하는 훅(PostTool, 거부 경로의 PermissionDenied) **전에**
+registrar 를 닫고, **실행의 신호가 이미 떠 있을 때만** 플래그를 소비한다. 그렇지 않으면 늦게 떨어진 terminator 의 interrupt 가
+§8.7 의 BLOCKED 를 불러 출력 가림 같은 PostTool 의 효과가 이미 만들어진 결과에 적용되지 않는다.
+
+- **장벽.** `TerminatorRegistrar.close()` 는 돌아온 뒤 그 registrar 의 terminator 가 돌지 않음을 보장한다 — 이미 발화 중인
+  것을 기다린다. 그래서 close 뒤에 읽은 플래그는 그 registrar 가 다시 바꾸지 않는다. terminator 는 trip 에서만 발화하므로,
+  close 뒤 신호가 떠 있지 않다면 플래그는 terminator 의 것일 수 없다.
+- **승격하지 않는 이유.** 안 뜬 신호 위의 플래그는 호출자의 interrupt 다. 여기서 승격하면 그 사실이 이 호출의 coordinator 로
+  옮겨지는데, 슬래시 커맨드 경로의 coordinator 는 아무도 읽지 않고 커맨드 끝에 닫힌다 — §8.3 의 스윕이 플래그를 못 찾아
+  취소가 사라진다. 그래서 그 플래그는 그것을 소유한 체크포인트·스윕(§8.2, §8.3)에 남긴다. 신호가 떠 있다면 소비해도 잃는 것이
+  없다 — 루프의 체크포인트가 하는 것과 같다(§8.1).
+- **registrar 가 없는 도구는 손대지 않는다.** 워커 풀에서 도는 도구의 플래그는 그 워커에 대한 실제 인터럽트다(§8.5 의 전제).
+- **남은 창.** 장벽은 자기 registrar 만 막는다. 다른 registrar 나 `DedicatedThreadDispatcher` 가 같은 스레드에 넘기는 interrupt 는
+  여전히 PostTool 을 BLOCKED 로 만들 수 있다. 어느 쪽이든 이미 취소되는 실행이다.
+
+근거와 테스트는 [`../../backlog/parallel-foreground-task-open-items.md`](../../backlog/parallel-foreground-task-open-items.md) PF-3 이다.
+
 ## 9. LLM 호출 자체의 중단
 
 도구만 끊어서는 부족하다. 인터럽트가 LLM HTTP 호출 도중에 도착하면 응답이 끝날 때까지 아무 일도

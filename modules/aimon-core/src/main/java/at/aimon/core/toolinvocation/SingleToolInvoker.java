@@ -303,18 +303,19 @@ public final class SingleToolInvoker {
     }
 
     /**
-     * Closes the call's registrar and consumes the interrupt flag one of its terminators left, before the hooks that
-     * report on the call run. No-op when the call had no registrar.
+     * Closes the call's registrar and, once the execution is cancelled, consumes the thread's interrupt flag, before
+     * the hooks that report on the call run. No-op when the call had no registrar.
      *
      * <p>
      * {@link TerminatorRegistrar#close()} waits out a terminator already being fired, so afterwards this registrar
-     * cannot set the flag again. The flag is then consumed <em>only when the execution's signal has tripped</em>: a
-     * terminator fires only on a trip, so in that case the signal already carries the cancellation and the flag is a
-     * leftover that would make {@code DefaultHookExecutor} answer the hooks' waits with BLOCKED (interrupt design §8.7)
-     * — an output-masking PostTool hook would then not run on a result the tool already produced. A flag on an
-     * untripped signal did not come from a terminator: it is the caller's own interrupt, and is left for the
-     * checkpoint or sweep that owns it (§8.2, §8.3). Promoting it here would move it into a coordinator nobody may
-     * read — the slash-command path's is private and closed when the command ends — and lose it.
+     * cannot set the flag again. The flag is then consumed <em>only when the execution's signal has tripped</em>. A
+     * terminator fires only on a trip, and whatever set the flag — a terminator, or the caller too — the signal then
+     * already carries the cancellation, so the flag is a leftover that would make {@code DefaultHookExecutor} answer
+     * the hooks' waits with BLOCKED (interrupt design §8.7), and an output-masking PostTool hook would then not run on
+     * a result the tool already produced. A flag on an untripped signal did not come from a terminator: it is the
+     * caller's own interrupt, and is left for the checkpoint or sweep that owns it (§8.2, §8.3). Promoting it here
+     * would move it into a coordinator nobody may read — the slash-command path's is private and closed when the
+     * command ends — and lose it.
      */
     private static void quiesce(TerminatorRegistrar registrar, ToolInvocationSpec spec) {
         if (registrar == null) {

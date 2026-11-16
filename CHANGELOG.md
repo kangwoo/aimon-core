@@ -12,15 +12,17 @@ Central is versioned independently).
 - **A call waiting on another call's approval prompt now wakes when its own execution is cancelled.** Parallel `Task`
   calls asking the same question share one prompt; the others wait for that answer. Their threads carry no terminator
   yet (the gate runs before the tool does), so a cancelled parent's waiters used to sleep until a person answered.
-  `SideEffectApprovalGate` now also waits on the waiter's cancellation signal and refuses the call, remembering nothing
-  (PF-5).
+  `SideEffectApprovalGate` now also waits on the waiter's cancellation signal and refuses the call, remembering nothing.
+  A call whose execution is already cancelled is refused without putting a prompt in front of the user (PF-5). The
+  refusal now reads "this run was cancelled before the user answered".
 - **`TerminatorRegistrar.close()` is now a barrier.** When it returns, no terminator of that registrar is running or
   will run; a terminator already being fired — by a concurrent interrupt, or immediately by `register()` on a tripped
   signal — is waited for. `SingleToolInvoker` closes the registrar before the hooks that report on the call (PostTool,
   and PermissionDenied on a refusal) and, when the execution has been cancelled, clears the interrupt flag a terminator
-  left on the thread. Previously that flag made the hook executor answer the hooks' waits with BLOCKED, so an
+  left on the thread (the execution's signal already records the cancellation). Previously that flag made the hook executor answer the hooks' waits with BLOCKED, so an
   output-masking PostTool hook could miss a result the tool had already produced (PF-3). A flag on an execution that
-  has not been cancelled is the caller's own interrupt and is left alone. Implementations of `TerminatorRegistrar`
+  has not been cancelled is the caller's own interrupt and is left alone. As a consequence, a cancelled call now waits
+  for those hooks to finish (up to their timeout) instead of abandoning them at once. Implementations of `TerminatorRegistrar`
   outside this repository must give `close()` the same guarantee, and a terminator must not wait on the thread that
   closes its registrar.
 
