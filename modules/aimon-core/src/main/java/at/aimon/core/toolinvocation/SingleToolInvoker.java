@@ -11,7 +11,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
+import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
@@ -276,6 +279,13 @@ public final class SingleToolInvoker {
                     toolUseResult = toToolUseResult(toolExecutionResult);
                 }
 
+                if (registrar != null) {
+                    // The tool is done: stop its terminators before PostTool, so a late interrupt cannot land in the
+                    // middle of the hooks (PF-3). close() waits out a terminator already being fired; the flag it
+                    // may have left is then final, and is absorbed into the signal rather than left to cut a hook.
+                    registrar.close();
+                    absorbLateInterrupt(spec.getCoordinator(), toolUse);
+                }
                 return applyPostToolHooks(spec, effectiveToolUse, toolUseResult, feedback);
             } catch (Exception e) {
                 log.error("Error executing tool use: {}", toolUse.getName(), e);
@@ -292,6 +302,33 @@ public final class SingleToolInvoker {
                 registrar.close();
             }
         }
+    }
+
+    /**
+     * Consumes an interrupt that reached this thread after the tool returned and moves it into the execution's
+     * cancellation signal (interrupt design §8.1–§8.2: consume unconditionally, promote when the signal has not yet
+     * tripped).
+     *
+     * <p>
+     * Without this, the flag would still be set when PostTool hooks run; {@code DefaultHookExecutor} answers an
+     * interrupted wait with BLOCKED (§8.7), so a hook that masks output would not run on a result the tool has already
+     * produced. Moving the fact into the signal loses nothing: the loop's tail check reads the signal, and PostTool
+     * already stops handing that signal to hooks once it has tripped. Called only for tools that had a registrar —
+     * the only ones a terminator can interrupt — so a worker-pool thread's own interrupt is left alone (§8.5).
+     */
+    private static void absorbLateInterrupt(InterruptCoordinator coordinator, ToolUse toolUse) {
+        final CancellationSignal signal = coordinator.getSignal();
+        if (signal == null) {
+            // No signal to carry the fact: leave the flag as it is rather than turn a finished result into an error.
+            return;
+        }
+        if (!CancellationSignals.isCancelledOrInterrupted(signal) || signal.isCancelled()) {
+            return;
+        }
+        log.debug(
+                "Promoting a thread interrupt left after tool '{}' returned into the cancellation signal. toolUseId={}",
+                toolUse.getName(), toolUse.getId());
+        coordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED);
     }
 
     /**

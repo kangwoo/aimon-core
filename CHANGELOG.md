@@ -7,6 +7,20 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: cancellation reaches shared approval waiters, and a late interrupt no longer cuts PostTool hooks
+
+- **A call waiting on another call's approval prompt now wakes when its own execution is cancelled.** Parallel `Task`
+  calls asking the same question share one prompt; the others wait for that answer. Their threads carry no terminator
+  yet (the gate runs before the tool does), so a cancelled parent's waiters used to sleep until a person answered.
+  `SideEffectApprovalGate` now also waits on the waiter's cancellation signal and refuses the call, remembering nothing
+  (PF-5).
+- **`TerminatorRegistrar.close()` is now a barrier.** When it returns, no terminator of that registrar is running or
+  will run; a terminator already being fired by a concurrent interrupt is waited for. `SingleToolInvoker` closes the
+  registrar as soon as the tool returns and, before PostTool hooks, moves an interrupt flag left on the thread into the
+  execution's cancellation signal. Previously such a flag made the hook executor answer the PostTool wait with
+  BLOCKED, so an output-masking hook could miss a result the tool had already produced (PF-3). Implementations of
+  `TerminatorRegistrar` outside this repository should give `close()` the same guarantee.
+
 ### Build: `aimon-knowledge-opensearch` ships `reactive-streams` for opensearch-java 3.11.0
 
 - **opensearch-java 3.10.0 → 3.11.0, plus `org.reactivestreams:reactive-streams:1.0.4` at runtime scope.** 3.11.0's

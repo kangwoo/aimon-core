@@ -46,6 +46,11 @@ public interface TerminatorRegistrar extends AutoCloseable {
      * Releases this registrar. Any still-registered terminators are dropped without being invoked. Subsequent
      * {@link #register(Terminator)} calls throw {@link IllegalStateException}; {@link #unregister(Terminator)} and
      * further {@link #close()} calls become no-ops.
+     *
+     * <p>
+     * When this method returns, no terminator of this registrar is running and none will run afterwards — a terminator
+     * already being invoked by a concurrent interrupt is waited for. A caller can therefore close the registrar and
+     * then inspect state a terminator writes (such as the thread's interrupt flag) knowing it is final.
      */
     @Override
     void close();

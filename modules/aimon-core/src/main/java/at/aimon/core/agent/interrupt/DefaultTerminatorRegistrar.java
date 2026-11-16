@@ -16,6 +16,14 @@ import org.slf4j.LoggerFactory;
  * the signal. Registration that races with a concurrent interrupt request is resolved inside {@link #register}: if
  * the signal flips between the pre-check and the list insertion, the terminator is invoked immediately on the
  * registering thread.
+ *
+ * <p>
+ * {@link #close()} is also a barrier: when it returns, no terminator of this registrar is running and none will run.
+ * {@link #fireAll()} invokes terminators outside {@code lock} (so a slow terminator never holds up registration), and
+ * without the barrier a terminator from a snapshot taken just before {@code close()} could still land afterwards —
+ * for {@code Thread::interrupt}, on a thread that has already moved on to PostTool hooks (PF-3). The barrier is a
+ * second monitor, {@code fireLock}, held for the whole of {@code fireAll}; terminators return promptly by contract,
+ * so the wait is short.
  */
 final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
 
@@ -24,6 +32,7 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
     private final DefaultInterruptCoordinator coordinator;
     private final CancellationSignal signal;
     private final Object lock = new Object();
+    private final Object fireLock = new Object();
     private final List<Terminator> terminators = new ArrayList<>();
     private boolean fired;
     private boolean closed;
@@ -73,6 +82,10 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
             closed = true;
             terminators.clear();
         }
+        // Wait out a fireAll that took its snapshot before we closed; one that has not yet taken it sees closed.
+        synchronized (fireLock) {
+            // barrier only
+        }
         coordinator.removeRegistrar(this);
     }
 
@@ -82,17 +95,19 @@ final class DefaultTerminatorRegistrar implements TerminatorRegistrar {
      * registering thread.
      */
     void fireAll() {
-        final List<Terminator> snapshot;
-        synchronized (lock) {
-            if (fired || closed) {
-                return;
+        synchronized (fireLock) {
+            final List<Terminator> snapshot;
+            synchronized (lock) {
+                if (fired || closed) {
+                    return;
+                }
+                fired = true;
+                snapshot = new ArrayList<>(terminators);
+                terminators.clear();
             }
-            fired = true;
-            snapshot = new ArrayList<>(terminators);
-            terminators.clear();
-        }
-        for (Terminator terminator : snapshot) {
-            safeTerminate(terminator);
+            for (Terminator terminator : snapshot) {
+                safeTerminate(terminator);
+            }
         }
     }
 

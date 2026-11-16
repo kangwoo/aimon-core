@@ -13,8 +13,10 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.InterruptAccess;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -278,12 +280,13 @@ public final class SideEffectApprovalGate {
 
         final String key = scopeKey.get();
         final String question = key + '\0' + approvalKey;
+        final CancellationSignal cancellation = InterruptAccess.signalOf(context);
         while (true) {
             final CompletableFuture<Outcome> mine = new CompletableFuture<>();
             final CompletableFuture<Outcome> prior = inFlight.putIfAbsent(question, mine);
             if (prior != null) {
                 // The same question is already in front of the user: wait for that answer instead of asking again.
-                final Optional<Outcome> shared = awaitShared(prior);
+                final Optional<Outcome> shared = awaitShared(prior, cancellation);
                 if (shared.isEmpty()) {
                     // This run was cancelled while it waited: a refusal, never an approval, and nothing remembered.
                     return Optional.of(cancelledMessage(approvalKey));
@@ -348,11 +351,25 @@ public final class SideEffectApprovalGate {
     }
 
     /**
-     * Waits for the outcome of a question another caller is asking right now. Empty when this caller is interrupted
-     * while waiting — its run was cancelled; the flag is restored for the caller.
+     * Waits for the outcome of a question another caller is asking right now. Empty when this caller's run is cancelled
+     * while it waits — either its thread is interrupted (the flag is restored for the caller) or its execution's
+     * cancellation signal trips.
+     *
+     * <p>
+     * The signal matters because a waiter's thread may have no terminator on it yet: the gate runs before the tool
+     * does, and a tool such as {@code Task} registers its terminator only once it runs. Without the signal, a cancelled
+     * parent's waiters would sleep until a person answered the asker's prompt (PF-5). A cancelled run is refused even
+     * when the answer arrived at the same moment — a refusal is never an approval, and nothing is remembered for it.
      */
-    private static Optional<Outcome> awaitShared(CompletableFuture<Outcome> prior) {
+    private static Optional<Outcome> awaitShared(CompletableFuture<Outcome> prior, CancellationSignal cancellation) {
+        final CompletableFuture<Void> cancelled = new CompletableFuture<>();
+        // Fires synchronously when the signal has already tripped, so a cancelled run never starts waiting.
+        final CancellationSignal.Registration registration = cancellation.onCancel(() -> cancelled.complete(null));
         try {
+            CompletableFuture.anyOf(prior, cancelled).get();
+            if (cancellation.isCancelled()) {
+                return Optional.empty();
+            }
             return Optional.of(prior.get());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -360,6 +377,8 @@ public final class SideEffectApprovalGate {
         } catch (ExecutionException e) {
             // Never completed exceptionally; treated as no answer so the caller asks for itself.
             return Optional.of(Outcome.NO_ANSWER);
+        } finally {
+            registration.remove();
         }
     }
 
