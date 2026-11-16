@@ -100,6 +100,31 @@ class DefaultLiveSessionInterruptTest {
     }
 
     @Test
+    @DisplayName("session.interrupt(reason, detail) hands the detail to the active coordinator")
+    void externalInterruptCarriesDetail() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("irq04-detail");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor();
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults())) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+            assertThat(executor.awaitObserverInvoked(1, TimeUnit.SECONDS)).isTrue();
+            final InterruptCoordinator coordinator = executor.capturedCoordinator.get();
+
+            session.interrupt(InterruptReason.USER_SIGINT, "wrong directory");
+
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+            assertThat(coordinator.getSignal().getDetail()).contains("wrong directory");
+
+            executor.completeNext(OrcaAgentExecutionResult.success("done", SessionSnapshot.of(sessionId),
+                    ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH)));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("NOW-priority enqueue on the wired queue trips the active coordinator with NOW_PRIORITY_INPUT")
     void nowPriorityEnqueueTripsActiveCoordinator() throws Exception {
         final OrcaAgentRuntime context = createContext();

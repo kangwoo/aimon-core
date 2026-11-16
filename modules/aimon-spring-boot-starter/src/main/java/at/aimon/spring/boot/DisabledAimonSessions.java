@@ -71,6 +71,11 @@ public class DisabledAimonSessions implements AimonSessions {
     }
 
     @Override
+    public void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
+        throw new AimonDisabledException(MESSAGE);
+    }
+
+    @Override
     public void release(SessionId sessionId) {
         throw new AimonDisabledException(MESSAGE);
     }

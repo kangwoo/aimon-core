@@ -7,6 +7,45 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: a free-text explanation on interrupts
+
+An interrupt can now say why in words, next to its `InterruptReason` — "wrong directory", "deploy freeze". It is for
+observability only: it is never sent to the model. Every new interface method is a `default` that drops the detail and
+delegates, so implementations outside this repository keep interrupting and only report no detail. Design:
+`docs/design/agent-execution/interrupt.md` §3.1.
+
+- **Where to give it.** `InterruptCoordinator.requestInterrupt(reason, detail)`, `LiveSession.interrupt(reason, detail)`
+  and `interrupt(turnId, reason, detail)`, `SessionRouter.interrupt(sessionId[, turnId], reason, detail)`, and
+  `AimonSessions.interrupt(sessionId, turnId, reason, detail)`.
+- **Where it shows up.** `CancellationSignal.getDetail()`, the interrupted execution's log line, and two new optional
+  fields on the terminal `ExecutionCompleted` event: `getInterruptReason()` and `getInterruptDetail()`. The reason was
+  not on that event before either.
+- **Normalised, never refused.** Control characters, Unicode line/paragraph separators, invisible format characters
+  (bidi overrides, zero-width, U+E0000 tag characters) and unpaired surrogates become spaces; surrounding whitespace is stripped; blank means none; anything over 500
+  UTF-16 units is cut with an ellipsis (`InterruptDetail.normalize`, idempotent). It is applied wherever a detail
+  enters, including the `ExecutionCompleted` builder, so a relayed event is bounded too. Like the reason, only the
+  interrupt that trips the execution keeps its detail.
+- **`ExecutionCompleted.Builder` rejects a detail without a reason** (`IllegalArgumentException`). A blank detail counts
+  as none.
+- **Wrappers must forward it.** The defaults drop the detail, so a decorator over `LiveSession`, `SessionRouter`,
+  `InterruptCoordinator` or `AimonSessions` has to override the new overloads to pass it on. `LeasedLiveSession` does.
+  The testkit's `RecordingTestSession` records it (`recordedInterruptDetails()`), and now records turn-addressed
+  interrupts too instead of ignoring them.
+- **Mockito users.** Untyped matchers are now ambiguous: `SessionRouter.interrupt(any(), any(), any())` matches both
+  `(SessionId, InterruptReason, String)` and `(SessionId, TurnId, InterruptReason)`, and `LiveSession.interrupt(any(),
+  any())` matches both `(InterruptReason, String)` and `(TurnId, InterruptReason)`; type the matchers. Mocks do not run
+  default methods, so a mocked `LiveSession` behind `DefaultSessionRouter` and a mocked `SessionRouter` behind
+  `DefaultAimonSessions` are now called through the detail overloads, as is a mocked `InterruptCoordinator` behind
+  `DefaultLiveSession` (`requestInterrupt(reason, detail)`): verify the detail overload with `null` instead of the
+  overload without a detail.
+- **Not on the result.** `AgentExecutionResult` still says only `CompletionReason.INTERRUPTED`; read the reason and
+  detail from the `ExecutionCompleted` event.
+- **Across nodes.** The detail travels as an optional `detail` key on the `INTERRUPT` signal; the router normalises it
+  before sending and again on receipt. `ExecutionCompleted` relays carry the two new fields as optional keys. A node on
+  an older build ignores both and still interrupts.
+- **Not yet carried.** Scheduled-task cancellation and parent-to-child cascade (`PARENT_CANCELLED`) do not carry a
+  detail yet (`docs/backlog/interrupt-open-items.md` item 10).
+
 ### Fixed: cancellation reaches shared approval waiters, and a late interrupt no longer cuts PostTool hooks
 
 - **A call waiting on another call's approval prompt now wakes when its own execution is cancelled.** Parallel `Task`

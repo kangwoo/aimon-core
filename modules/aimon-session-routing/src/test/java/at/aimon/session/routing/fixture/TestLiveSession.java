@@ -55,7 +55,7 @@ public final class TestLiveSession implements LiveSession {
     private final ConcurrentLinkedQueue<UserInput> submittedInputs = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<SubmitOptions> submittedOptions = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<TurnId> submittedTurnIds = new ConcurrentLinkedQueue<>();
-    private final ConcurrentLinkedQueue<InterruptReason> interrupts = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<RecordedInterrupt> interrupts = new ConcurrentLinkedQueue<>();
     private final AtomicReference<TurnId> activeTurnId = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final CountDownLatch turnStarted = new CountDownLatch(1);
@@ -147,8 +147,13 @@ public final class TestLiveSession implements LiveSession {
 
     @Override
     public void interrupt(InterruptReason reason) {
+        interrupt(reason, (String) null);
+    }
+
+    @Override
+    public void interrupt(InterruptReason reason, String detail) {
         Objects.requireNonNull(reason, "reason must not be null");
-        interrupts.add(reason);
+        interrupts.add(new RecordedInterrupt(reason, detail));
         interrupted.countDown();
     }
 
@@ -157,8 +162,15 @@ public final class TestLiveSession implements LiveSession {
     public void interrupt(TurnId turnId, InterruptReason reason) {
         Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
+        interrupt(turnId, reason, null);
+    }
+
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason, String detail) {
+        Objects.requireNonNull(turnId, "turnId must not be null");
+        Objects.requireNonNull(reason, "reason must not be null");
         if (turnId.equals(activeTurnId.get())) {
-            interrupt(reason);
+            interrupt(reason, detail);
         }
     }
 
@@ -371,7 +383,23 @@ public final class TestLiveSession implements LiveSession {
     }
 
     public List<InterruptReason> recordedInterrupts() {
-        return List.copyOf(interrupts);
+        return interrupts.stream().map(r -> r.reason).toList();
+    }
+
+    /** The detail each recorded interrupt arrived with, in order; an empty string for one that had none. */
+    public List<String> recordedInterruptDetails() {
+        return interrupts.stream().map(r -> r.detail).toList();
+    }
+
+    /** One recorded interrupt: its reason and its detail, kept together so the two lists cannot drift apart. */
+    private static final class RecordedInterrupt {
+        private final InterruptReason reason;
+        private final String detail;
+
+        RecordedInterrupt(InterruptReason reason, String detail) {
+            this.reason = reason;
+            this.detail = detail == null ? "" : detail;
+        }
     }
 
     public boolean isClosed() {

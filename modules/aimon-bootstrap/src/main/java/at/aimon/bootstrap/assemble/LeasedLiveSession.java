@@ -139,6 +139,16 @@ final class LeasedLiveSession implements LiveSession {
     }
 
     @Override
+    public void interrupt(InterruptReason reason, String detail) {
+        delegate.interrupt(reason, detail);
+    }
+
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason, String detail) {
+        delegate.interrupt(turnId, reason, detail);
+    }
+
+    @Override
     public void enqueueMidTurnInput(QueuedInput input) {
         delegate.enqueueMidTurnInput(input);
     }

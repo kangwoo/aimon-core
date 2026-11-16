@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -88,6 +89,71 @@ class AgentExecutionEventPayloadTest {
         assertThat(decoded).isInstanceOf(ExecutionCompleted.class);
         assertThat(((ExecutionCompleted) decoded).getCompletionReason()).isEqualTo(CompletionReason.ERROR);
         assertThat(((ExecutionCompleted) decoded).getTotalIterations()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("ExecutionCompleted round-trips its interrupt reason, with and without a detail")
+    void executionCompletedRoundTripsInterruptFields() {
+        final ExecutionCompleted withDetail = ExecutionCompleted.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(0).completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                .interruptReason(InterruptReason.USER_SIGINT).interruptDetail("wrong directory").build();
+        final ExecutionCompleted reasonOnly = ExecutionCompleted.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(0).completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                .interruptReason(InterruptReason.LEASE_LOST).build();
+
+        for (ExecutionCompleted event : List.of(withDetail, reasonOnly)) {
+            assertThat(AgentExecutionEventPayload.fromPayload(AgentExecutionEventPayload.toPayload(event, TURN)))
+                    .contains(event);
+        }
+    }
+
+    @Test
+    @DisplayName("a relayed ExecutionCompleted whose detail a peer did not normalise is normalised on decode")
+    void relayedDetailIsNormalisedOnDecode() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).build(), TURN);
+        payload.put("interruptDetail", "forged\nINFO line " + "x".repeat(1000));
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getInterruptDetail()).hasValueSatisfying(detail -> {
+            assertThat(detail).doesNotContain("\n").startsWith("forged INFO line");
+            assertThat(detail.length()).isLessThanOrEqualTo(InterruptDetail.MAX_LENGTH);
+        });
+    }
+
+    @Test
+    @DisplayName("ExecutionCompleted from a node that predates the interrupt fields decodes with them empty")
+    void executionCompletedWithoutInterruptFieldsDecodesEmpty() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).interruptDetail("x").build(), TURN);
+        payload.remove("interruptReason");
+        payload.remove("interruptDetail");
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(decoded.getInterruptReason()).isEmpty();
+        assertThat(decoded.getInterruptDetail()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ExecutionCompleted with an interrupt reason this build does not know is delivered as UNKNOWN")
+    void executionCompletedWithAnUnknownInterruptReasonIsStillDelivered() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).interruptDetail("kept").build(), TURN);
+        payload.put("interruptReason", "INVENTED_BY_A_NEWER_NODE");
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getInterruptReason()).contains(InterruptReason.UNKNOWN);
+        assertThat(decoded.getInterruptDetail()).contains("kept");
     }
 
     @Test

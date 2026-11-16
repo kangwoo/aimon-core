@@ -25,6 +25,8 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -167,6 +169,125 @@ class OrcaAgentExecutorInterruptTest {
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(llmClient.callCount).as("no LLM call must be issued when signal is pre-tripped").isZero();
+    }
+
+    @Test
+    @DisplayName("the interrupt's reason and detail reach the terminal ExecutionCompleted event")
+    void interruptReasonAndDetailReachExecutionCompleted() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("unreachable"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        executor.interruptCoordinatorFactory = () -> {
+            final InterruptCoordinator c = new DefaultInterruptCoordinator();
+            c.requestInterrupt(InterruptReason.USER_SIGINT, "wrong directory");
+            return c;
+        };
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+                    assertThat(completed.getInterruptReason()).contains(InterruptReason.USER_SIGINT);
+                    assertThat(completed.getInterruptDetail()).contains("wrong directory");
+                });
+    }
+
+    @Test
+    @DisplayName("an execution that was not interrupted carries no interrupt reason on ExecutionCompleted")
+    void uninterruptedExecutionCarriesNoInterruptReason() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("done"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+                    assertThat(completed.getInterruptReason()).isEmpty();
+                    assertThat(completed.getInterruptDetail()).isEmpty();
+                });
+    }
+
+    @Test
+    @DisplayName("a custom signal that offers a detail without a reason still ends INTERRUPTED, reporting neither")
+    void detailWithoutReasonDoesNotBreakTheTerminalEvent() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("unreachable"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        executor.interruptCoordinatorFactory = () -> {
+            final DefaultInterruptCoordinator real = new DefaultInterruptCoordinator();
+            real.requestInterrupt(InterruptReason.USER_SIGINT);
+            final CancellationSignal reasonless = new CancellationSignal() {
+                @Override
+                public boolean isCancelled() {
+                    return true;
+                }
+
+                @Override
+                public java.util.Optional<InterruptReason> getReason() {
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public java.util.Optional<String> getDetail() {
+                    return java.util.Optional.of("orphan detail");
+                }
+
+                @Override
+                public void checkpoint() {
+                    real.getSignal().checkpoint();
+                }
+
+                @Override
+                public Registration onCancel(Runnable listener) {
+                    return real.getSignal().onCancel(listener);
+                }
+            };
+            return new InterruptCoordinator() {
+                @Override
+                public CancellationSignal getSignal() {
+                    return reasonless;
+                }
+
+                @Override
+                public void requestInterrupt(InterruptReason reason) {
+                    real.requestInterrupt(reason);
+                }
+
+                @Override
+                public TerminatorRegistrar newTerminatorRegistrar() {
+                    return real.newTerminatorRegistrar();
+                }
+
+                @Override
+                public void close() {
+                    real.close();
+                }
+            };
+        };
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getInterruptReason()).isEmpty();
+                    assertThat(completed.getInterruptDetail()).isEmpty();
+                });
     }
 
     // ---------- helpers ----------

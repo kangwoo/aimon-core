@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/agent-session-guide.md
-source_commit: a56317a
+source_commit: 79d78a7d
 ---
 
 # LiveSession development guide
@@ -88,6 +88,11 @@ public interface LiveSession extends AutoCloseable {
     default void interrupt(InterruptReason reason) { /* no-op by default */ }
 
     default void interrupt(TurnId turnId, InterruptReason reason) { /* no-op by default */ }
+
+    /** The two forms above with a free-text explanation. Observability only — logs and ExecutionCompleted; never sent to the model. */
+    default void interrupt(InterruptReason reason, String detail) { /* default: drops the detail and delegates */ }
+
+    default void interrupt(TurnId turnId, InterruptReason reason, String detail) { /* default: drops the detail and delegates */ }
 
     /** Takes the last interrupted turn back out of the history and runs it again. Empty if there is nothing to undo. */
     default Optional<AgentExecutionResult> retryLastTurn(SubmitOptions submitOptions) { /* ... */ }

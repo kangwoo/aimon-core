@@ -164,6 +164,29 @@ public interface AimonSessions {
     void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason);
 
     /**
+     * {@link #interrupt(SessionId, TurnId, InterruptReason)} with a free-text explanation of why — "wrong directory",
+     * "deploy freeze". For observability only: it shows up in the interrupted execution's log line and terminal
+     * {@code ExecutionCompleted} event, and is never sent to the model. Long or multi-line text is cut down to one
+     * bounded line rather than refused.
+     *
+     * <p>
+     * The default drops the detail and delegates; a decorator that forwards to another {@code AimonSessions} must
+     * override it to forward the detail.
+     *
+     * @param sessionId
+     *            the session (must not be null)
+     * @param turnId
+     *            the turn to stop (must not be null)
+     * @param reason
+     *            why it is being stopped (must not be null)
+     * @param detail
+     *            the same, in words; may be null or blank for none
+     */
+    default void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
+        interrupt(sessionId, turnId, reason);
+    }
+
+    /**
      * Drops the node-local handle for a session while keeping its stored history.
      *
      * <p>

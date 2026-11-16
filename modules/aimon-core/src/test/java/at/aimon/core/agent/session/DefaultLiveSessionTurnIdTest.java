@@ -131,6 +131,34 @@ class DefaultLiveSessionTurnIdTest {
     }
 
     @Test
+    @DisplayName("interrupt(turnId, reason, detail) hands the detail to the matching turn's coordinator")
+    void addressedInterruptCarriesDetail() throws Exception {
+        final SessionId sessionId = SessionId.of("turnid-detail");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor();
+        final TurnId turnId = TurnId.of("turn-detail");
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, createRuntime(), executor,
+                LiveSessionOptions.defaults())) {
+            final CompletionStage<?> stage = session.submitAsync(turnId, "hi", SubmitOptions.empty(), e -> {
+            });
+            assertThat(executor.awaitObserverInvoked(1, TimeUnit.SECONDS)).isTrue();
+            final InterruptCoordinator coordinator = executor.capturedCoordinator.get();
+
+            // A mismatched id drops the detail along with the interrupt.
+            session.interrupt(TurnId.of("turn-other"), InterruptReason.USER_SIGINT, "not this one");
+            assertThat(coordinator.getSignal().isCancelled()).isFalse();
+
+            session.interrupt(turnId, InterruptReason.USER_SIGINT, "deploy freeze");
+
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+            assertThat(coordinator.getSignal().getDetail()).contains("deploy freeze");
+
+            executor.completeNext(result(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("interrupt(turnId) naming a different turn leaves the running one alone")
     void addressedInterruptIgnoresMismatchedTurn() throws Exception {
         final SessionId sessionId = SessionId.of("turnid-mismatch");

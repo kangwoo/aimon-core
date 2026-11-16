@@ -111,10 +111,15 @@ public class DefaultAimonSessions implements AimonSessions {
 
     @Override
     public void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason) {
+        interrupt(sessionId, turnId, reason, null);
+    }
+
+    @Override
+    public void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
         Objects.requireNonNull(sessionId, "Session id cannot be null");
         Objects.requireNonNull(turnId, "Turn id cannot be null");
         Objects.requireNonNull(reason, "Interrupt reason cannot be null");
-        sessionRouter.interrupt(sessionId, turnId, reason);
+        sessionRouter.interrupt(sessionId, turnId, reason, detail);
     }
 
     @Override

@@ -59,6 +59,7 @@ import at.aimon.core.agent.interrupt.CancelledExecutionException;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.SignalBackedLlmCancellation;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
@@ -3208,13 +3209,30 @@ public class OrcaAgentExecutor
     private OrcaAgentExecutionResult handleInterrupted(ExecutionScope scope, int iterationCount,
             TokenUsage accumulatedTokens) {
         final String stopMessage = "Execution interrupted";
-        log.info("Execution interrupted: iterations={}, tokens={}", iterationCount, accumulatedTokens.getTotalTokens());
+        // Null only if the trip came before a coordinator existed, which handleInterrupted's callers rule out; read
+        // defensively all the same, since the log line and event below are the whole point of the reason and detail.
+        final CancellationSignal signal = scope.coordinator == null ? null : scope.coordinator.getSignal();
+        final InterruptReason interruptReason = signal == null ? null : signal.getReason().orElse(null);
+        // A detail is only reported beside a reason; a signal that offers one without the other (a custom
+        // implementation) must not make the terminal event fail to build and lose the interrupted result with it.
+        // Normalised again for the log line: a CancellationSignal from outside this repository need not have done it.
+        final String interruptDetail = interruptReason == null
+                ? null
+                : signal.getDetail().flatMap(InterruptDetail::normalize).orElse(null);
+        // The detail goes last, quoted and escaped, so a detail shaped like "x, iterations=0" or containing a quote
+        // cannot pass for further fields; "-" when there is none, rather than a detail that reads "null".
+        final String loggedDetail = interruptDetail == null
+                ? "-"
+                : '"' + interruptDetail.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+        log.info("Execution interrupted: reason={}, iterations={}, tokens={}, detail={}", interruptReason,
+                iterationCount, accumulatedTokens.getTotalTokens(), loggedDetail);
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
 
         invokeOnStop(scope, false, stopMessage, metadata);
 
-        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.INTERRUPTED);
+        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.INTERRUPTED, interruptReason,
+                interruptDetail);
 
         // PSTREAM-09: preserve the streaming flag on the interrupted result so callers that streamed partial text
         // don't re-render it from the final failure payload.

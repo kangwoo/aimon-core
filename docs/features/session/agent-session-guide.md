@@ -84,6 +84,11 @@ public interface LiveSession extends AutoCloseable {
 
     default void interrupt(TurnId turnId, InterruptReason reason) { /* no-op by default */ }
 
+    /** 위 두 형태에 자유 텍스트 설명을 붙인다. 관측 전용 — 로그와 ExecutionCompleted 에만 실리고 모델에는 가지 않는다. */
+    default void interrupt(InterruptReason reason, String detail) { /* 기본: 설명을 버리고 위로 위임 */ }
+
+    default void interrupt(TurnId turnId, InterruptReason reason, String detail) { /* 기본: 설명을 버리고 위로 위임 */ }
+
     /** 중단된 마지막 턴을 이력에서 걷어내고 다시 실행한다. 되돌릴 것이 없으면 빈 Optional. */
     default Optional<AgentExecutionResult> retryLastTurn(SubmitOptions submitOptions) { /* ... */ }
 

@@ -23,6 +23,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.MessageQueueListener;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -859,9 +860,21 @@ public final class DefaultLiveSession implements LiveSession {
      */
     @Override
     public void interrupt(InterruptReason reason) {
+        interrupt(reason, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Override: as {@link #interrupt(InterruptReason)}, with the detail handed to the turn's coordinator alongside the
+     * reason — or kept with it, when the coordinator is not published yet.
+     */
+    @Override
+    public void interrupt(InterruptReason reason, String detail) {
         Objects.requireNonNull(reason, "reason must not be null");
         InterruptReason.requireGivable(reason);
-        interrupt(activeTurn.get(), reason);
+        interrupt(activeTurn.get(), reason, detail);
     }
 
     /**
@@ -873,13 +886,15 @@ public final class DefaultLiveSession implements LiveSession {
      *            the turn to interrupt, or {@code null} when the session is idle
      * @param reason
      *            the reason to hand the coordinator (must not be null)
+     * @param detail
+     *            the caller's explanation, raw; may be null
      */
-    private void interrupt(ActiveTurn turn, InterruptReason reason) {
+    private void interrupt(ActiveTurn turn, InterruptReason reason, String detail) {
         if (turn == null) {
             log.debug("Session {} interrupt({}) requested with no active turn — ignoring", sessionId, reason);
             return;
         }
-        if (turn.interruptOrKeep(reason)) {
+        if (turn.interruptOrKeep(reason, detail)) {
             log.debug("Session {} forwarded interrupt({}) to the coordinator of turn {}", sessionId, reason,
                     turn.turnId);
         } else {
@@ -906,6 +921,17 @@ public final class DefaultLiveSession implements LiveSession {
      */
     @Override
     public void interrupt(TurnId turnId, InterruptReason reason) {
+        interrupt(turnId, reason, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Override: as {@link #interrupt(TurnId, InterruptReason)}, carrying the detail to the addressed turn.
+     */
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason, String detail) {
         Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
         InterruptReason.requireGivable(reason);
@@ -920,7 +946,7 @@ public final class DefaultLiveSession implements LiveSession {
                     turnId, turn.turnId);
             return;
         }
-        interrupt(turn, reason);
+        interrupt(turn, reason, detail);
     }
 
     /**
@@ -979,7 +1005,7 @@ public final class DefaultLiveSession implements LiveSession {
         }
         final ActiveTurn inFlight = activeTurn.getAndSet(null);
         if (inFlight != null) {
-            interrupt(inFlight, InterruptReason.SESSION_RELEASED);
+            interrupt(inFlight, InterruptReason.SESSION_RELEASED, null);
         }
         fireOnSessionEnd();
         // Per the scope model the OrcaAgentRuntime is agent-scoped and shared across sessions —
@@ -1067,6 +1093,18 @@ public final class DefaultLiveSession implements LiveSession {
         return closed;
     }
 
+    /** An interrupt kept for a turn whose coordinator is not published yet: its reason and its raw detail. */
+    private static final class PendingInterrupt {
+
+        private final InterruptReason reason;
+        private final String detail;
+
+        PendingInterrupt(InterruptReason reason, String detail) {
+            this.reason = Objects.requireNonNull(reason, "reason must not be null");
+            this.detail = detail;
+        }
+    }
+
     /**
      * The three handles of one in-flight turn, held together so a reader never has to combine two independent reads.
      *
@@ -1091,10 +1129,11 @@ public final class DefaultLiveSession implements LiveSession {
          */
         private volatile InterruptCoordinator coordinator;
         /**
-         * The reason of an interrupt that arrived before {@link #coordinator} was published, waiting to be delivered
-         * to it. The first one wins, as on the coordinator itself.
+         * The reason and detail of an interrupt that arrived before {@link #coordinator} was published, waiting to be
+         * delivered to it. The first one wins, as on the coordinator itself; the pair is kept as one so a later
+         * interrupt cannot pair its detail with an earlier reason.
          */
-        private final AtomicReference<InterruptReason> pendingInterrupt = new AtomicReference<>();
+        private final AtomicReference<PendingInterrupt> pendingInterrupt = new AtomicReference<>();
         /**
          * Published at ReAct loop entry; stays {@code null} for turns that never enter the loop (slash commands).
          * Read best-effort — not thread-safe.
@@ -1125,9 +1164,9 @@ public final class DefaultLiveSession implements LiveSession {
          */
         void publish(InterruptCoordinator published) {
             coordinator = published;
-            final InterruptReason pending = pendingInterrupt.get();
+            final PendingInterrupt pending = pendingInterrupt.get();
             if (pending != null) {
-                published.requestInterrupt(pending);
+                published.requestInterrupt(pending.reason, pending.detail);
             }
         }
 
@@ -1136,19 +1175,22 @@ public final class DefaultLiveSession implements LiveSession {
          *
          * @return {@code true} if a coordinator was there to hand the reason to; {@code false} if the reason was kept
          */
-        boolean interruptOrKeep(InterruptReason reason) {
+        boolean interruptOrKeep(InterruptReason reason, String detail) {
             final InterruptCoordinator published = coordinator;
             if (published != null) {
-                published.requestInterrupt(reason);
+                published.requestInterrupt(reason, detail);
                 return true;
             }
-            pendingInterrupt.compareAndSet(null, reason);
+            // Normalised now rather than held raw until the coordinator is published: bounded while it waits.
+            pendingInterrupt.compareAndSet(null,
+                    new PendingInterrupt(reason, InterruptDetail.normalize(detail).orElse(null)));
             // The coordinator may have been published between the read above and the write: deliver it ourselves.
             final InterruptCoordinator publishedMeanwhile = coordinator;
             if (publishedMeanwhile == null) {
                 return false;
             }
-            publishedMeanwhile.requestInterrupt(pendingInterrupt.get());
+            final PendingInterrupt kept = pendingInterrupt.get();
+            publishedMeanwhile.requestInterrupt(kept.reason, kept.detail);
             return true;
         }
 

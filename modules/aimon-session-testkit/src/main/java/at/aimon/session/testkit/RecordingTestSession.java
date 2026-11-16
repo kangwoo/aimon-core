@@ -50,7 +50,7 @@ public final class RecordingTestSession implements LiveSession {
     private final AtomicReference<CompletableFuture<AgentExecutionResult>> current = new AtomicReference<>();
     private final AtomicReference<Consumer<AgentExecutionEvent>> currentListener = new AtomicReference<>();
     private final ConcurrentLinkedQueue<UserInput> submittedInputs = new ConcurrentLinkedQueue<>();
-    private final ConcurrentLinkedQueue<InterruptReason> interrupts = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<RecordedInterrupt> interrupts = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final CountDownLatch turnStarted = new CountDownLatch(1);
     private final CountDownLatch interrupted = new CountDownLatch(1);
@@ -120,8 +120,32 @@ public final class RecordingTestSession implements LiveSession {
     @Override
     public void interrupt(InterruptReason reason) {
         Objects.requireNonNull(reason, "reason must not be null");
-        interrupts.add(reason);
+        interrupts.add(new RecordedInterrupt(reason, null));
         interrupted.countDown();
+    }
+
+    /** Records the detail beside the reason, so a test can assert that a router passed it through. */
+    @Override
+    public void interrupt(InterruptReason reason, String detail) {
+        Objects.requireNonNull(reason, "reason must not be null");
+        interrupts.add(new RecordedInterrupt(reason, detail));
+        interrupted.countDown();
+    }
+
+    /**
+     * Records a turn-addressed interrupt like a session-wide one. This double does not track which turn is running, so
+     * it does not drop a mismatched id the way {@code DefaultLiveSession} does.
+     */
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason) {
+        interrupt(turnId, reason, null);
+    }
+
+    /** Records a turn-addressed interrupt with its detail; see {@link #interrupt(TurnId, InterruptReason)}. */
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason, String detail) {
+        Objects.requireNonNull(turnId, "turnId must not be null");
+        interrupt(reason, detail);
     }
 
     @Override
@@ -207,7 +231,27 @@ public final class RecordingTestSession implements LiveSession {
     }
 
     public List<InterruptReason> recordedInterrupts() {
-        return List.copyOf(interrupts);
+        return interrupts.stream().map(r -> r.reason).toList();
+    }
+
+    /**
+     * The detail each recorded interrupt arrived with, in the order of {@link #recordedInterrupts()}.
+     *
+     * @return one entry per interrupt; an empty string for one given without a detail
+     */
+    public List<String> recordedInterruptDetails() {
+        return interrupts.stream().map(r -> r.detail).toList();
+    }
+
+    /** One recorded interrupt: its reason and its detail, kept together so the two lists cannot drift apart. */
+    private static final class RecordedInterrupt {
+        private final InterruptReason reason;
+        private final String detail;
+
+        RecordedInterrupt(InterruptReason reason, String detail) {
+            this.reason = reason;
+            this.detail = detail == null ? "" : detail;
+        }
     }
 
     public boolean isClosed() {
