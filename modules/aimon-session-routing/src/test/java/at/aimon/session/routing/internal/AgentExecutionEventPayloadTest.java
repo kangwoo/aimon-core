@@ -91,6 +91,54 @@ class AgentExecutionEventPayloadTest {
     }
 
     @Test
+    @DisplayName("ExecutionCompleted round-trips its interrupt reason, with and without a detail")
+    void executionCompletedRoundTripsInterruptFields() {
+        final ExecutionCompleted withDetail = ExecutionCompleted.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(0).completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                .interruptReason(InterruptReason.USER_SIGINT).interruptDetail("wrong directory").build();
+        final ExecutionCompleted reasonOnly = ExecutionCompleted.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(0).completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                .interruptReason(InterruptReason.LEASE_LOST).build();
+
+        for (ExecutionCompleted event : List.of(withDetail, reasonOnly)) {
+            assertThat(AgentExecutionEventPayload.fromPayload(AgentExecutionEventPayload.toPayload(event, TURN)))
+                    .contains(event);
+        }
+    }
+
+    @Test
+    @DisplayName("ExecutionCompleted from a node that predates the interrupt fields decodes with them empty")
+    void executionCompletedWithoutInterruptFieldsDecodesEmpty() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).interruptDetail("x").build(), TURN);
+        payload.remove("interruptReason");
+        payload.remove("interruptDetail");
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(decoded.getInterruptReason()).isEmpty();
+        assertThat(decoded.getInterruptDetail()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ExecutionCompleted with an interrupt reason this build does not know is delivered as UNKNOWN")
+    void executionCompletedWithAnUnknownInterruptReasonIsStillDelivered() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).interruptDetail("kept").build(), TURN);
+        payload.put("interruptReason", "INVENTED_BY_A_NEWER_NODE");
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getInterruptReason()).contains(InterruptReason.UNKNOWN);
+        assertThat(decoded.getInterruptDetail()).contains("kept");
+    }
+
+    @Test
     @DisplayName("ExecutionError with a completion reason this build does not know is delivered as ERROR")
     void executionErrorWithAnUnknownReasonIsStillDelivered() {
         final Map<String, Object> payload = AgentExecutionEventPayload

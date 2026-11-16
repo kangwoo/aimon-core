@@ -25,6 +25,8 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -167,6 +169,53 @@ class OrcaAgentExecutorInterruptTest {
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(llmClient.callCount).as("no LLM call must be issued when signal is pre-tripped").isZero();
+    }
+
+    @Test
+    @DisplayName("the interrupt's reason and detail reach the terminal ExecutionCompleted event")
+    void interruptReasonAndDetailReachExecutionCompleted() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("unreachable"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        executor.interruptCoordinatorFactory = () -> {
+            final InterruptCoordinator c = new DefaultInterruptCoordinator();
+            c.requestInterrupt(InterruptReason.USER_SIGINT, "wrong directory");
+            return c;
+        };
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+                    assertThat(completed.getInterruptReason()).contains(InterruptReason.USER_SIGINT);
+                    assertThat(completed.getInterruptDetail()).contains("wrong directory");
+                });
+    }
+
+    @Test
+    @DisplayName("an execution that was not interrupted carries no interrupt reason on ExecutionCompleted")
+    void uninterruptedExecutionCarriesNoInterruptReason() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("done"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+                    assertThat(completed.getInterruptReason()).isEmpty();
+                    assertThat(completed.getInterruptDetail()).isEmpty();
+                });
     }
 
     // ---------- helpers ----------

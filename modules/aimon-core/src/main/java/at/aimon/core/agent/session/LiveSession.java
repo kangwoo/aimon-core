@@ -536,6 +536,51 @@ public interface LiveSession extends AutoCloseable {
     }
 
     /**
+     * {@link #interrupt(InterruptReason)} with a free-text explanation of why.
+     *
+     * <p>
+     * The detail is for observability and is never sent to the model. It reaches the signal's
+     * {@link at.aimon.core.agent.interrupt.CancellationSignal#getDetail() getDetail()}, the log line of the interrupted
+     * execution, and its terminal {@code ExecutionCompleted} event. It is normalised
+     * ({@link at.aimon.core.agent.interrupt.InterruptDetail#normalize(String)}) and,
+     * like the reason, only the interrupt that trips the turn keeps it.
+     *
+     * <p>
+     * The default drops the detail and delegates, so an implementation written before this method existed still
+     * interrupts; it just reports no detail.
+     *
+     * @param reason
+     *            the reason for the interrupt (must not be null)
+     * @param detail
+     *            why the interrupt was requested, in words; may be null or blank for none
+     * @throws NullPointerException
+     *             if {@code reason} is null
+     */
+    default void interrupt(InterruptReason reason, String detail) {
+        interrupt(reason);
+    }
+
+    /**
+     * {@link #interrupt(TurnId, InterruptReason)} with a free-text explanation of why; see
+     * {@link #interrupt(InterruptReason, String)} for what happens to the detail.
+     *
+     * <p>
+     * The default drops the detail and delegates.
+     *
+     * @param turnId
+     *            the turn this interrupt is meant for (must not be null)
+     * @param reason
+     *            the reason for the interrupt (must not be null)
+     * @param detail
+     *            why the interrupt was requested, in words; may be null or blank for none
+     * @throws NullPointerException
+     *             if {@code turnId} or {@code reason} is null
+     */
+    default void interrupt(TurnId turnId, InterruptReason reason, String detail) {
+        interrupt(turnId, reason);
+    }
+
+    /**
      * Enqueues a {@link QueuedInput} into this session's mid-turn injection queue.
      *
      * <p>

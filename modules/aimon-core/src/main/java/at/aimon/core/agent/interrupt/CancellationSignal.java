@@ -14,7 +14,7 @@ import java.util.Optional;
  *
  * <h2>Threading</h2>
  * <ul>
- * <li>{@link #isCancelled()} and {@link #getReason()} are safe to call from any thread.
+ * <li>{@link #isCancelled()}, {@link #getReason()} and {@link #getDetail()} are safe to call from any thread.
  * <li>{@link #onCancel(Runnable)} is idempotent — listeners added after the signal has already been tripped are
  * invoked synchronously on the registering thread, and listeners fired on trip run in registration order.
  * </ul>
@@ -50,6 +50,21 @@ public interface CancellationSignal {
      * @return the reason the signal was tripped, or empty if it has not been
      */
     Optional<InterruptReason> getReason();
+
+    /**
+     * The free-text explanation the interrupt was requested with, if any — for observability only (logs, the
+     * terminal {@code ExecutionCompleted} event), never sent to the model. Already normalised by
+     * {@link InterruptDetail#normalize(String)}. Like the reason, it is fixed by the first interrupt that trips the
+     * signal; a later request's detail is dropped along with that request.
+     *
+     * <p>
+     * The default answers empty, so a signal written before this method existed reports no detail.
+     *
+     * @return the detail, or empty if the signal has not been tripped or was tripped without one
+     */
+    default Optional<String> getDetail() {
+        return Optional.empty();
+    }
 
     /**
      * Throws {@link CancelledExecutionException} if {@link #isCancelled()} is true; no-op otherwise.

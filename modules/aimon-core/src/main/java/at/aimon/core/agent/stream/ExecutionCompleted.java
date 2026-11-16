@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptReason;
 
 /**
  * Terminal event signalling that the overall agent execution finished on its own terms (including clean budget-driven
@@ -28,6 +29,9 @@ import at.aimon.core.agent.budget.CompletionReason;
  * <li>{@link #getCompletionReason()} — reason the execution ended (reuses {@link CompletionReason}; non-null)
  * <li>{@link #getTotalIterations()} — total number of iterations that actually ran
  * <li>{@link #getElapsed()} — optional wall-clock duration, if the executor measured it
+ * <li>{@link #getInterruptReason()} — for an execution that ended because it was interrupted, what tripped it
+ * <li>{@link #getInterruptDetail()} — the free-text explanation the interrupt was requested with, if any; for
+ * observability only, never sent to the model
  * </ul>
  *
  * <p>
@@ -38,6 +42,8 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
     private final CompletionReason completionReason;
     private final int totalIterations;
     private final Optional<Duration> elapsed;
+    private final Optional<InterruptReason> interruptReason;
+    private final Optional<String> interruptDetail;
 
     private ExecutionCompleted(Builder builder) {
         super(Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null"),
@@ -48,6 +54,11 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         }
         this.totalIterations = builder.totalIterations;
         this.elapsed = Objects.requireNonNull(builder.elapsed, "elapsed Optional cannot be null");
+        this.interruptReason = Optional.ofNullable(builder.interruptReason);
+        this.interruptDetail = Optional.ofNullable(builder.interruptDetail);
+        if (interruptDetail.isPresent() && interruptReason.isEmpty()) {
+            throw new IllegalArgumentException("interruptDetail requires an interruptReason");
+        }
     }
 
     /**
@@ -86,6 +97,26 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         return elapsed;
     }
 
+    /**
+     * Returns what tripped the execution's interrupt, for an execution that ended because it was interrupted.
+     *
+     * @return the interrupt reason; empty when the execution was not interrupted, or when the event was relayed from
+     *         a node on a build that predates this field (never null)
+     */
+    public Optional<InterruptReason> getInterruptReason() {
+        return interruptReason;
+    }
+
+    /**
+     * Returns the free-text explanation the interrupt was requested with. For observability only; never sent to the
+     * model. Present only together with {@link #getInterruptReason()}.
+     *
+     * @return the normalised detail; empty when none was given (never null)
+     */
+    public Optional<String> getInterruptDetail() {
+        return interruptDetail;
+    }
+
     @Override
     protected String eventName() {
         return "ExecutionCompleted";
@@ -93,7 +124,11 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
 
     @Override
     protected String detailString() {
-        return "completionReason=" + completionReason + ", totalIterations=" + totalIterations + ", elapsed=" + elapsed;
+        final StringBuilder sb = new StringBuilder().append("completionReason=").append(completionReason)
+                .append(", totalIterations=").append(totalIterations).append(", elapsed=").append(elapsed);
+        interruptReason.ifPresent(r -> sb.append(", interruptReason=").append(r));
+        interruptDetail.ifPresent(d -> sb.append(", interruptDetail=").append(d));
+        return sb.toString();
     }
 
     @Override
@@ -107,13 +142,14 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         ExecutionCompleted that = (ExecutionCompleted) o;
         return totalIterations == that.totalIterations && getIteration() == that.getIteration()
                 && getTimestamp().equals(that.getTimestamp()) && getAgentRuntimeId().equals(that.getAgentRuntimeId())
-                && completionReason == that.completionReason && elapsed.equals(that.elapsed);
+                && completionReason == that.completionReason && elapsed.equals(that.elapsed)
+                && interruptReason.equals(that.interruptReason) && interruptDetail.equals(that.interruptDetail);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(getTimestamp(), getAgentRuntimeId(), getIteration(), completionReason, totalIterations,
-                elapsed);
+                elapsed, interruptReason, interruptDetail);
     }
 
     /** Builder for {@link ExecutionCompleted}. */
@@ -124,6 +160,8 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         private CompletionReason completionReason;
         private int totalIterations;
         private Optional<Duration> elapsed = Optional.empty();
+        private InterruptReason interruptReason;
+        private String interruptDetail;
 
         private Builder() {
         }
@@ -201,13 +239,39 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         }
 
         /**
+         * Sets what tripped the execution's interrupt (nullable — null for an execution that was not interrupted).
+         *
+         * @param interruptReason
+         *            the interrupt reason, or {@code null} to clear
+         * @return this builder
+         */
+        public Builder interruptReason(InterruptReason interruptReason) {
+            this.interruptReason = interruptReason;
+            return this;
+        }
+
+        /**
+         * Sets the interrupt's free-text explanation (nullable). Taken as given: the coordinator has already
+         * normalised it, so this builder neither trims nor bounds it.
+         *
+         * @param interruptDetail
+         *            the detail, or {@code null} for none
+         * @return this builder
+         */
+        public Builder interruptDetail(String interruptDetail) {
+            this.interruptDetail = interruptDetail;
+            return this;
+        }
+
+        /**
          * Builds the {@link ExecutionCompleted} event.
          *
          * @return a new {@link ExecutionCompleted}
          * @throws NullPointerException
          *             if {@code timestamp}, {@code agentRuntimeId}, or {@code completionReason} is null
          * @throws IllegalArgumentException
-         *             if {@code iteration} or {@code totalIterations} is negative
+         *             if {@code iteration} or {@code totalIterations} is negative, or an {@code interruptDetail} is set
+         *             without an {@code interruptReason}
          */
         public ExecutionCompleted build() {
             return new ExecutionCompleted(this);

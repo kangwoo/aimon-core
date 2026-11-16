@@ -8,6 +8,7 @@ import java.util.Objects;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
 import at.aimon.core.agent.stream.AssistantReasoningDelta;
@@ -166,12 +167,27 @@ final class AgentEventDispatcher {
     }
 
     void emitExecutionCompleted(int totalIterations, CompletionReason reason) {
+        emitExecutionCompleted(totalIterations, reason, null, null);
+    }
+
+    /**
+     * Emits an {@link ExecutionCompleted} event that also says what tripped the execution's interrupt and, if the
+     * interrupt was requested with one, its free-text explanation.
+     *
+     * @param interruptReason
+     *            what tripped the interrupt; {@code null} when the execution was not interrupted
+     * @param interruptDetail
+     *            the already-normalised explanation; {@code null} for none
+     */
+    void emitExecutionCompleted(int totalIterations, CompletionReason reason, InterruptReason interruptReason,
+            String interruptDetail) {
         if (hasNoListeners()) {
             return;
         }
         dispatch(ExecutionCompleted.builder().timestamp(Instant.now()).agentRuntimeId(agentRuntimeId).iteration(0)
                 .completionReason(reason).totalIterations(totalIterations)
-                .elapsed(Duration.between(startTime, Instant.now())).build());
+                .elapsed(Duration.between(startTime, Instant.now())).interruptReason(interruptReason)
+                .interruptDetail(interruptDetail).build());
     }
 
     void emitExecutionError(Exception exception, String errorMessage) {

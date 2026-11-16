@@ -3208,13 +3208,20 @@ public class OrcaAgentExecutor
     private OrcaAgentExecutionResult handleInterrupted(ExecutionScope scope, int iterationCount,
             TokenUsage accumulatedTokens) {
         final String stopMessage = "Execution interrupted";
-        log.info("Execution interrupted: iterations={}, tokens={}", iterationCount, accumulatedTokens.getTotalTokens());
+        // Null only if the trip came before a coordinator existed, which handleInterrupted's callers rule out; read
+        // defensively all the same, since the log line and event below are the whole point of the reason and detail.
+        final CancellationSignal signal = scope.coordinator == null ? null : scope.coordinator.getSignal();
+        final InterruptReason interruptReason = signal == null ? null : signal.getReason().orElse(null);
+        final String interruptDetail = signal == null ? null : signal.getDetail().orElse(null);
+        log.info("Execution interrupted: reason={}, detail={}, iterations={}, tokens={}", interruptReason,
+                interruptDetail, iterationCount, accumulatedTokens.getTotalTokens());
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
 
         invokeOnStop(scope, false, stopMessage, metadata);
 
-        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.INTERRUPTED);
+        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.INTERRUPTED, interruptReason,
+                interruptDetail);
 
         // PSTREAM-09: preserve the streaming flag on the interrupted result so callers that streamed partial text
         // don't re-render it from the final failure payload.

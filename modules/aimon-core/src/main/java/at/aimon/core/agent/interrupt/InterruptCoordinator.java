@@ -44,6 +44,26 @@ public interface InterruptCoordinator extends AutoCloseable {
     void requestInterrupt(InterruptReason reason);
 
     /**
+     * Trip the signal with the given reason and a free-text explanation of it. Behaves exactly like
+     * {@link #requestInterrupt(InterruptReason)}; the detail is normalised ({@link InterruptDetail#normalize(String)})
+     * and kept on the signal only if this call is the one that trips it ({@link CancellationSignal#getDetail()}).
+     *
+     * <p>
+     * The detail is for observability and is never sent to the model. The default drops it and delegates, so a
+     * coordinator written before this method existed still interrupts; it just reports no detail.
+     *
+     * @param reason
+     *            the interrupt reason (never null)
+     * @param detail
+     *            why the interrupt was requested, in words; may be null or blank for none
+     * @throws NullPointerException
+     *             if {@code reason} is null
+     */
+    default void requestInterrupt(InterruptReason reason, String detail) {
+        requestInterrupt(reason);
+    }
+
+    /**
      * Create a fresh {@link TerminatorRegistrar} scoped to one tool execution. The executor obtains one before
      * invoking a {@link InterruptBehavior#THREAD_INTERRUPT} or {@link InterruptBehavior#EXTERNALLY_TERMINATED} tool
      * and closes it when the tool returns. If {@link #requestInterrupt(InterruptReason)} has already fired on this

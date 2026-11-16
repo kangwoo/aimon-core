@@ -27,6 +27,8 @@ import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -96,6 +98,29 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
             // The onStart hook here is a programmatic one, which no signal stops: it is not run at all.
             assertThat(onStartBodiesRun).as("no onStart hook runs for a turn interrupted before it").hasValue(0);
             assertThat(onStops).containsExactly(false);
+        }
+    }
+
+    @Test
+    @DisplayName("an interrupt kept during set-up keeps its detail, which reaches the turn's ExecutionCompleted")
+    void interruptDuringSetUp_keepsItsDetail() throws Exception {
+        final List<AgentExecutionEvent> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (DefaultLiveSession session = session(null)) {
+            final CompletionStage<AgentExecutionResult> turn = session.submitAsync("hi", seen::add);
+            assertThat(settingUp.await(10, TimeUnit.SECONDS)).isTrue();
+
+            session.interrupt(InterruptReason.USER_SIGINT, "wrong directory");
+            // A later interrupt neither replaces the kept reason nor pairs its own detail with it.
+            session.interrupt(InterruptReason.TASK_CANCELLED, "too late");
+            goOn.countDown();
+            final AgentExecutionResult result = turn.toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+            assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+            assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                    .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                        assertThat(completed.getInterruptReason()).contains(InterruptReason.USER_SIGINT);
+                        assertThat(completed.getInterruptDetail()).contains("wrong directory");
+                    });
         }
     }
 

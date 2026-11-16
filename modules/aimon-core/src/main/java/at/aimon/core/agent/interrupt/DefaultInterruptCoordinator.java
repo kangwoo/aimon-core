@@ -32,12 +32,17 @@ public final class DefaultInterruptCoordinator implements InterruptCoordinator {
 
     @Override
     public void requestInterrupt(InterruptReason reason) {
+        requestInterrupt(reason, null);
+    }
+
+    @Override
+    public void requestInterrupt(InterruptReason reason, String detail) {
         Objects.requireNonNull(reason, "reason must not be null");
         if (closed) {
             log.debug("requestInterrupt({}) ignored; coordinator already closed", reason);
             return;
         }
-        final boolean flipped = signal.trip(reason);
+        final boolean flipped = signal.trip(reason, InterruptDetail.normalize(detail).orElse(null));
         if (!flipped) {
             log.debug("requestInterrupt({}) is a no-op; signal already tripped", reason);
             return;

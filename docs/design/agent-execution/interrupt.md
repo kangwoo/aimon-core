@@ -81,6 +81,7 @@
 public interface CancellationSignal {
     boolean isCancelled();
     Optional<InterruptReason> getReason();
+    default Optional<String> getDetail();    // 자유 텍스트 설명 — §3.1
     void checkpoint();                       // 취소되었으면 CancelledExecutionException
     Registration onCancel(Runnable listener);
 }
@@ -114,6 +115,29 @@ UNKNOWN
 
 이 값은 로그·이벤트·`ToolResult.error()` 메시지에 표준 문자열로 실려 관측을 일관되게 만든다.
 
+### 3.1 설명(detail) — 사유는 분류하고 설명은 말한다
+
+`InterruptReason` 은 열 칸짜리 분류라 "왜" 를 말하지 못한다 — 사용자가 Ctrl+C 를 눌렀다는 것과 *잘못된 디렉터리를 지우려
+해서* 눌렀다는 것은 다른 정보다. 그래서 중단 요청에 자유 텍스트 설명을 하나 붙일 수 있다
+(`requestInterrupt(reason, detail)`, `LiveSession.interrupt(reason, detail)` 등, §4 · §6.1).
+
+규칙은 넷이다.
+
+- **관측 전용이다.** 설명은 `CancellationSignal.getDetail()`, 중단된 실행의 로그 한 줄, 종단 이벤트 `ExecutionCompleted`
+  (§10) 에만 닿는다. **모델에는 보내지 않는다** — 다음 턴의 대화 기록에도, 도구 오류 메시지에도 넣지 않는다. 요청자의 텍스트가
+  프롬프트로 들어가는 길을 이 변경이 열지 않기 위해서다.
+- **사유와 한 묶음이다.** 첫 trip 이 사유와 함께 설명도 정한다. 뒤에 온 요청의 설명은 그 요청과 함께 버려지고, coordinator 가
+  공개되기 전에 쥐고 있던 중단도(§6.1) 사유와 설명을 한 값으로 쥔다 — 나중 요청의 설명이 먼저 온 사유에 붙지 않게.
+- **신뢰하지 않는 입력으로 다룬다.** 설명은 노드를 넘고 로그에 찍히므로 `InterruptDetail.normalize` 를 coordinator 에서 한 번
+  거친다: 제어 문자(줄바꿈 포함)는 공백으로 바꿔 로그 줄 위조를 막고, 앞뒤 공백을 걷고, 비면 없는 것으로 보고,
+  `MAX_LENGTH`(500) 를 넘으면 서로게이트 쌍을 가르지 않고 잘라 말줄임표로 끝낸다. **거절하지 않는다** — 설명이 이상하다는
+  이유로 중단이 실패하면 멈춰야 할 턴이 계속 돈다.
+- **옛 구현을 깨지 않는다.** 새 메서드는 모두 `default` 이고, 기본은 설명을 버리고 기존 메서드에 위임한다. 이 저장소 밖의
+  `InterruptCoordinator` · `LiveSession` · `SessionRouter` 구현은 그대로 중단을 처리하고 설명만 비운다.
+
+스케줄 취소와 cascade(`PARENT_CANCELLED`) 경로는 설명을 싣지 않는다 —
+[`backlog/interrupt-open-items.md`](../../backlog/interrupt-open-items.md) 10번.
+
 ---
 
 ## 4. `InterruptCoordinator` — 실행당 하나
@@ -122,6 +146,7 @@ UNKNOWN
 public interface InterruptCoordinator {
     CancellationSignal getSignal();
     void requestInterrupt(InterruptReason reason);
+    default void requestInterrupt(InterruptReason reason, String detail); // §3.1
     TerminatorRegistrar newTerminatorRegistrar();
     void close();
 }
@@ -182,6 +207,7 @@ if (signal.isCancelled()) {
 ```java
 default void interrupt(InterruptReason reason);              // 활성 턴이 무엇이든
 default void interrupt(TurnId turnId, InterruptReason reason); // 지정한 턴에만
+// 두 형태 모두 설명을 받는 오버로드가 있다 — interrupt(reason, detail), interrupt(turnId, reason, detail) (§3.1)
 ```
 
 둘 다 `default` no-op 이라 중단을 지원하지 않는 구현은 그대로 둔다. `DefaultLiveSession` 은 활성
@@ -462,6 +488,11 @@ trip 은 보통 LLM 워커와 다른 스레드에서 도착하므로 abort 는 �
 `reason`(트립 사유), `iterationIndex`(1-based), `partialOutput`(중단 시점까지 누적된 assistant
 텍스트)이다. 구독자는 이것으로 "매달린 스피너" 대신 명확히 종료된 턴을 렌더한다.
 
+`InterruptedAt` 을 내는 것은 라우팅 계층(축출·holder 상실)이고, 노드 로컬 턴이 중단되어 끝나면 실행기는
+`ExecutionCompleted(INTERRUPTED)` 를 낸다. 그 이벤트는 무엇이 trip 했는지(`interruptReason`)와 요청에 붙은 설명
+(`interruptDetail`, §3.1)을 함께 싣는다. 둘 다 선택 필드라 노드 간 페이로드(`AgentExecutionEventPayload`)에서 옛 빌드는
+쓰지도 읽지도 않고 나머지를 그대로 주고받는다. 모르는 사유 이름은 `UNKNOWN` 으로 읽는다.
+
 설계 초안에는 `ToolInterruptRequested` 와 `ExecutionInterrupted` 두 이벤트가 있었다. 전자는 결국
 넣지 않았다 — 도구 단위 중단 요청은 그 자체로 사용자에게 보여 줄 상태가 아니고, 관측이 필요한
 사실(어느 iteration 에서 무슨 이유로 끊겼는가)은 종단 이벤트 하나에 다 담긴다. 이벤트를 늘리면
@@ -477,7 +508,7 @@ trip 은 보통 LLM 워커와 다른 스레드에서 도착하므로 abort 는 �
 | 사건 | 전파 |
 |------|------|
 | NOW-tier enqueue | `MessageQueueManager` 리스너 인터페이스. 분산 구현은 큐 저장소의 책임 |
-| 다른 노드의 Ctrl+C / 명시적 중단 | `SessionSignalBus` 의 `INTERRUPT` 신호 |
+| 다른 노드의 Ctrl+C / 명시적 중단 | `SessionSignalBus` 의 `INTERRUPT` 신호. 설명은 보내는 노드가 정규화해 선택 키 `detail` 로 싣는다(§3.1) |
 | 세션 소유권 상실 | `LEASE_LOST` · `SESSION_RELEASED` · `HOLDER_LOST` 로 라우팅 계층이 로컬 턴을 끊는다 |
 | 다른 노드에서 도는 스케줄 루틴의 취소 | `ScheduledTaskInterruptBus` 의 팬아웃 (§12.7) |
 

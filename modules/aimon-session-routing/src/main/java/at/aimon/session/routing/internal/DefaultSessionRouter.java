@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
@@ -44,6 +45,7 @@ import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.LiveSession;
@@ -131,6 +133,11 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /** {@code EVICT} payload key: the turns the evicting node's purge removed, space-separated. */
     static final String PURGED_TURNS_KEY = "purgedTurns";
+    /**
+     * INTERRUPT payload key for the caller's explanation, already normalised. Optional: absent when none was given,
+     * and from a peer on a build that predates it — which in turn ignores the key, so it is safe in both directions.
+     */
+    static final String PAYLOAD_DETAIL = "detail";
 
     /** How many turn ids an {@code EVICT} names at most; the rest rely on their own {@code PURGED} answers. */
     private static final int MAX_EVICT_TURNS = 256;
@@ -1061,11 +1068,18 @@ public final class DefaultSessionRouter implements SessionRouter {
      *         unwind knows whether it has anything to wait for
      */
     private boolean interruptLocal(SessionId sessionId, InterruptReason reason) {
+        return interruptLocal(sessionId, reason, null);
+    }
+
+    /**
+     * {@link #interruptLocal(SessionId, InterruptReason)} with the caller's explanation, raw or already normalised.
+     */
+    private boolean interruptLocal(SessionId sessionId, InterruptReason reason, String detail) {
         final LiveSession session = localSession(sessionId);
         if (session == null) {
             return false;
         }
-        safeInterrupt(session, reason);
+        safeInterrupt(session, reason, detail);
         return true;
     }
 
@@ -1075,12 +1089,12 @@ public final class DefaultSessionRouter implements SessionRouter {
      * @return {@code true} when there was a live session to interrupt; the interrupt may still be dropped by the
      *         session itself when the named turn is no longer the active one
      */
-    private boolean interruptLocal(SessionId sessionId, TurnId turnId, InterruptReason reason) {
+    private boolean interruptLocal(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
         final LiveSession session = localSession(sessionId);
         if (session == null) {
             return false;
         }
-        safeInterrupt(session, turnId, reason);
+        safeInterrupt(session, turnId, reason, detail);
         return true;
     }
 
@@ -2962,10 +2976,12 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // stops only its own turn and is dropped if that turn already finished. A peer on an older build sends
                 // no turnId, so absence has to keep meaning session-scoped rather than "turn unknown → ignore".
                 final Optional<TurnId> target = parseTurnId(signal.getPayload().get("turnId"));
+                // Absent from a peer on an older build, and from a caller that gave none.
+                final String detail = signal.getPayload().get(PAYLOAD_DETAIL) instanceof String d ? d : null;
                 if (target.isPresent()) {
-                    interruptLocal(convId, target.get(), reason);
+                    interruptLocal(convId, target.get(), reason, detail);
                 } else {
-                    interruptLocal(convId, reason);
+                    interruptLocal(convId, reason, detail);
                 }
                 // Compatibility shim (removable once no node predates SignalKind.YIELD): a peer on an older build asks
                 // for a session by interrupting it with this reason and nothing else. Keep reading that as a yield
@@ -3048,23 +3064,43 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     @Override
     public void interrupt(SessionId sessionId, InterruptReason reason) {
+        interrupt(sessionId, reason, (String) null);
+    }
+
+    @Override
+    public void interrupt(SessionId sessionId, InterruptReason reason, String detail) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
         InterruptReason.requireGivable(reason);
-        interruptLocal(sessionId, reason);
+        final Optional<String> normalized = InterruptDetail.normalize(detail);
+        interruptLocal(sessionId, reason, normalized.orElse(null));
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("reason", reason.name());
+        normalized.ifPresent(d -> payload.put(PAYLOAD_DETAIL, d));
         signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.INTERRUPT)
-                .originNodeId(nodeId).payload(Map.of("reason", reason.name())).build());
+                .originNodeId(nodeId).payload(payload).build());
     }
 
     @Override
     public void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason) {
+        interrupt(sessionId, turnId, reason, null);
+    }
+
+    @Override
+    public void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
         InterruptReason.requireGivable(reason);
-        interruptLocal(sessionId, turnId, reason);
+        // Normalised before it crosses the bus, so a peer receives the bounded value every reader sees.
+        final Optional<String> normalized = InterruptDetail.normalize(detail);
+        interruptLocal(sessionId, turnId, reason, normalized.orElse(null));
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("reason", reason.name());
+        payload.put("turnId", turnId.value());
+        normalized.ifPresent(d -> payload.put(PAYLOAD_DETAIL, d));
         signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.INTERRUPT)
-                .originNodeId(nodeId).payload(Map.of("reason", reason.name(), "turnId", turnId.value())).build());
+                .originNodeId(nodeId).payload(payload).build());
     }
 
     @Override
@@ -3858,12 +3894,12 @@ public final class DefaultSessionRouter implements SessionRouter {
         final Set<LiveSession> interrupted = Collections.newSetFromMap(new IdentityHashMap<>());
         sessionCache.forEachSession(session -> {
             if (interrupted.add(session)) {
-                safeInterrupt(session, reason);
+                safeInterrupt(session, reason, null);
             }
         });
         turnSessions.values().forEach(session -> {
             if (interrupted.add(session)) {
-                safeInterrupt(session, reason);
+                safeInterrupt(session, reason, null);
             }
         });
     }
@@ -3876,9 +3912,9 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
     }
 
-    private static void safeInterrupt(LiveSession session, InterruptReason reason) {
+    private static void safeInterrupt(LiveSession session, InterruptReason reason, String detail) {
         try {
-            session.interrupt(reason);
+            session.interrupt(reason, detail);
         } catch (Exception e) {
             log.warn("session.interrupt threw: {}", e.toString());
         }
@@ -3889,9 +3925,9 @@ public final class DefaultSessionRouter implements SessionRouter {
      * stale request — the turn settled while the signal was in flight — lands as a no-op instead of cancelling its
      * successor.
      */
-    private static void safeInterrupt(LiveSession session, TurnId turnId, InterruptReason reason) {
+    private static void safeInterrupt(LiveSession session, TurnId turnId, InterruptReason reason, String detail) {
         try {
-            session.interrupt(turnId, reason);
+            session.interrupt(turnId, reason, detail);
         } catch (Exception e) {
             log.warn("session.interrupt({}) threw: {}", turnId, e.toString());
         }

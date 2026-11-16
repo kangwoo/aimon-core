@@ -1,4 +1,4 @@
-# 중단·재시도가 남긴 열린 항목 — 등록 항목 9건 (열림 6 · 닫힘 3)
+# 중단·재시도가 남긴 열린 항목 — 등록 항목 10건 (열림 7 · 닫힘 3)
 
 [`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) 가 `IMPLEMENTED` 로
 닫힌 뒤에도 남은 항목들이다. **열림/닫힘의 정본은 이 문서다** — 설계 문서 §14 는 왜 미뤘는지의 근거를
@@ -629,3 +629,27 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
 
 **언제 다시 볼까** — 취소되지 않은 호출에서 usage 가 빈 응답이 운영에서 관측되고 그것이 과금 정합성 문제로 번질
 때. 그때 바꾸는 것은 `OpenAIStreamingMapper` 의 terminal 판정 한 줄과 `cancellation.md` §4.1 의 Chat 문단이다.
+
+---
+
+## 10. 중단 설명(detail)은 세션 경로에만 실린다 — 스케줄 취소와 cascade 는 싣지 않는다 — **열림 (트리거 대기)**
+
+**무엇을** — 2026-11-17 에 중단 요청에 자유 텍스트 설명(`detail`)을 붙일 수 있게 했다
+([`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) §3.1). 실린 경로는
+`InterruptCoordinator` · `LiveSession` · `SessionRouter`(노드 간 `INTERRUPT` 신호 포함) · `AimonSessions` 와 종단 이벤트
+`ExecutionCompleted` 다. 싣지 않은 경로가 둘이다.
+
+- **스케줄 취소** — `ScheduledTaskManager.cancel*` · `RoutineExecutor.interrupt` · `ScheduledTaskInterruptBus`(Mongo 코덱 포함) ·
+  `TaskInterruptedEvent` · `RoutineResult`. 취소 tombstone 과 노드 간 버스 레코드까지 필드가 늘어야 한다.
+- **cascade** — 부모 실행이 끊길 때 자식 coordinator 는 `PARENT_CANCELLED` 만 받는다(서브에이전트, 워크플로, `ExecuteCode`
+  브리지, GraalJS). 부모의 설명은 자식으로 내려가지 않는다.
+
+**왜** — 관측용 첫 판의 범위를 사용자가 직접 거는 중단으로 좁혔다. 스케줄 취소는 오늘 요청자가 이유를 말할 진입점 자체가
+없고(`cancel(taskId)` 는 `TASK_CANCELLED` 고정), cascade 는 자식의 종단 이벤트가 부모의 것과 따로 관측될 때에야 설명이 필요하다.
+둘 다 소비자가 없는 필드를 와이어에 먼저 넣는 일이 된다.
+
+**어디** *(2026-11-17 확인)* — `ScheduledTaskManager.java:552` · `:585` · `:645`(`TASK_CANCELLED` 고정),
+`ScheduledTaskInterruptCodec.encode`, `DefaultSubagentExecutor.java:551` · `RunControl.java:59`(`PARENT_CANCELLED`).
+
+**언제 다시 볼까** — 스케줄 태스크 취소 API 에 사유 입력을 받자는 요구가 생기거나, 자식 실행(서브에이전트·워크플로)의 종단
+이벤트를 부모와 따로 렌더하는 소비자가 생길 때.

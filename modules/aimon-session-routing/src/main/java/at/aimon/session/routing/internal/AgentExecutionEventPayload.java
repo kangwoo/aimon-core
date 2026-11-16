@@ -204,6 +204,9 @@ final class AgentExecutionEventPayload {
             map.put("completion", e.getCompletionReason().name());
             map.put("totalIterations", e.getTotalIterations());
             e.getElapsed().ifPresent(elapsed -> map.put("elapsedMillis", elapsed.toMillis()));
+            // Both optional, so a node on an older build — which neither writes nor reads them — round-trips the rest.
+            e.getInterruptReason().ifPresent(reason -> map.put("interruptReason", reason.name()));
+            e.getInterruptDetail().ifPresent(detail -> map.put("interruptDetail", detail));
         } else if (event instanceof ExecutionError e) {
             map.put(KEY_TYPE, "ExecutionError");
             map.put("error", e.getErrorMessage());
@@ -361,6 +364,10 @@ final class AgentExecutionEventPayload {
                         .totalIterations(asInt(payload.get("totalIterations")));
                 if (payload.containsKey("elapsedMillis")) {
                     builder.elapsed(Duration.ofMillis(asLong(payload.get("elapsedMillis"))));
+                }
+                if (payload.containsKey("interruptReason")) {
+                    builder.interruptReason(InterruptReason.fromWireName(asString(payload.get("interruptReason"))));
+                    builder.interruptDetail(payload.get("interruptDetail") instanceof String d ? d : null);
                 }
                 yield builder.build();
             }

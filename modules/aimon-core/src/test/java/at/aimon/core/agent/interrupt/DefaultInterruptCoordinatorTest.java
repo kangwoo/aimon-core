@@ -48,6 +48,85 @@ class DefaultInterruptCoordinatorTest {
     }
 
     @Test
+    @DisplayName("requestInterrupt with a detail keeps it, normalised, beside the reason")
+    void requestInterruptKeepsNormalisedDetail() {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+
+        coordinator.requestInterrupt(InterruptReason.USER_SIGINT, "  wrong\ndirectory  ");
+
+        CancellationSignal signal = coordinator.getSignal();
+        assertThat(signal.getReason()).contains(InterruptReason.USER_SIGINT);
+        assertThat(signal.getDetail()).contains("wrong directory");
+    }
+
+    @Test
+    @DisplayName("the first interrupt fixes the detail; a later one's detail is dropped with it")
+    void firstInterruptFixesDetail() {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+
+        coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+        coordinator.requestInterrupt(InterruptReason.TASK_CANCELLED, "too late");
+
+        assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+        assertThat(coordinator.getSignal().getDetail()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a blank detail is no detail")
+    void blankDetailIsAbsent() {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+
+        coordinator.requestInterrupt(InterruptReason.USER_SIGINT, " \t ");
+
+        assertThat(coordinator.getSignal().isCancelled()).isTrue();
+        assertThat(coordinator.getSignal().getDetail()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a detail given after close is dropped with the interrupt")
+    void detailAfterCloseIsDropped() {
+        DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        coordinator.close();
+
+        coordinator.requestInterrupt(InterruptReason.USER_SIGINT, "ignored");
+
+        assertThat(coordinator.getSignal().isCancelled()).isFalse();
+        assertThat(coordinator.getSignal().getDetail()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the interface default drops the detail and still interrupts")
+    void interfaceDefaultDelegates() {
+        DefaultInterruptCoordinator delegate = new DefaultInterruptCoordinator();
+        InterruptCoordinator legacy = new InterruptCoordinator() {
+            @Override
+            public CancellationSignal getSignal() {
+                return delegate.getSignal();
+            }
+
+            @Override
+            public void requestInterrupt(InterruptReason reason) {
+                delegate.requestInterrupt(reason);
+            }
+
+            @Override
+            public TerminatorRegistrar newTerminatorRegistrar() {
+                return delegate.newTerminatorRegistrar();
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+        };
+
+        legacy.requestInterrupt(InterruptReason.USER_SIGINT, "dropped");
+
+        assertThat(legacy.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+        assertThat(legacy.getSignal().getDetail()).isEmpty();
+    }
+
+    @Test
     @DisplayName("requestInterrupt fires every terminator registered on an active registrar exactly once")
     void requestInterruptFiresAllRegisteredTerminators() {
         DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();

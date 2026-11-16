@@ -28,6 +28,9 @@ public final class DefaultCancellationSignal implements CancellationSignal {
     private final Object lock = new Object();
     private final List<Runnable> listeners = new ArrayList<>();
     private volatile InterruptReason reason;
+    // Written before the volatile write of reason and read only after a non-null read of it, so the volatile pair
+    // publishes it; no reader can see a reason without the detail that tripped with it.
+    private String detail;
 
     @Override
     public boolean isCancelled() {
@@ -37,6 +40,14 @@ public final class DefaultCancellationSignal implements CancellationSignal {
     @Override
     public Optional<InterruptReason> getReason() {
         return Optional.ofNullable(reason);
+    }
+
+    @Override
+    public Optional<String> getDetail() {
+        if (reason == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(detail);
     }
 
     @Override
@@ -84,12 +95,30 @@ public final class DefaultCancellationSignal implements CancellationSignal {
      *             if {@code newReason} is null
      */
     boolean trip(InterruptReason newReason) {
+        return trip(newReason, null);
+    }
+
+    /**
+     * Trips the signal with the given reason and an already-normalised detail. Package-private, like
+     * {@link #trip(InterruptReason)}.
+     *
+     * @param newReason
+     *            the reason (never null)
+     * @param newDetail
+     *            the detail, already passed through {@link InterruptDetail#normalize(String)}; null for none
+     * @return {@code true} if this call flipped the signal, {@code false} if it was already tripped (the detail is
+     *         then dropped)
+     * @throws NullPointerException
+     *             if {@code newReason} is null
+     */
+    boolean trip(InterruptReason newReason, String newDetail) {
         Objects.requireNonNull(newReason, "reason must not be null");
         final List<Runnable> toFire;
         synchronized (lock) {
             if (reason != null) {
                 return false;
             }
+            detail = newDetail;
             reason = newReason;
             toFire = new ArrayList<>(listeners);
             listeners.clear();

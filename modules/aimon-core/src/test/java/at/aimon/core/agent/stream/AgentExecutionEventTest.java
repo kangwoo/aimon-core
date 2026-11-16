@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.AgentRuntimeIds;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.llm.TokenUsage;
 
 @DisplayName("AgentExecutionEvent Tests")
@@ -488,6 +489,40 @@ class AgentExecutionEventTest {
                     .build();
 
             assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
+        }
+
+        @Test
+        @DisplayName("interrupt reason and detail default to empty")
+        void interruptFieldsDefaultEmpty() {
+            ExecutionCompleted e = ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.COMPLETED).totalIterations(1).build();
+
+            assertThat(e.getInterruptReason()).isEmpty();
+            assertThat(e.getInterruptDetail()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("interrupt reason and detail are carried and take part in equals")
+        void interruptFieldsCarriedAndCompared() {
+            ExecutionCompleted withDetail = ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                    .interruptReason(InterruptReason.USER_SIGINT).interruptDetail("wrong directory").build();
+            ExecutionCompleted without = ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                    .interruptReason(InterruptReason.USER_SIGINT).build();
+
+            assertThat(withDetail.getInterruptReason()).contains(InterruptReason.USER_SIGINT);
+            assertThat(withDetail.getInterruptDetail()).contains("wrong directory");
+            assertThat(withDetail).isNotEqualTo(without);
+            assertThat(withDetail.toString()).contains("interruptDetail=wrong directory");
+        }
+
+        @Test
+        @DisplayName("a detail without a reason is rejected")
+        void detailWithoutReasonRejected() {
+            assertThatThrownBy(() -> ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.INTERRUPTED).totalIterations(1).interruptDetail("orphan")
+                    .build()).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("interruptReason");
         }
     }
 

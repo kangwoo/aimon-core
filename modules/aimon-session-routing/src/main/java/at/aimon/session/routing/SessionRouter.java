@@ -112,6 +112,47 @@ public interface SessionRouter extends AutoCloseable {
     void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason);
 
     /**
+     * {@link #interrupt(SessionId, InterruptReason)} with a free-text explanation of why.
+     *
+     * <p>
+     * The detail is for observability and never reaches the model. It is normalised
+     * ({@link at.aimon.core.agent.interrupt.InterruptDetail#normalize(String)}) before it crosses the signal bus, and
+     * the node running the turn hands it to that turn's live session. A peer on a build that predates it interrupts the
+     * turn and drops the detail.
+     *
+     * <p>
+     * The default drops the detail and delegates, so an implementation written before this method existed still
+     * interrupts.
+     *
+     * @param sessionId
+     *            the session (must not be null)
+     * @param reason
+     *            the interrupt classification (must not be null)
+     * @param detail
+     *            why the interrupt was requested, in words; may be null or blank for none
+     */
+    default void interrupt(SessionId sessionId, InterruptReason reason, String detail) {
+        interrupt(sessionId, reason);
+    }
+
+    /**
+     * {@link #interrupt(SessionId, TurnId, InterruptReason)} with a free-text explanation of why; see
+     * {@link #interrupt(SessionId, InterruptReason, String)} for what happens to the detail.
+     *
+     * @param sessionId
+     *            the session (must not be null)
+     * @param turnId
+     *            the turn to stop (must not be null)
+     * @param reason
+     *            the interrupt classification (must not be null)
+     * @param detail
+     *            why the interrupt was requested, in words; may be null or blank for none
+     */
+    default void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason, String detail) {
+        interrupt(sessionId, turnId, reason);
+    }
+
+    /**
      * Release the local session cache entry and emit {@code onComplete()} on the corresponding {@code events()}
      * publisher.
      *
