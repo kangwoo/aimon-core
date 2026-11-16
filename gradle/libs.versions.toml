@@ -187,7 +187,7 @@ lettuce = "7.9.0.RELEASE"
 
 # Utilities
 guava = "33.8.0-jre"
-commons-lang3 = "3.21.0"
+commons-lang3 = "3.22.0"
 jackson = "2.23.0"
 snakeyaml = "2.7"
 cron-utils = "9.2.1"
