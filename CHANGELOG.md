@@ -10,8 +10,8 @@ Central is versioned independently).
 ### Added: a free-text explanation on interrupts
 
 An interrupt can now say why in words, next to its `InterruptReason` — "wrong directory", "deploy freeze". It is for
-observability only: it is never sent to the model. Every new method is a `default` that drops the detail and delegates,
-so implementations outside this repository keep interrupting and only report no detail. Design:
+observability only: it is never sent to the model. Every new interface method is a `default` that drops the detail and
+delegates, so implementations outside this repository keep interrupting and only report no detail. Design:
 `docs/design/agent-execution/interrupt.md` §3.1.
 
 - **Where to give it.** `InterruptCoordinator.requestInterrupt(reason, detail)`, `LiveSession.interrupt(reason, detail)`
@@ -20,8 +20,8 @@ so implementations outside this repository keep interrupting and only report no 
 - **Where it shows up.** `CancellationSignal.getDetail()`, the interrupted execution's log line, and two new optional
   fields on the terminal `ExecutionCompleted` event: `getInterruptReason()` and `getInterruptDetail()`. The reason was
   not on that event before either.
-- **Normalised, never refused.** Control characters, Unicode line/paragraph separators and invisible format characters
-  (bidi overrides, zero-width) become spaces; surrounding whitespace is stripped; blank means none; anything over 500
+- **Normalised, never refused.** Control characters, Unicode line/paragraph separators, invisible format characters
+  (bidi overrides, zero-width, U+E0000 tag characters) and unpaired surrogates become spaces; surrounding whitespace is stripped; blank means none; anything over 500
   UTF-16 units is cut with an ellipsis (`InterruptDetail.normalize`, idempotent). It is applied wherever a detail
   enters, including the `ExecutionCompleted` builder, so a relayed event is bounded too. Like the reason, only the
   interrupt that trips the execution keeps its detail.
@@ -29,7 +29,14 @@ so implementations outside this repository keep interrupting and only report no 
   as none.
 - **Wrappers must forward it.** The defaults drop the detail, so a decorator over `LiveSession`, `SessionRouter`,
   `InterruptCoordinator` or `AimonSessions` has to override the new overloads to pass it on. `LeasedLiveSession` does.
-  The testkit's `RecordingTestSession` records it (`recordedInterruptDetails()`).
+  The testkit's `RecordingTestSession` records it (`recordedInterruptDetails()`), and now records turn-addressed
+  interrupts too instead of ignoring them.
+- **Mockito users.** `verify(router).interrupt(any(), any(), any())` is now ambiguous between
+  `(SessionId, InterruptReason, String)` and `(SessionId, TurnId, InterruptReason)`; type the matchers. A mocked
+  `LiveSession` handed to `DefaultSessionRouter` is now called through the detail overloads, so
+  `verify(session).interrupt(reason)` no longer matches — verify `interrupt(reason, null)` instead.
+- **Not on the result.** `AgentExecutionResult` still says only `CompletionReason.INTERRUPTED`; read the reason and
+  detail from the `ExecutionCompleted` event.
 - **Across nodes.** The router normalises the detail before it crosses the signal bus, as an optional `detail` key on the
   `INTERRUPT` signal. `ExecutionCompleted` relays carry the two new fields as optional keys. A node on an older build
   ignores both and still interrupts.

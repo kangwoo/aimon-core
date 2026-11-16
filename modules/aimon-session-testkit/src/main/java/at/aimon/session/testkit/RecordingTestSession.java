@@ -132,6 +132,22 @@ public final class RecordingTestSession implements LiveSession {
         interrupted.countDown();
     }
 
+    /**
+     * Records a turn-addressed interrupt like a session-wide one. This double does not track which turn is running, so
+     * it does not drop a mismatched id the way {@code DefaultLiveSession} does.
+     */
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason) {
+        interrupt(turnId, reason, null);
+    }
+
+    /** Records a turn-addressed interrupt with its detail; see {@link #interrupt(TurnId, InterruptReason)}. */
+    @Override
+    public void interrupt(TurnId turnId, InterruptReason reason, String detail) {
+        Objects.requireNonNull(turnId, "turnId must not be null");
+        interrupt(reason, detail);
+    }
+
     @Override
     public void close() {
         closed.set(true);

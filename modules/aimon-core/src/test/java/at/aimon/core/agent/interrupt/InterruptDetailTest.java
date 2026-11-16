@@ -74,4 +74,40 @@ class InterruptDetailTest {
             assertThat(InterruptDetail.normalize(once)).as("re-normalising %s", once).contains(once);
         }
     }
+
+    @Test
+    @DisplayName("invisible characters outside the BMP (tag characters) and unpaired surrogates become spaces")
+    void supplementaryFormatCharactersAndLoneSurrogatesBecomeSpaces() {
+        // U+E0041 U+E0042 are TAG LATIN CAPITAL A/B — invisible, and usable to smuggle hidden text.
+        final String tags = new String(Character.toChars(0xE0041)) + new String(Character.toChars(0xE0042));
+
+        assertThat(InterruptDetail.normalize("a" + tags + "b")).as("one space per code point").contains("a  b");
+        assertThat(InterruptDetail.normalize("a\uD800b\uDC00c")).contains("a b c");
+    }
+
+    @Test
+    @DisplayName("a visible character outside the BMP is kept whole")
+    void supplementaryVisibleCharacterKept() {
+        assertThat(InterruptDetail.normalize("stop \uD83D\uDED1 now")).contains("stop \uD83D\uDED1 now");
+    }
+
+    @Test
+    @DisplayName("a huge input gives the same result as cutting the whole cleaned string, whitespace around the cut included")
+    void boundedCopyKeepsTheSamePrefix() {
+        final String body = "y".repeat(InterruptDetail.MAX_LENGTH - 3);
+        // Leading whitespace, then a whitespace run straddling the cut point, then a long tail.
+        final String raw = "   \n" + body + "  \t  " + "z".repeat(1_000_000);
+
+        final String normalized = InterruptDetail.normalize(raw).orElseThrow();
+
+        assertThat(normalized).hasSize(InterruptDetail.MAX_LENGTH).startsWith(body + "  ").endsWith("\u2026");
+    }
+
+    @Test
+    @DisplayName("text that ends in whitespace just past the limit is kept whole when the strip brings it under")
+    void trailingWhitespacePastLimitIsStripped() {
+        final String body = "y".repeat(InterruptDetail.MAX_LENGTH);
+
+        assertThat(InterruptDetail.normalize(body + "      ")).contains(body);
+    }
 }

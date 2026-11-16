@@ -2976,8 +2976,11 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // stops only its own turn and is dropped if that turn already finished. A peer on an older build sends
                 // no turnId, so absence has to keep meaning session-scoped rather than "turn unknown → ignore".
                 final Optional<TurnId> target = parseTurnId(signal.getPayload().get("turnId"));
-                // Absent from a peer on an older build, and from a caller that gave none.
-                final String detail = signal.getPayload().get(PAYLOAD_DETAIL) instanceof String d ? d : null;
+                // Absent from a peer on an older build, and from a caller that gave none. Normalised again on receipt:
+                // the sender's pass is not something a LiveSession here should have to trust (idempotent otherwise).
+                final String detail = signal.getPayload().get(PAYLOAD_DETAIL) instanceof String d
+                        ? InterruptDetail.normalize(d).orElse(null)
+                        : null;
                 if (target.isPresent()) {
                     interruptLocal(convId, target.get(), reason, detail);
                 } else {

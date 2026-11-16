@@ -32,11 +32,12 @@ public final class InterruptDetail {
      * Normalises a caller-supplied detail.
      *
      * <p>
-     * Control characters (line breaks included), the Unicode line and paragraph separators, and invisible format
-     * characters (bidi overrides, zero-width characters) become spaces, so a detail can neither forge a log line nor
-     * visually reorder one; surrounding whitespace is stripped; a blank result means no detail. A value longer than
-     * {@link #MAX_LENGTH} is cut to fit, never between the two halves of a surrogate pair, and ends with an ellipsis.
-     * Normalising a normalised value returns it unchanged.
+     * Control characters (line breaks included), the Unicode line and paragraph separators, invisible format
+     * characters (bidi overrides, zero-width characters, the tag characters of the U+E0000 block) and unpaired
+     * surrogate halves become spaces, so a detail can neither forge a log line nor visually reorder one. An emoji built
+     * with a zero-width joiner therefore comes out as its separate parts. Surrounding whitespace is stripped, and a
+     * blank result means no detail. A value longer than {@link #MAX_LENGTH} is cut to fit, never between the two halves
+     * of a surrogate pair, and ends with an ellipsis. Normalising a normalised value returns it unchanged.
      *
      * @param raw
      *            the detail as given; may be null
@@ -46,10 +47,21 @@ public final class InterruptDetail {
         if (raw == null) {
             return Optional.empty();
         }
-        final StringBuilder sb = new StringBuilder(Math.min(raw.length(), MAX_LENGTH + 1));
-        for (int i = 0; i < raw.length(); i++) {
-            final char c = raw.charAt(i);
-            sb.append(isUnsafe(c) ? ' ' : c);
+        // By code point, so a character outside the BMP (tag characters, U+E0000 block) is judged by its own type
+        // rather than as two SURROGATE halves. Leading whitespace is skipped and copying stops once the result is
+        // certain to be cut, so a huge input costs a bounded copy; the kept prefix is the same either way.
+        final StringBuilder sb = new StringBuilder(Math.min(raw.length(), MAX_LENGTH + 2));
+        for (int i = 0; i < raw.length();) {
+            final int cp = raw.codePointAt(i);
+            i += Character.charCount(cp);
+            final int kept = isUnsafe(cp) ? ' ' : cp;
+            if (sb.length() == 0 && Character.isWhitespace(kept)) {
+                continue;
+            }
+            sb.appendCodePoint(kept);
+            if (sb.length() > MAX_LENGTH && !Character.isWhitespace(kept)) {
+                break;
+            }
         }
         final String flat = sb.toString().strip();
         if (flat.isEmpty()) {
@@ -65,11 +77,14 @@ public final class InterruptDetail {
         return Optional.of(flat.substring(0, cut) + ELLIPSIS);
     }
 
-    private static boolean isUnsafe(char c) {
-        if (Character.isISOControl(c)) {
+    private static boolean isUnsafe(int cp) {
+        if (Character.isISOControl(cp)) {
             return true;
         }
-        final int type = Character.getType(c);
-        return type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR || type == Character.FORMAT;
+        final int type = Character.getType(cp);
+        // SURROGATE here means an unpaired half: codePointAt joins a well-formed pair into one supplementary code
+        // point.
+        return type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR || type == Character.FORMAT
+                || type == Character.SURROGATE;
     }
 }

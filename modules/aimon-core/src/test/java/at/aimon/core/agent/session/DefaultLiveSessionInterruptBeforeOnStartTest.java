@@ -125,6 +125,28 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
     }
 
     @Test
+    @DisplayName("the detail of an interrupted turn is never shown to the model, not even on the next turn")
+    void interruptDetailNeverReachesTheModel() throws Exception {
+        final String marker = "detail-marker-7f3a";
+        try (DefaultLiveSession session = session(null)) {
+            final CompletionStage<AgentExecutionResult> first = session.submitAsync("hi", e -> {
+            });
+            assertThat(settingUp.await(10, TimeUnit.SECONDS)).isTrue();
+            session.interrupt(InterruptReason.USER_SIGINT, marker);
+            goOn.countDown();
+            assertThat(first.toCompletableFuture().get(10, TimeUnit.SECONDS).getCompletionReason())
+                    .isEqualTo(CompletionReason.INTERRUPTED);
+
+            final AgentExecutionResult second = session.submitAsync("again", e -> {
+            }).toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+            assertThat(second.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+            assertThat(llm.calls).as("the second turn reached the model").hasValue(1);
+            assertThat(llm.shown).as("what the model was shown").noneMatch(text -> text.contains(marker));
+        }
+    }
+
+    @Test
     @DisplayName("the same interrupt ends a slash-command turn INTERRUPTED before the command runs")
     void interruptDuringSetUp_endsACommandTurnBeforeTheCommandRuns() throws Exception {
         try (DefaultLiveSession session = session(null)) {
@@ -242,14 +264,20 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
         }
     }
 
-    /** Answers every call with a final text and counts the calls. */
+    /** Answers every call with a final text, counts the calls and keeps every text the model was shown. */
     private static final class CountingLlmClient implements LlmClient {
         final AtomicInteger calls = new AtomicInteger();
+        final List<String> shown = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig) {
             calls.incrementAndGet();
+            shown.add(String.valueOf(systemPrompt));
+            for (Message message : messages) {
+                shown.add(String.valueOf(message.getContent()));
+                shown.add(String.valueOf(message.getContentBlocks()));
+            }
             return LlmResponse.text("done");
         }
 

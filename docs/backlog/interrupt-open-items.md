@@ -643,6 +643,8 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
   `TaskInterruptedEvent` · `RoutineResult`. 취소 tombstone 과 노드 간 버스 레코드까지 필드가 늘어야 한다.
 - **cascade** — 부모 실행이 끊길 때 자식 coordinator 는 `PARENT_CANCELLED` 만 받는다(서브에이전트, 워크플로, `ExecuteCode`
   브리지, GraalJS). 부모의 설명은 자식으로 내려가지 않는다.
+- **실행 결과** — `AgentExecutionResult` 는 여전히 `CompletionReason.INTERRUPTED` 만 말한다. 동기 호출자(`LiveSession.submit`,
+  CLI)가 이유와 설명을 알려면 `ExecutionCompleted` 이벤트를 구독해야 한다.
 
 **왜** — 관측용 첫 판의 범위를 사용자가 직접 거는 중단으로 좁혔다. 스케줄 취소는 오늘 요청자가 이유를 말할 진입점 자체가
 없고(`cancel(taskId)` 는 `TASK_CANCELLED` 고정), cascade 는 자식의 종단 이벤트가 부모의 것과 따로 관측될 때에야 설명이 필요하다.
@@ -652,4 +654,4 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
 `ScheduledTaskInterruptCodec.encode`, `DefaultSubagentExecutor.java:551` · `RunControl.java:59`(`PARENT_CANCELLED`).
 
 **언제 다시 볼까** — 스케줄 태스크 취소 API 에 사유 입력을 받자는 요구가 생기거나, 자식 실행(서브에이전트·워크플로)의 종단
-이벤트를 부모와 따로 렌더하는 소비자가 생길 때.
+이벤트를 부모와 따로 렌더하는 소비자가 생기거나, 이벤트를 구독하지 않는 동기 호출자가 중단 이유를 보여 줘야 할 때.
