@@ -174,6 +174,10 @@ final class AgentEventDispatcher {
      * Emits an {@link ExecutionCompleted} event that also says what tripped the execution's interrupt and, if the
      * interrupt was requested with one, its free-text explanation.
      *
+     * @param totalIterations
+     *            the number of iterations that ran
+     * @param reason
+     *            why the execution ended
      * @param interruptReason
      *            what tripped the interrupt; {@code null} when the execution was not interrupted
      * @param interruptDetail

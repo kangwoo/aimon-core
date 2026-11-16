@@ -48,18 +48,21 @@ public final class InterruptDetail {
             return Optional.empty();
         }
         // By code point, so a character outside the BMP (tag characters, U+E0000 block) is judged by its own type
-        // rather than as two SURROGATE halves. Leading whitespace is skipped and copying stops once the result is
-        // certain to be cut, so a huge input costs a bounded copy; the kept prefix is the same either way.
+        // rather than as two SURROGATE halves. The copy is bounded: leading whitespace is skipped, and once the builder
+        // holds MAX_LENGTH chars only the first non-whitespace code point after them is still taken — it proves a cut
+        // is needed, and the cut keeps only the first MAX_LENGTH - 1 chars, which are already in place. Whitespace past
+        // that point is not copied: it would either be stripped or fall beyond the cut.
         final StringBuilder sb = new StringBuilder(Math.min(raw.length(), MAX_LENGTH + 2));
         for (int i = 0; i < raw.length();) {
             final int cp = raw.codePointAt(i);
             i += Character.charCount(cp);
             final int kept = isUnsafe(cp) ? ' ' : cp;
-            if (sb.length() == 0 && Character.isWhitespace(kept)) {
+            final boolean whitespace = Character.isWhitespace(kept);
+            if (whitespace && (sb.length() == 0 || sb.length() >= MAX_LENGTH)) {
                 continue;
             }
             sb.appendCodePoint(kept);
-            if (sb.length() > MAX_LENGTH && !Character.isWhitespace(kept)) {
+            if (sb.length() > MAX_LENGTH) {
                 break;
             }
         }

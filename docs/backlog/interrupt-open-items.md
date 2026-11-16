@@ -637,7 +637,7 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
 **무엇을** — 2026-11-17 에 중단 요청에 자유 텍스트 설명(`detail`)을 붙일 수 있게 했다
 ([`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) §3.1). 실린 경로는
 `InterruptCoordinator` · `LiveSession` · `SessionRouter`(노드 간 `INTERRUPT` 신호 포함) · `AimonSessions` 와 종단 이벤트
-`ExecutionCompleted` 다. 싣지 않은 경로가 둘이다.
+`ExecutionCompleted` 다. 싣지 않은 경로가 둘이고, 실행 결과에도 실리지 않는다.
 
 - **스케줄 취소** — `ScheduledTaskManager.cancel*` · `RoutineExecutor.interrupt` · `ScheduledTaskInterruptBus`(Mongo 코덱 포함) ·
   `TaskInterruptedEvent` · `RoutineResult`. 취소 tombstone 과 노드 간 버스 레코드까지 필드가 늘어야 한다.

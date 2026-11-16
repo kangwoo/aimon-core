@@ -59,6 +59,7 @@ import at.aimon.core.agent.interrupt.CancelledExecutionException;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.SignalBackedLlmCancellation;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
@@ -3214,9 +3215,13 @@ public class OrcaAgentExecutor
         final InterruptReason interruptReason = signal == null ? null : signal.getReason().orElse(null);
         // A detail is only reported beside a reason; a signal that offers one without the other (a custom
         // implementation) must not make the terminal event fail to build and lose the interrupted result with it.
-        final String interruptDetail = interruptReason == null ? null : signal.getDetail().orElse(null);
-        log.info("Execution interrupted: reason={}, detail={}, iterations={}, tokens={}", interruptReason,
-                interruptDetail, iterationCount, accumulatedTokens.getTotalTokens());
+        // Normalised again for the log line: a CancellationSignal from outside this repository need not have done it.
+        final String interruptDetail = interruptReason == null
+                ? null
+                : signal.getDetail().flatMap(InterruptDetail::normalize).orElse(null);
+        // The detail goes last and quoted, so a detail shaped like "x, iterations=0" cannot pass for the fields.
+        log.info("Execution interrupted: reason={}, iterations={}, tokens={}, detail=\"{}\"", interruptReason,
+                iterationCount, accumulatedTokens.getTotalTokens(), interruptDetail);
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
 

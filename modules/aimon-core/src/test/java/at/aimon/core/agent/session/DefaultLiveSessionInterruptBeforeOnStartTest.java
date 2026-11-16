@@ -125,7 +125,7 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
     }
 
     @Test
-    @DisplayName("the detail of an interrupted turn is never shown to the model, not even on the next turn")
+    @DisplayName("the detail of an interrupted turn never reaches the next turn's history or system prompt")
     void interruptDetailNeverReachesTheModel() throws Exception {
         final String marker = "detail-marker-7f3a";
         try (DefaultLiveSession session = session(null)) {

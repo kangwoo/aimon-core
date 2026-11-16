@@ -110,4 +110,63 @@ class InterruptDetailTest {
 
         assertThat(InterruptDetail.normalize(body + "      ")).contains(body);
     }
+
+    @Test
+    @DisplayName("content after a whitespace run that crosses the limit still forces the cut and its ellipsis")
+    void contentAfterWhitespaceAtTheLimitIsCut() {
+        final String body = "x".repeat(InterruptDetail.MAX_LENGTH - 2);
+
+        final String normalized = InterruptDetail.normalize(body + " ".repeat(10) + "y").orElseThrow();
+
+        assertThat(normalized).isEqualTo(body + " \u2026");
+    }
+
+    @Test
+    @DisplayName("a huge whitespace tail is stripped, and is not copied to find that out")
+    void hugeWhitespaceTailIsStripped() {
+        final String body = "x".repeat(InterruptDetail.MAX_LENGTH);
+
+        assertThat(InterruptDetail.normalize(body + "\u3000".repeat(5_000_000))).contains(body);
+    }
+
+    @Test
+    @DisplayName("the bounded copy gives exactly what a full pass — map, strip, cut — gives, on random input")
+    void boundedCopyMatchesAFullPass() {
+        final int[] pool = {'a', 'b', ' ', '\t', '\n', 0x1C, 0x85, 0xA0, 0x1680, 0x2000, 0x2028, 0x200B, 0x202E, 0xFEFF,
+                0x3000, 0xD800, 0xDC00, 0x1F600, 0xE0041, 0x2026};
+        final java.util.Random random = new java.util.Random(363);
+        for (int round = 0; round < 20_000; round++) {
+            final StringBuilder raw = new StringBuilder();
+            final int length = 480 + random.nextInt(80);
+            for (int i = 0; i < length; i++) {
+                raw.appendCodePoint(pool[random.nextInt(pool.length)]);
+            }
+            final String input = raw.toString();
+
+            assertThat(InterruptDetail.normalize(input)).as("input #%d", round).isEqualTo(fullPass(input));
+        }
+    }
+
+    /** The reference: clean every code point, strip, then cut — no early exit. */
+    private static java.util.Optional<String> fullPass(String raw) {
+        final StringBuilder sb = new StringBuilder();
+        raw.codePoints().forEach(cp -> {
+            final int type = Character.getType(cp);
+            final boolean unsafe = Character.isISOControl(cp) || type == Character.LINE_SEPARATOR
+                    || type == Character.PARAGRAPH_SEPARATOR || type == Character.FORMAT || type == Character.SURROGATE;
+            sb.appendCodePoint(unsafe ? ' ' : cp);
+        });
+        final String flat = sb.toString().strip();
+        if (flat.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        if (flat.length() <= InterruptDetail.MAX_LENGTH) {
+            return java.util.Optional.of(flat);
+        }
+        int cut = InterruptDetail.MAX_LENGTH - 1;
+        if (Character.isLowSurrogate(flat.charAt(cut)) && Character.isHighSurrogate(flat.charAt(cut - 1))) {
+            cut--;
+        }
+        return java.util.Optional.of(flat.substring(0, cut) + "\u2026");
+    }
 }

@@ -3,12 +3,14 @@ package at.aimon.session.routing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
@@ -16,6 +18,7 @@ import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.InMemorySignalBus;
+import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -40,6 +43,7 @@ class SessionRouterSignalSubscriptionTest {
 
     private TestManagerHarness holderNode;
     private TestManagerHarness peerNode;
+    private SessionSignalBus bus;
 
     @AfterEach
     void tearDown() {
@@ -58,7 +62,7 @@ class SessionRouterSignalSubscriptionTest {
      */
     private void wireTwoNodes() {
         final SessionLeaseStore leaseStore = new InMemorySessionLeaseStore();
-        final SessionSignalBus bus = new InMemorySignalBus();
+        bus = new InMemorySignalBus();
         final SessionInbox inbox = new InMemorySessionInbox();
         final SessionRecordStore repository = new InMemorySessionRecordStore();
         final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
@@ -130,6 +134,32 @@ class SessionRouterSignalSubscriptionTest {
         assertThat(session.awaitInterrupt()).isTrue();
         assertThat(session.recordedInterrupts()).containsExactly(InterruptReason.USER_SIGINT);
         assertThat(session.recordedInterruptDetails()).containsExactly("deploy freeze");
+
+        session.completeCurrentTurn(TestLiveSession.ok("stopped"));
+        disposition.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    @DisplayName("an INTERRUPT whose detail a peer did not normalise is normalised by the receiving node")
+    void receiverNormalisesAPeersRawDetail() throws Exception {
+        wireTwoNodes();
+        final SessionId id = SessionId.of("c-subscribe-detail-raw");
+
+        final SubmitDisposition disposition = holderNode.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
+        assertThat(disposition.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final TestLiveSession session = awaitSession(holderNode, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        // Published straight onto the bus, as a non-conforming or older peer might: no sender-side pass.
+        bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.INTERRUPT)
+                .originNodeId("node-rogue")
+                .payload(Map.of("reason", "USER_SIGINT", "detail", "forged\nINFO line " + "x".repeat(1000))).build());
+
+        assertThat(session.awaitInterrupt()).isTrue();
+        assertThat(session.recordedInterruptDetails()).singleElement().satisfies(detail -> {
+            assertThat(detail).doesNotContain("\n").startsWith("forged INFO line");
+            assertThat(detail.length()).isLessThanOrEqualTo(InterruptDetail.MAX_LENGTH);
+        });
 
         session.completeCurrentTurn(TestLiveSession.ok("stopped"));
         disposition.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);

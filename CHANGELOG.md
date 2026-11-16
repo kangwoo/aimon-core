@@ -31,10 +31,12 @@ delegates, so implementations outside this repository keep interrupting and only
   `InterruptCoordinator` or `AimonSessions` has to override the new overloads to pass it on. `LeasedLiveSession` does.
   The testkit's `RecordingTestSession` records it (`recordedInterruptDetails()`), and now records turn-addressed
   interrupts too instead of ignoring them.
-- **Mockito users.** `verify(router).interrupt(any(), any(), any())` is now ambiguous between
-  `(SessionId, InterruptReason, String)` and `(SessionId, TurnId, InterruptReason)`; type the matchers. A mocked
-  `LiveSession` handed to `DefaultSessionRouter` is now called through the detail overloads, so
-  `verify(session).interrupt(reason)` no longer matches — verify `interrupt(reason, null)` instead.
+- **Mockito users.** Untyped matchers are now ambiguous: `SessionRouter.interrupt(any(), any(), any())` matches both
+  `(SessionId, InterruptReason, String)` and `(SessionId, TurnId, InterruptReason)`, and `LiveSession.interrupt(any(),
+  any())` matches both `(InterruptReason, String)` and `(TurnId, InterruptReason)`; type the matchers. Mocks do not run
+  default methods, so a mocked `LiveSession` behind `DefaultSessionRouter` and a mocked `SessionRouter` behind
+  `DefaultAimonSessions` are now called through the detail overloads: verify `interrupt(..., null)` instead of the
+  overload without a detail.
 - **Not on the result.** `AgentExecutionResult` still says only `CompletionReason.INTERRUPTED`; read the reason and
   detail from the `ExecutionCompleted` event.
 - **Across nodes.** The router normalises the detail before it crosses the signal bus, as an optional `detail` key on the
