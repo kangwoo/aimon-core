@@ -409,7 +409,8 @@ BLOCKED 를 강제하지 않는 자문 체인(PostTool·OnStop·세션/서브에
 *(2026-11-16, PF-3)* 도구가 돌아온 뒤 PostTool 전에 플래그를 쓸어내는 지점이 하나 더 있다. `SingleToolInvoker` 는 registrar 가 있었던 도구
 (`THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED`)에 한해, 호출을 보고하는 훅(PostTool, 거부 경로의 PermissionDenied) **전에**
 registrar 를 닫고, **실행의 신호가 이미 떠 있을 때만** 플래그를 소비한다. 그렇지 않으면 늦게 떨어진 terminator 의 interrupt 가
-§8.7 의 BLOCKED 를 불러 출력 가림 같은 PostTool 의 효과가 이미 만들어진 결과에 적용되지 않는다.
+§8.7 의 BLOCKED 를 불러, `ignoresInterrupt()` 를 선언하지 않은 PostTool 훅(코드로 쓴 출력 가림 훅 같은)의 효과가 이미
+만들어진 결과에 적용되지 않는다. 그것을 선언한 훅 — 선언적 보고 훅의 셸 명령 전부 — 은 원래부터 끝까지 돌았다.
 
 - **장벽.** `TerminatorRegistrar.close()` 는 돌아온 뒤 그 registrar 의 terminator 가 돌지 않음을 보장한다 — 이미 발화 중인
   것을 기다린다. 그래서 close 뒤에 읽은 플래그는 그 registrar 가 다시 바꾸지 않는다. terminator 는 trip 에서만 발화하므로,

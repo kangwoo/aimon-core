@@ -18,14 +18,14 @@ Central is versioned independently).
 - **`TerminatorRegistrar.close()` is now a barrier.** When it returns, no terminator of that registrar is running or
   will run; a terminator already being fired — by a concurrent interrupt, or immediately by `register()` on a tripped
   signal — is waited for. `SingleToolInvoker` closes the registrar before the hooks that report on the call (PostTool,
-  and PermissionDenied on a refusal) and, when the execution has been cancelled, clears the interrupt flag a terminator
-  left on the thread (the execution's signal already records the cancellation). Previously that flag made the hook
-  executor answer the hooks' waits with BLOCKED, so an output-masking PostTool hook could miss a result the tool had
-  already produced (PF-3). A flag on an execution that has not been cancelled is the caller's own interrupt and is left
-  alone. As a consequence, a cancelled call now waits for those hooks to finish (up to their timeout) instead of
-  abandoning them at once, including a cancel that arrives while those hooks are already running. Implementations of
-  `TerminatorRegistrar` outside this repository must give `close()` the same guarantee, and a terminator must not wait
-  on the thread that closes its registrar.
+  and PermissionDenied on a refusal) and, when the execution has been cancelled, clears the thread's interrupt flag,
+  which a terminator may have left (the execution's signal already records the cancellation). Previously that flag made
+  the hook executor answer the hooks' waits with BLOCKED, so a PostTool hook that does not declare `ignoresInterrupt()`
+  — an output-masking hook written in code, say — could miss a result the tool had already produced (PF-3). A flag on an
+  execution that has not been cancelled is the caller's own interrupt and is left alone. As a consequence, a cancelled
+  call now waits for those hooks to finish (up to their timeout) instead of abandoning them at once, including a cancel
+  that arrives while those hooks are already running. Implementations of `TerminatorRegistrar` outside this repository
+  must give `close()` the same guarantee, and a terminator must not wait on the thread that closes its registrar.
 
 ### Build: `aimon-knowledge-opensearch` ships `reactive-streams` for opensearch-java 3.11.0
 
