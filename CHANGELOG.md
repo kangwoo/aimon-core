@@ -25,7 +25,7 @@ Central is versioned independently).
   execution that has not been cancelled is the caller's own interrupt and is left alone. As a consequence, a cancelled
   call now waits for those hooks to finish (up to their timeout) instead of abandoning them at once, including a cancel
   that arrives while those hooks are already running. Implementations of `TerminatorRegistrar` outside this repository
-  must give `close()` the same guarantee, and a terminator must not wait on the thread that closes its registrar.
+  must give `close()` the same guarantee, and a terminator must not wait on the thread that closes its registrar. (#362)
 
 ### Build: `aimon-knowledge-opensearch` ships `reactive-streams` for opensearch-java 3.11.0
 
