@@ -55,4 +55,23 @@ class InterruptDetailTest {
         assertThat(normalized).endsWith("x…");
         assertThat(normalized.length()).isLessThanOrEqualTo(InterruptDetail.MAX_LENGTH);
     }
+
+    @Test
+    @DisplayName("Unicode line/paragraph separators and invisible format characters become spaces")
+    void separatorsAndFormatCharactersBecomeSpaces() {
+        // U+2028/U+2029 render as line breaks in some viewers; U+202E reorders text; U+200B is invisible.
+        assertThat(InterruptDetail.normalize("a\u2028b\u2029c\u202Ed\u200Be")).contains("a b c d e");
+    }
+
+    @Test
+    @DisplayName("normalising a normalised value returns it unchanged — plain, cut, and cut before a surrogate pair")
+    void normalizeIsIdempotent() {
+        final String[] raws = {"  deploy\nfreeze  ", "x".repeat(InterruptDetail.MAX_LENGTH + 50),
+                "x".repeat(InterruptDetail.MAX_LENGTH - 2) + "\uD83D\uDE00tail"};
+        for (String raw : raws) {
+            final String once = InterruptDetail.normalize(raw).orElseThrow();
+
+            assertThat(InterruptDetail.normalize(once)).as("re-normalising %s", once).contains(once);
+        }
+    }
 }

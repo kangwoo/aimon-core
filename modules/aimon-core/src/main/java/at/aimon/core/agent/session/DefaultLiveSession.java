@@ -859,7 +859,7 @@ public final class DefaultLiveSession implements LiveSession {
      */
     @Override
     public void interrupt(InterruptReason reason) {
-        interrupt(reason, (String) null);
+        interrupt(reason, null);
     }
 
     /**

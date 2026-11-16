@@ -3064,7 +3064,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     @Override
     public void interrupt(SessionId sessionId, InterruptReason reason) {
-        interrupt(sessionId, reason, (String) null);
+        interrupt(sessionId, reason, null);
     }
 
     @Override

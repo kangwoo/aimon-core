@@ -1,6 +1,8 @@
 package at.aimon.bootstrap.assemble;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -10,7 +12,10 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.bootstrap.runtime.AgentRuntimeLease;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.LiveSession;
+import at.aimon.core.agent.session.TurnId;
 
 /**
  * Guards the one thing a delegating wrapper gets wrong silently.
@@ -34,6 +39,21 @@ class LeasedLiveSessionTest {
                 .as("LeasedLiveSession must override these, or they will answer for the wrapper rather than the"
                         + " session it wraps")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("forwards an interrupt's detail to the wrapped session, in both forms")
+    void interruptDetailIsForwarded() {
+        final LiveSession delegate = mock(LiveSession.class);
+        final LeasedLiveSession wrapper = new LeasedLiveSession(delegate, mock(AgentRuntimeLease.class));
+        final TurnId turnId = TurnId.of("turn-1");
+
+        wrapper.interrupt(InterruptReason.USER_SIGINT, "wrong directory");
+        wrapper.interrupt(turnId, InterruptReason.USER_SIGINT, "deploy freeze");
+
+        // Declaring the override is what the test above checks; this checks the override passes the detail on.
+        verify(delegate).interrupt(InterruptReason.USER_SIGINT, "wrong directory");
+        verify(delegate).interrupt(turnId, InterruptReason.USER_SIGINT, "deploy freeze");
     }
 
     private static boolean isDeclaredOn(Class<?> type, Method method) {

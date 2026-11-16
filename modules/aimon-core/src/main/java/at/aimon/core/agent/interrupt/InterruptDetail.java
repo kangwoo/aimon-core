@@ -12,7 +12,9 @@ import java.util.Optional;
  *
  * <p>
  * The text comes from whoever asked for the interrupt, and it travels to other nodes and into log lines, so it is
- * treated as untrusted. {@link #normalize(String)} is applied once, at the coordinator, so every reader sees the same
+ * treated as untrusted. {@link #normalize(String)} is applied wherever a detail enters: the coordinator, the router
+ * before it sends one across the bus, and the {@code ExecutionCompleted} builder (which covers a detail relayed from a
+ * peer). It is idempotent, so applying it again on the way through changes nothing, and every reader sees the same
  * bounded single-line value. It never rejects: an interrupt must land however malformed its explanation, so an
  * oversized detail is cut rather than refused.
  */
@@ -30,9 +32,11 @@ public final class InterruptDetail {
      * Normalises a caller-supplied detail.
      *
      * <p>
-     * Control characters (line breaks included) become spaces, so a detail cannot forge a log line; surrounding
-     * whitespace is stripped; a blank result means no detail. A value longer than {@link #MAX_LENGTH} is cut to fit,
-     * never between the two halves of a surrogate pair, and ends with an ellipsis.
+     * Control characters (line breaks included), the Unicode line and paragraph separators, and invisible format
+     * characters (bidi overrides, zero-width characters) become spaces, so a detail can neither forge a log line nor
+     * visually reorder one; surrounding whitespace is stripped; a blank result means no detail. A value longer than
+     * {@link #MAX_LENGTH} is cut to fit, never between the two halves of a surrogate pair, and ends with an ellipsis.
+     * Normalising a normalised value returns it unchanged.
      *
      * @param raw
      *            the detail as given; may be null
@@ -45,7 +49,7 @@ public final class InterruptDetail {
         final StringBuilder sb = new StringBuilder(Math.min(raw.length(), MAX_LENGTH + 1));
         for (int i = 0; i < raw.length(); i++) {
             final char c = raw.charAt(i);
-            sb.append(Character.isISOControl(c) ? ' ' : c);
+            sb.append(isUnsafe(c) ? ' ' : c);
         }
         final String flat = sb.toString().strip();
         if (flat.isEmpty()) {
@@ -59,5 +63,13 @@ public final class InterruptDetail {
             cut--;
         }
         return Optional.of(flat.substring(0, cut) + ELLIPSIS);
+    }
+
+    private static boolean isUnsafe(char c) {
+        if (Character.isISOControl(c)) {
+            return true;
+        }
+        final int type = Character.getType(c);
+        return type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR || type == Character.FORMAT;
     }
 }

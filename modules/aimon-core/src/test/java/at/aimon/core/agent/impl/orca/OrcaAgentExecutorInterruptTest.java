@@ -218,6 +218,78 @@ class OrcaAgentExecutorInterruptTest {
                 });
     }
 
+    @Test
+    @DisplayName("a custom signal that offers a detail without a reason still ends INTERRUPTED, reporting neither")
+    void detailWithoutReasonDoesNotBreakTheTerminalEvent() {
+        final CapturingCooperativeTool tool = new CapturingCooperativeTool();
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("unreachable"));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, tool);
+        executor.interruptCoordinatorFactory = () -> {
+            final DefaultInterruptCoordinator real = new DefaultInterruptCoordinator();
+            real.requestInterrupt(InterruptReason.USER_SIGINT);
+            final CancellationSignal reasonless = new CancellationSignal() {
+                @Override
+                public boolean isCancelled() {
+                    return true;
+                }
+
+                @Override
+                public java.util.Optional<InterruptReason> getReason() {
+                    return java.util.Optional.empty();
+                }
+
+                @Override
+                public java.util.Optional<String> getDetail() {
+                    return java.util.Optional.of("orphan detail");
+                }
+
+                @Override
+                public void checkpoint() {
+                    real.getSignal().checkpoint();
+                }
+
+                @Override
+                public Registration onCancel(Runnable listener) {
+                    return real.getSignal().onCancel(listener);
+                }
+            };
+            return new InterruptCoordinator() {
+                @Override
+                public CancellationSignal getSignal() {
+                    return reasonless;
+                }
+
+                @Override
+                public void requestInterrupt(InterruptReason reason) {
+                    real.requestInterrupt(reason);
+                }
+
+                @Override
+                public TerminatorRegistrar newTerminatorRegistrar() {
+                    return real.newTerminatorRegistrar();
+                }
+
+                @Override
+                public void close() {
+                    real.close();
+                }
+            };
+        };
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(registryOf(tool)), request());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(seen).filteredOn(ExecutionCompleted.class::isInstance).singleElement()
+                .isInstanceOfSatisfying(ExecutionCompleted.class, completed -> {
+                    assertThat(completed.getInterruptReason()).isEmpty();
+                    assertThat(completed.getInterruptDetail()).isEmpty();
+                });
+    }
+
     // ---------- helpers ----------
 
     private DefaultToolRegistry registryOf(AbstractTool tool) {

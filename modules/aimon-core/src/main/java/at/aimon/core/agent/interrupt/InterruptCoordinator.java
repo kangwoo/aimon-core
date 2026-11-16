@@ -50,7 +50,8 @@ public interface InterruptCoordinator extends AutoCloseable {
      *
      * <p>
      * The detail is for observability and is never sent to the model. The default drops it and delegates, so a
-     * coordinator written before this method existed still interrupts; it just reports no detail.
+     * coordinator written before this method existed still interrupts; it just reports no detail. A coordinator that
+     * wraps another must override this overload and forward the detail, or the detail stops at the wrapper.
      *
      * @param reason
      *            the interrupt reason (never null)

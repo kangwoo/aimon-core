@@ -122,7 +122,8 @@ public interface SessionRouter extends AutoCloseable {
      *
      * <p>
      * The default drops the detail and delegates, so an implementation written before this method existed still
-     * interrupts.
+     * interrupts. A decorator that forwards to another router must override this overload and its turn-addressed
+     * sibling too, or the detail stops at the decorator.
      *
      * @param sessionId
      *            the session (must not be null)

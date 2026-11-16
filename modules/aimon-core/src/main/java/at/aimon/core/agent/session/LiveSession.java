@@ -541,13 +541,13 @@ public interface LiveSession extends AutoCloseable {
      * <p>
      * The detail is for observability and is never sent to the model. It reaches the signal's
      * {@link at.aimon.core.agent.interrupt.CancellationSignal#getDetail() getDetail()}, the log line of the interrupted
-     * execution, and its terminal {@code ExecutionCompleted} event. It is normalised
-     * ({@link at.aimon.core.agent.interrupt.InterruptDetail#normalize(String)}) and,
-     * like the reason, only the interrupt that trips the turn keeps it.
+     * execution, and its terminal {@code ExecutionCompleted} event. Like the reason, only the interrupt that trips the
+     * turn keeps it, normalised by {@link at.aimon.core.agent.interrupt.InterruptDetail#normalize(String)}.
      *
      * <p>
      * The default drops the detail and delegates, so an implementation written before this method existed still
-     * interrupts; it just reports no detail.
+     * interrupts; it just reports no detail. A decorator that forwards to another session must override this
+     * overload too and forward the detail, or the detail stops at the decorator.
      *
      * @param reason
      *            the reason for the interrupt (must not be null)
@@ -565,7 +565,7 @@ public interface LiveSession extends AutoCloseable {
      * {@link #interrupt(InterruptReason, String)} for what happens to the detail.
      *
      * <p>
-     * The default drops the detail and delegates.
+     * The default drops the detail and delegates; a forwarding decorator must override it, as above.
      *
      * @param turnId
      *            the turn this interrupt is meant for (must not be null)

@@ -115,6 +115,47 @@ class SessionRouterSignalSubscriptionTest {
     }
 
     @Test
+    @DisplayName("a peer's session-wide interrupt() with a detail delivers it, normalised, to the holder's turn")
+    void unaddressedInterruptDetailCrossesTheBus() throws Exception {
+        wireTwoNodes();
+        final SessionId id = SessionId.of("c-subscribe-detail-wide");
+
+        final SubmitDisposition disposition = holderNode.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
+        assertThat(disposition.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final TestLiveSession session = awaitSession(holderNode, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        peerNode.manager().interrupt(id, InterruptReason.USER_SIGINT, "deploy\tfreeze ");
+
+        assertThat(session.awaitInterrupt()).isTrue();
+        assertThat(session.recordedInterrupts()).containsExactly(InterruptReason.USER_SIGINT);
+        assertThat(session.recordedInterruptDetails()).containsExactly("deploy freeze");
+
+        session.completeCurrentTurn(TestLiveSession.ok("stopped"));
+        disposition.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    @DisplayName("the holder's own interrupt() with a detail reaches its local turn, normalised")
+    void localInterruptCarriesDetail() throws Exception {
+        wireTwoNodes();
+        final SessionId id = SessionId.of("c-subscribe-detail-local");
+
+        final SubmitDisposition disposition = holderNode.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
+        assertThat(disposition.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final TestLiveSession session = awaitSession(holderNode, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        holderNode.manager().interrupt(id, disposition.getTurnId(), InterruptReason.USER_SIGINT, " wrong\rdirectory");
+
+        assertThat(session.awaitInterrupt()).isTrue();
+        assertThat(session.recordedInterruptDetails()).containsExactly("wrong directory");
+
+        session.completeCurrentTurn(TestLiveSession.ok("stopped"));
+        disposition.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
     @DisplayName("a peer's deleteSession() makes the holder yield the lock instead of exhausting its retries")
     void deleteOnPeerMakesTheHolderYieldTheLock() throws Exception {
         wireTwoNodes();

@@ -20,9 +20,16 @@ so implementations outside this repository keep interrupting and only report no 
 - **Where it shows up.** `CancellationSignal.getDetail()`, the interrupted execution's log line, and two new optional
   fields on the terminal `ExecutionCompleted` event: `getInterruptReason()` and `getInterruptDetail()`. The reason was
   not on that event before either.
-- **Normalised, never refused.** Control characters become spaces, surrounding whitespace is stripped, blank means none,
-  and anything over 500 UTF-16 units is cut with an ellipsis (`InterruptDetail.normalize`). Like the reason, only the
+- **Normalised, never refused.** Control characters, Unicode line/paragraph separators and invisible format characters
+  (bidi overrides, zero-width) become spaces; surrounding whitespace is stripped; blank means none; anything over 500
+  UTF-16 units is cut with an ellipsis (`InterruptDetail.normalize`, idempotent). It is applied wherever a detail
+  enters, including the `ExecutionCompleted` builder, so a relayed event is bounded too. Like the reason, only the
   interrupt that trips the execution keeps its detail.
+- **`ExecutionCompleted.Builder` rejects a detail without a reason** (`IllegalArgumentException`). A blank detail counts
+  as none.
+- **Wrappers must forward it.** The defaults drop the detail, so a decorator over `LiveSession`, `SessionRouter`,
+  `InterruptCoordinator` or `AimonSessions` has to override the new overloads to pass it on. `LeasedLiveSession` does.
+  The testkit's `RecordingTestSession` records it (`recordedInterruptDetails()`).
 - **Across nodes.** The router normalises the detail before it crosses the signal bus, as an optional `detail` key on the
   `INTERRUPT` signal. `ExecutionCompleted` relays carry the two new fields as optional keys. A node on an older build
   ignores both and still interrupts.

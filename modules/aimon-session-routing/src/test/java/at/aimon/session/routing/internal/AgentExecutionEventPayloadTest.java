@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -104,6 +105,23 @@ class AgentExecutionEventPayloadTest {
             assertThat(AgentExecutionEventPayload.fromPayload(AgentExecutionEventPayload.toPayload(event, TURN)))
                     .contains(event);
         }
+    }
+
+    @Test
+    @DisplayName("a relayed ExecutionCompleted whose detail a peer did not normalise is normalised on decode")
+    void relayedDetailIsNormalisedOnDecode() {
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(ExecutionCompleted.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(0).completionReason(CompletionReason.INTERRUPTED)
+                .totalIterations(2).interruptReason(InterruptReason.USER_SIGINT).build(), TURN);
+        payload.put("interruptDetail", "forged\nINFO line " + "x".repeat(1000));
+
+        final ExecutionCompleted decoded = (ExecutionCompleted) AgentExecutionEventPayload.fromPayload(payload)
+                .orElseThrow();
+
+        assertThat(decoded.getInterruptDetail()).hasValueSatisfying(detail -> {
+            assertThat(detail).doesNotContain("\n").startsWith("forged INFO line");
+            assertThat(detail.length()).isLessThanOrEqualTo(InterruptDetail.MAX_LENGTH);
+        });
     }
 
     @Test

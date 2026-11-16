@@ -170,7 +170,8 @@ public interface AimonSessions {
      * bounded line rather than refused.
      *
      * <p>
-     * The default drops the detail and delegates.
+     * The default drops the detail and delegates; a decorator that forwards to another {@code AimonSessions} must
+     * override it to forward the detail.
      *
      * @param sessionId
      *            the session (must not be null)

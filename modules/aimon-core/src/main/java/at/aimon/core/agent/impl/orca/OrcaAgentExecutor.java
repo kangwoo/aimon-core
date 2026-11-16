@@ -3212,7 +3212,9 @@ public class OrcaAgentExecutor
         // defensively all the same, since the log line and event below are the whole point of the reason and detail.
         final CancellationSignal signal = scope.coordinator == null ? null : scope.coordinator.getSignal();
         final InterruptReason interruptReason = signal == null ? null : signal.getReason().orElse(null);
-        final String interruptDetail = signal == null ? null : signal.getDetail().orElse(null);
+        // A detail is only reported beside a reason; a signal that offers one without the other (a custom
+        // implementation) must not make the terminal event fail to build and lose the interrupted result with it.
+        final String interruptDetail = interruptReason == null ? null : signal.getDetail().orElse(null);
         log.info("Execution interrupted: reason={}, detail={}, iterations={}, tokens={}", interruptReason,
                 interruptDetail, iterationCount, accumulatedTokens.getTotalTokens());
 

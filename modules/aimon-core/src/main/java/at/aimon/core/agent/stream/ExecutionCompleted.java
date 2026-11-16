@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.InterruptDetail;
 import at.aimon.core.agent.interrupt.InterruptReason;
 
 /**
@@ -55,7 +56,9 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         this.totalIterations = builder.totalIterations;
         this.elapsed = Objects.requireNonNull(builder.elapsed, "elapsed Optional cannot be null");
         this.interruptReason = Optional.ofNullable(builder.interruptReason);
-        this.interruptDetail = Optional.ofNullable(builder.interruptDetail);
+        // Normalised here, not trusted from the caller: this event is also built from a peer's relay frame, and the
+        // detail's promise — one bounded line — has to hold for that copy too. Idempotent on an already-normal value.
+        this.interruptDetail = InterruptDetail.normalize(builder.interruptDetail);
         if (interruptDetail.isPresent() && interruptReason.isEmpty()) {
             throw new IllegalArgumentException("interruptDetail requires an interruptReason");
         }
@@ -251,8 +254,9 @@ public final class ExecutionCompleted extends AgentExecutionEvent {
         }
 
         /**
-         * Sets the interrupt's free-text explanation (nullable). Taken as given: the coordinator has already
-         * normalised it, so this builder neither trims nor bounds it.
+         * Sets the interrupt's free-text explanation (nullable). Normalised on {@link #build()} with
+         * {@link InterruptDetail#normalize(String)}, so a blank value means none and an oversized or multi-line one is
+         * cut down to one bounded line.
          *
          * @param interruptDetail
          *            the detail, or {@code null} for none

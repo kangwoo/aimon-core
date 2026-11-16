@@ -518,6 +518,25 @@ class AgentExecutionEventTest {
         }
 
         @Test
+        @DisplayName("the builder normalises the detail, so a relayed or hand-built one is still one bounded line")
+        void detailIsNormalisedOnBuild() {
+            ExecutionCompleted e = ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.INTERRUPTED).totalIterations(1)
+                    .interruptReason(InterruptReason.USER_SIGINT).interruptDetail(" line one\r\nline two ").build();
+
+            assertThat(e.getInterruptDetail()).contains("line one  line two");
+        }
+
+        @Test
+        @DisplayName("a blank detail is none, and is accepted without a reason")
+        void blankDetailIsNone() {
+            ExecutionCompleted e = ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
+                    .completionReason(CompletionReason.COMPLETED).totalIterations(1).interruptDetail("  ").build();
+
+            assertThat(e.getInterruptDetail()).isEmpty();
+        }
+
+        @Test
         @DisplayName("a detail without a reason is rejected")
         void detailWithoutReasonRejected() {
             assertThatThrownBy(() -> ExecutionCompleted.builder().timestamp(FIXED_TS).agentRuntimeId(ctx())
