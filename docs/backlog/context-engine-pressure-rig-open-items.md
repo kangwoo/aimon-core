@@ -179,7 +179,7 @@ CP-1 의 표는 지금 배포되는 설정의 비교가 아니다. 리그 설계
 8,400 기준으로 계산된 것이라 다시 재기 전까지는 확인되지 않은 값이다.
 
 **어디.** 두 모듈의 `ContextEngineLiveRig`(`COMPARISON_LIMITS`, `comparisonRollingThreshold`), `ContextPressureRun`
-(`CONTROL_SHARE`, `controlCeiling`). 리그 설계는
+(`CONTROL_SHARE`, `controlCeiling`) — 2026-11-17 확인(이 항목의 인용은 위 문단의 2026-10-07 기준이 아니다). 리그 설계는
 [`design/testing/context-engine-pressure-rig.md`](../design/testing/context-engine-pressure-rig.md).
 
 **언제 다시 볼까.** 이 리그로 engine 을 다시 비교할 때 — CP-6 의 재측정과 같은 실행으로 한다. 수치를

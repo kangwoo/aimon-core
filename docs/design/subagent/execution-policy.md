@@ -294,8 +294,9 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 아니면(`TRUNCATED`) 줄 끝에 ` (the subagent's final answer is incomplete)` 가 붙고, `QUOTA_EXCEEDED` ·
 `MAX_ITERATIONS_GRACE` 는 각자의 안내 문구를 단다.
 
-- **`Result:` 뒤에 둔다.** `aimon-cli` 의 `SubagentResultDisplayHook` 은 `Status:` 와 `Result:` 사이에 공백만 허용하는
-  정규식으로 이 출력을 읽는다. 그 사이에 줄이 끼면 매치가 깨지고 CLI 는 서브에이전트 결과를 조용히 그리지 않는다.
+- **`Result:` 뒤에 둔다.** `aimon-cli` 의 `SubagentResultDisplayHook` 은 머리의 줄 순서(`Subagent:` · `Task:` · `Status:` ·
+  `Iterations:` · `Tokens:` 다음 `Result:`)를 고정한 정규식으로 이 출력을 읽는다. `Tokens:` 줄과 `Result:` 사이에는 공백만
+  허용된다. 머리 안에 줄이 끼면 매치가 깨지고 CLI 는 서브에이전트 결과를 조용히 그리지 않는다.
 - **완료가 아닐 때만 붙인다.** 늘 붙는 줄은 CLI 가 그리는 모든 서브에이전트 결과에 한 줄을 더한다. 줄이 정보를 갖는
   것은 끝이 깨끗하지 않을 때뿐이다. 실패에는 사유 이름(`ERROR`, `MAX_ITERATIONS`, `INTERRUPTED`, 예산 이름)이 붙으므로
   사유가 늘어도 규칙을 다시 볼 필요가 없다.

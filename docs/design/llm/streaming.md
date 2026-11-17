@@ -107,6 +107,18 @@ OpenAI Responses · Anthropic)가 내보내고, `LlmClient` 의 비스트리밍 
 [`../tool/parallel-execution.md`](../tool/parallel-execution.md) 소관이며, 이 문서는 그것을 실어 나르는 chunk
 종류까지만 다룬다.
 
+매퍼가 이 chunk 를 내보내는 규칙은 셋이다.
+
+- **sink 로만 흘린다.** 다른 kind 는 매퍼가 자기 aggregator 와 sink 양쪽에 먹이지만, `TOOL_USE_READY` 는 sink 에만 준다. 그
+  도구의 인자는 이미 aggregator 의 tool_call 슬롯에 누적되어 있으므로, 이 chunk 까지 aggregator 에 먹이면 같은 도구가 두 번
+  반영된다. chunk 의 `ToolUse` 는 `ChunkAggregator.finalizeToolCall(index)` 의 비변조 읽기로 만든다 — 슬롯이 비었거나 id ·
+  name 이 없으면 chunk 를 내지 않는데, 이 조건은 `toLlmResponse()` 가 그 슬롯을 건너뛰는 조건과 같다
+- **블록이 완성되는 즉시 낸다.** 자리는 프로바이더마다 다르다. Anthropic 은 tool_use 블록의 `content_block_stop`, OpenAI
+  Responses 는 `response.function_call_arguments.done`, OpenAI Chat Completions 는 완성을 따로 알려 주지 않으므로 더 높은
+  index 의 tool_call 이 시작될 때 그 아래 슬롯들을 내고 마지막 슬롯은 `STREAM_END` 직전에 낸다
+- **오름차순 index 가 최종 응답의 도구 순서와 같다.** 세 매퍼 모두 그렇다. 소비자(스트리밍 도구 중첩)는 이 전제에 서므로 고아
+  future 나 수확되지 않는 도구가 생기지 않는다
+
 **`STREAM_END` 팩토리는 둘이다.** 3-인자는 provider 문자열 `finishReason` 만 싣고(`StopReason.UNKNOWN`),
 4-인자는 중립 `StopReason` 을 더한다. provider 마다 다른 종료 사유 문자열을 호출자가 문자열 비교로 해석하지
 않게 하기 위해서다.

@@ -188,10 +188,11 @@ IMPORTANT (Scheduling): `SchedulingEngine`/`ScheduledTaskManager`/`RoutineExecut
 IMPORTANT (Agent Scope): `AgentRuntime` 은 **agent-scoped** 다. `AgentRuntimeId` 는 `agent:<name>` 또는
 `agent:<name>:<discriminator>` 형식으로 결정론적이며 `from(Agent)` / `from(Agent, String)` 으로 발급한다
 (`generate()` 는 존재하지 않음). `LiveSession.close()` 가 `AgentRuntime.close()` 를 호출하면 안 된다 — 동일
-agent 의 다른 세션이 아직 그 runtime 을 사용 중일 수 있다. discriminator 없는 runtime 은 부트스트랩(`AimonStack` —
-CLI 는 `AgentSetupFactory` 가 조립)에서 1회 만들어 등록하고, 종료는 앱 shutdown 또는 명시적 agent 제거 시에만.
-테넌트(discriminator 있는) runtime 은 `AgentRuntimeResolver`(aimon-bootstrap)가 첫 사용 때 만들고, 리스가 0 이고 유휴 TTL 이
-지나면 회수한다. `LiveSessionOpener` 는 runtime 을 만들지 않고 조회만 한다.
+agent 의 다른 세션이 아직 그 runtime 을 사용 중일 수 있다. 스펙에 **선언된** agent 의 runtime(discriminator 는 있어도
+없어도 된다)은 `AimonStackBuilder` 가 조립 때 만들고 `AimonStack.startRuntimes()` 가 등록하며, 스택 teardown 의
+`TeardownPhase.AGENT_RUNTIMES` 가 닫는다 — CLI 는 `AgentSetupFactory` 가 그 스택을 조립한다. 선언되지 않은
+(discriminator 있는) id 의 runtime 은 `AgentRuntimeResolver`(aimon-bootstrap)가 첫 사용 때 만들고, 쥔 리스가 없고 유휴
+TTL 이 지나면 회수한다. `LiveSessionOpener` 는 runtime 을 만들지 않고 resolver 에 묻기만 한다.
 
 이름의 유래: 이 타입은 `AgentExecutionContext` 였고 `AgentRuntime` 으로 개명되었다 — "context" 가 실행마다 새로
 생기는 값처럼 읽혔지만 실제로는 agent 당 하나 살아 있는 장수명 런타임이기 때문이다. 옛 이름으로 검색하면

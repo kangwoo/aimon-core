@@ -373,7 +373,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`parallel-foreground-task-open-items.md`](parallel-foreground-task-open-items.md) | `docs/design/subagent/parallel-foreground-task.md` §8 · §9 — 포그라운드 Task 병렬 실행 구현 (2026-10-20) · PF-3 · PF-5 닫음 (2026-11-16) | 6 | 4 | 2 | 0 |
 | [`tool-contract-open-items.md`](tool-contract-open-items.md) | `docs/design/tool/` 의 도구 계약 · 부작용 축 · 병렬 실행 · 도구 검색 · 모니터 문서 재구성, `docs/design/integration/mcp-tool.md` (2026-11-02) · TC-15 닫음, 프로그래매틱 도구 호출 B (2026-11-06) · TC-18 ~ TC-20, PTC Q-C4 수정 설계 §10 (2026-11-06) · TC-21 ~ TC-23, PTC 기능 마무리 설계 §1.3 (2026-11-07) · TC-24 ~ TC-29, PTC 기능 마무리 PR 2 §2 (2026-11-07) · TC-27 닫음 (2026-11-07) · TC-20 · TC-22 · TC-28 · TC-29 닫음, TC-30 · TC-31, PTC 남은 일 PR 1 §4 (2026-11-07) · TC-23 ~ TC-26 닫음, PTC 남은 일 PR 2 §5 (2026-11-07) · TC-21 닫음, PTC 남은 일 PR 3 §6 (2026-11-07) · TC-30 · TC-31 닫음, PTC 마무리 (2026-11-10) · TC-32 열고 닫음, PTC 마지막 손질 (2026-11-10) | 32 | 18 | 14 | 0 |
 | [`async-rewake-open-items.md`](async-rewake-open-items.md) | `docs/design/hook/async-rewake.md` §8 — 훅 문서 재구성 (2026-11-02) | 4 | 4 | 0 | 0 |
-| [`agent-execution-open-items.md`](agent-execution-open-items.md) | `docs/design/agent-execution/` 문서 재구성 — 실행기 · 런타임 범위 · 아티팩트 · 압축 · context engine 의 열린 항목과 코드 대조로 드러난 설계 공백 (2026-11-17) | 23 | 23 | 0 | 0 |
+| [`agent-execution-open-items.md`](agent-execution-open-items.md) | `docs/design/agent-execution/` 문서 재구성 — 실행기 · 런타임 범위 · 아티팩트 · 압축 · context engine 의 열린 항목과 코드 대조로 드러난 설계 공백 (2026-11-17) | 22 | 22 | 0 | 0 |
 
 > **2026-10-06 — 위 배치가 연 다섯 가운데 셋을 닫았다 (`fix/ee89-ee90-t11`).** 닫힌 것은 EE-89 · EE-90 · T-11 이고, 그러다
 > 나온 EE-92 를 등록한 날 닫았다. 이번에도 새 항목은 닫는 항목을 **돌려 보다가** 나왔다 — EE-90 의 폴백을 읽으려고 돌린

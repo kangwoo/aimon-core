@@ -176,11 +176,11 @@ public interface ContextEngine {
 engine 은 뷰 상태를 세 연산으로만 바꾼다. 뷰 상태의 저장 형태와 봉인 시점은
 [`session-log.md` §4](../session/session-log.md#4-뷰-상태--sessionviewstate) 가 정한다.
 
-| 연산 | 뜻 |
-|------|----|
-| `summarize(fromSeq, toSeq, summary, meta)` | 로그의 `[fromSeq, toSeq)` 를 경계 · 요약 마커 쌍으로 대체한다. 기존 span 을 덮으면 흡수한다 |
-| `drop(fromSeq, toSeq)` | 그 구간을 뷰에서 뺀다 — 요약 없이. prompt-too-long 복구 전용 |
-| `elide(seq, placeholder)` | 그 도구 결과 본문을 placeholder 로 대체한다(롤링의 L0 prune) |
+| 연산 | 메서드 — `TranscriptBuffer` (규칙은 `SessionLogState`) | 뜻 |
+|------|------|----|
+| summarize | `summarizeView(SummarySpan)` (`summarize(SummarySpan)`) | 로그의 `[fromSeq, toSeq)` 를 경계 · 요약 마커 쌍으로 대체한다. 구간 · 요약문 · 메타데이터는 `SummarySpan` 이 든다. 기존 span 을 덮으면 흡수한다 |
+| drop | `dropFromView(fromSeq, toSeq)` (`drop(long, long)`) | 그 구간을 뷰에서 뺀다 — 요약 없이. prompt-too-long 복구 전용 |
+| elide | `elideInView(seq, placeholder)` (`elide(long, String)`) | 그 도구 결과 본문을 placeholder 로 대체한다(롤링의 L0 prune) |
 
 **불변식 — 합법 절단면.** `summarize` 와 `drop` 의 두 경계는 합법 절단면이어야 한다. 그 위치의 메시지가 `TOOL` 이 아니고,
 앞의 모든 `tool_use` 가 해소된 곳이다(`LegalCuts`). 연산이 불변식을 검사하고, 어기면 거절한다. assistant 메시지의 시작점도
@@ -279,7 +279,7 @@ in-place 에서는 기록 끝이다.
 | 미응답 부분 앞에 아무것도 없거나, 미응답 부분만으로 한계 이상이다 | 뷰 전체를 요약한다(WARN 로그 한 줄). 그 뒤의 뷰는 `[B, S]` 뿐이다. 내려가지 못할 앞부분 요약에 호출을 먼저 쓰지 않는다 | 1 |
 | 앞부분의 요약이 길어 뷰가 다시 한계 이상이다 | 같은 `prepare` 에서 뷰 전체를 한 번 더 요약한다. 두 번째가 실패하면 첫 압축은 남고 "한계를 넘은 채 보낸다" 로 보고한다 | 2 |
 | 전체를 요약해야 하는데 뷰의 끝이 합법 절단면이 아니다(뷰가 결과 없는 `tool_use` 를 품은 채 TOOL 메시지로 끝난다) | 요약 호출도 훅도 없이 실패하고 가드가 `BLOCK` 으로 답한다 | 0 |
-| 뷰가 USER 메시지나 결과 없는 `tool_use` 를 가진 ASSISTANT 메시지로 끝난다 | 가드의 사전조건이 engine 보다 먼저 걸려 압축을 시도하지 않고 `WARN`(`blocking-limit reached but precondition unmet; deferring`)으로 한계를 넘은 채 보낸다 | 0 |
+| 뷰가 결과 없는 `tool_use` 를 가진 ASSISTANT 메시지로 끝나거나, 앞에 결과 없는 `tool_use` 가 남은 채 USER 메시지로 끝난다(`DefaultCompactionGuard.preconditionMet` — USER 로 끝나도 모든 `tool_use` 가 해소되어 있으면 사전조건은 참이다) | 가드의 사전조건이 engine 보다 먼저 걸려 압축을 시도하지 않고 `WARN`(`blocking-limit reached but precondition unmet; deferring`)으로 한계를 넘은 채 보낸다 | 0 |
 
 - 끝이 비합법인 마지막 두 행은 실행기로는 닿지 않는다. 두 실행기 모두 한 응답의 `tool_use` 마다 결과 하나를 만들어(중단되어
   건너뛴 것은 오류 결과) TOOL 메시지 **하나**로 붙이고, `prepare` 는 그 뒤 다음 iteration 의 머리에서만 부르기 때문이다. 손으로
@@ -294,9 +294,13 @@ in-place 에서는 기록 끝이다.
   붙고 기록의 `isOverBlockingLimit()` 가 참이다. 한계에서 강제된 압축의 기록에는 언제나 `getBlockingLimit()` 가 실리고,
   압축 후 크기는 훅이 돈 뒤의 뷰를 가드의 추정기로 센 값이다. 요약 호출이 실패하면 압축 실패이고 가드는
   `BLOCK`(`compaction failed at blocking limit: …`)이다
-- **기본 engine 은 BLOCK 대신 그대로 보낸다.** 롤링은 같은 자리에서 `BLOCK` 으로 끝낸다. 기본 engine 에는 접힌 원문을 되찾을
-  `SessionHistory` 가 없어, 실행을 끝내기보다 프로바이더의 판정과 prompt-too-long 복구에 맡긴다. 이것이 이 engine 에서 모델이
-  읽지 않은 것을 요약자의 말로 받는 단 하나의 자리다 — 접는 것이 실행을 실패시키는 것의 유일한 대안이기 때문이다
+- **롤링과 다른 것은 미응답 부분을 접느냐다.** 다 요약하고도 넘치면 그대로 보내는 것은 롤링도 같다 — 롤링은 head 까지
+  흡수하고도 blocking 이상이면 `COMPACT` + `STILL_OVER_BLOCKING` 으로 뷰를 그대로 보내고, 새로 흡수할 것이 없는 같은 뷰가
+  다시 올 때만 `BLOCK` 으로 끝낸다([`rolling-context-engine.md` §8](rolling-context-engine.md#8-미응답-부분만으로-넘칠-때)).
+  차이는 무엇을 접느냐에 있다. 롤링은 미응답 부분을 끝내 흡수하지 않는다. 기본 engine 은 blocking 한계에서 미응답 부분까지
+  요약할 수 있다(위 표의 둘째 · 셋째 행). 기본 engine 에는 접힌 원문을 되찾을 `SessionHistory` 가 없어, 실행을 끝내기보다
+  접고 프로바이더의 판정과 prompt-too-long 복구에 맡긴다. 이것이 이 engine 에서 모델이 읽지 않은 것을 요약자의 말로 받는 단
+  하나의 자리다 — 접는 것이 실행을 실패시키는 것의 유일한 대안이기 때문이다
 
 ### 8.4 복구와 `compactNow`
 
@@ -400,7 +404,7 @@ engine 은 메모리를 부르지 않는다. 메모리는 기록을 읽는다. i
 | 복구 연산 | `drop(from, to)` + 합법 절단면 불변식 | **`dropBefore(seq)` (prefix)** — 기본 복구는 USER 메시지 하나를 빼고, prefix 는 tool 짝을 자를 수 있다 |
 | 복구 답의 대조 | 인스턴스 대조 + run 단위 `drop` + 통째 적용 | **인스턴스 동일성만으로 위치 결정** — 같은 인스턴스가 두 번 append 될 수 있어 모호하다. **위치마다 개별 검사** — tool 짝을 함께 뺀 정당한 답이 거절된다 |
 | 기본 engine 뷰 모드의 요약 범위 | 미응답 부분을 남긴다 | **in-place 와 같은 결과(뷰 전체 요약)** — auto 임계값을 넘는 도구 결과 하나가 모델이 읽기 전에 접히고, 같은 도구를 다시 부르면 또 접힌다 |
-| 기본 engine 이 blocking 한계에서 전체를 요약하고도 넘칠 때 | `COMPACT` + `STILL_OVER_BLOCKING` 으로 그대로 보낸다 | **`BLOCK` 으로 실행 종료**(롤링의 선택) — 기본 engine 에는 접힌 원문을 되찾을 `SessionHistory` 가 없다. 판정은 프로바이더와 prompt-too-long 복구에 맡긴다 |
+| 기본 engine 이 blocking 한계에서 미응답 부분을 남기고는 내려가지 못할 때 | 미응답 부분까지 뷰 전체를 요약하고, 그래도 넘치면 `COMPACT` + `STILL_OVER_BLOCKING` 으로 그대로 보낸다 | **미응답 부분을 남기고 실행 종료**(롤링의 선택 — 롤링은 미응답 부분을 흡수하지 않고, 흡수할 것이 없는 같은 뷰가 다시 오면 `BLOCK` 이다) — 기본 engine 에는 접힌 원문을 되찾을 `SessionHistory` 가 없다. 판정은 프로바이더와 prompt-too-long 복구에 맡긴다 |
 | ingest 크기 | `maxIngestTokens` 청크 | **한 번에** — 압축이 더 이상 페이로드를 묶어 주지 않는다 |
 | 압축 전 메모리 flush | 하지 않는다 | **에이전트 주도 flush iteration** — iteration 이 하나 더 들고, 그것이 다시 컨텍스트를 키울 수 있고, 무엇을 저장할지가 모델에 달린다. 로그가 원문을 들면 지킬 것이 없다 |
 | `SessionId` | 압축으로 바꾸지 않는다 | **압축마다 새 세션 + parent** — lease · 펜싱, `SessionRouter`, `IdempotencyStore`, `SessionInbox`, 1:N `LiveSession` 이 모두 `SessionId` 에 걸려 있다 |

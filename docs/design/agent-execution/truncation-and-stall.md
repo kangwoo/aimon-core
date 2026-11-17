@@ -165,7 +165,10 @@ WARN 하나를 남긴다.
 
 ### 3.1 잘림 WARN 과 reasoning 절
 
-잘린 응답 하나에 WARN 하나가 남는다. WARN 은 루프 · iteration · 도구 이름을 적고, 인자는 적지 않는다. 턴의 도구
+잘린 응답 하나에 WARN 하나가 남는다. 예외는 포크의 grace round([execution-policy §8.1](../subagent/execution-policy.md#81-iteration-한도의-grace-round))다 —
+잘린 grace 답은 마커를 달고 `MAX_ITERATIONS_GRACE` 결과가 될 뿐 잘림 WARN 을 남기지 않는다(`DefaultSubagentExecutor` 의
+grace round 처리. 그 답에 구조화 결과 보고 호출이 있었으면 "받지 않는다" 는 WARN 만 남고, 거기에는 reasoning 절이 없다).
+WARN 은 루프 · iteration · 도구 이름을 적고, 인자는 적지 않는다. 턴의 도구
 응답 WARN 은 스트리밍 중첩이 이미 시작한 호출이 있었는지도 말한다("…had already started have their results
 discarded, and the others are not run" / "none of them is run").
 
@@ -215,8 +218,8 @@ the arguments are not logged`).
 ### 4.1 정의와 공유
 
 정체 가드(`at.aimon.core.agent.budget.StalledIterationGuard`)는 진전 없이 도구만 부르는 반복을 끝낸다. 실패 응답에
-continuation 을 계속 돌리지 않게 하는 참조 구현의 death-spiral 가드와 같은 목표다 — 그 유래는
-[`orca-executor.md`](orca-executor.md) 에 있다.
+continuation 을 계속 돌리지 않게 하는 참조 구현의 death-spiral 가드와 같은 목표다 — 그 유래와, 트리거가 참조 구현의
+"마지막 메시지가 API 에러" 가 아니라 "결과가 전부 오류" 인 이유는 [`orca-executor.md` §1](orca-executor.md#1-루프-뼈대) 에 있다.
 
 - **정체 iteration** — 도구 호출을 하나 이상 냈고 그 결과가 **전부** 오류인 iteration (`isStalled(List<ToolUseResult>)`).
 - **임계** — `MAX_CONSECUTIVE_STALLED_ITERATIONS = 3`. 정체 iteration 이 세 번 연속이면 그 실행을 끝낸다.
@@ -247,7 +250,9 @@ PermissionRequest · PreTool 차단, allow-list 거부, 부작용 승인 게이�
 - **턴**은 취소 신호를 먼저 읽고(소비하지 않는 읽기), 취소면 가드를 리셋한다. 이 읽기의 규칙은
   [interrupt.md](interrupt.md) 가 정본이다.
 - **포크**는 iteration 끝의 취소 검사를 먼저 하고 그다음에 가드를 기록한다 — 취소면 `INTERRUPTED`, 아니고 가드가
-  걸리면 `ERROR`. 포크에는 큐 드레인이 없으므로 둘 사이에 다른 것이 없다.
+  걸리면 `ERROR`. 포크에는 큐 드레인이 없지만 둘 사이에 도구 호출 예산의 정지가 하나 있다 — 호출 수 상한을 넘었거나
+  토큰 때문에 호출을 멈췄으면 가드를 기록하지 않고 도구 호출 예산 결과로 끝난다
+  ([execution-policy §4](../subagent/execution-policy.md#4-도구-호출-수)). 그 iteration 의 거절된 호출은 정체로 세지 않는다.
 - **스킬 루프**는 취소가 없다(§1).
 
 ### 4.3 가드가 멈춘 실행의 결과 — `ERROR`

@@ -51,7 +51,7 @@ public boolean interrupt(ScheduledTaskId taskId, String occurrenceKey, Principal
 | `COOPERATIVE` 스텝 | `ToolContext` 의 `CANCELLATION_SIGNAL` 을 폴링해 스텝 *안*에서 일찍 반환한다 |
 | `THREAD_INTERRUPT` · `EXTERNALLY_TERMINATED` 스텝 | terminator 로 그 자리에서 끝낸다 |
 
-`THREAD_INTERRUPT` 의 terminator 는 턴 쪽(`SingleToolInvoker`)과 다르다. 루틴 스텝은 호출 스레드가 아니라 timeout 풀 워커에서 돌므로
+`THREAD_INTERRUPT` 의 terminator 는 에이전트 루프 쪽(`SingleToolInvoker` — 턴 · 포크 · 스킬 루프의 도구 호출)과 다르다. 루틴 스텝은 호출 스레드가 아니라 timeout 풀 워커에서 돌므로
 ([`llm-scheduling-agent.md` §5.4](llm-scheduling-agent.md#54-재시도와-타임아웃)), "도구 스레드를 인터럽트한다" 는 것이 여기서는
 `future.cancel(true)` 다. 등록은 submit **뒤에** 한다. 이미 trip 된 coordinator 에 등록하면 terminator 가 등록 스레드에서 즉시
 발화한다는 registrar 계약이 그 순서를 안전하게 만든다.
@@ -122,7 +122,10 @@ halt 를 포함한 이력 상태 전체와 판정 순서는 [`llm-scheduling-age
 ## 6. shutdown 도 취소다
 
 `RoutineExecutor.shutdown()` 은 풀을 재우기 **전에** 진행 중인 실행을 전부 `SYSTEM_SHUTDOWN` 으로 trip 한다. 멈추라는 말을 듣지 못한
-스텝은 멈출 수 없으므로, 그러지 않으면 유예 시간은 그냥 흘러가고 매번 `shutdownNow()` 로 떨어진다.
+스텝은 멈출 수 없으므로, 그러지 않으면 유예 시간은 그냥 흘러가고 매번 `shutdownNow()` 로 떨어진다. 유예는 30초다 — trip 한 뒤
+timeout 풀에 `shutdown()` 을 걸고 30초 동안 `awaitTermination` 으로 기다리며, 그 안에 비지 않거나 기다리던 스레드가
+인터럽트되면 `shutdownNow()` 로 남은 워커를 인터럽트한다. trip 덕분에 협조적 스텝과 종료할 수 있는 스텝은 대개 그 30초를 쓰지
+않고 바로 빠진다.
 
 ---
 

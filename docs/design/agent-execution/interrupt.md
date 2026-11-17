@@ -338,8 +338,13 @@ static boolean isCancelledOrInterrupted(CancellationSignal signal) {
 워커에 대한 실제 인터럽트뿐이다. 게이트 자체는 [`tool/parallel-execution.md` §2](../tool/parallel-execution.md#2-2단-게이트) 가
 정한다. **이 전제가 넓어지면(병렬화 대상 확대) 승격 규칙을 다시 본다** — backlog 의 4번 항목이다.
 
-포그라운드 `Task` 는 `EXTERNALLY_TERMINATED` 이지만 워커 풀에 오르지 않는다. `ConcurrencyBehavior.DEDICATED_THREAD` 로 호출마다
-새로 만들고 다시 쓰지 않는 전용 스레드에서 돌므로, 늦게 도착한 interrupt 는 그 스레드와 함께 사라지고 이 절의 전제는 유지된다.
+포그라운드 `Task` 는 `EXTERNALLY_TERMINATED` 이지만 워커 풀에 오르지 않는다. `ConcurrencyBehavior.DEDICATED_THREAD` 로 선언되어
+`DedicatedThreadDispatcher` 가 허가(`DedicatedThreadPermits`)를 하나 얻으면 호출마다 새로 만들고 다시 쓰지 않는 전용 스레드에서
+돌린다. terminator 는 그 전용 스레드를 가리키므로 늦게 도착한 interrupt 는 그 스레드와 함께 사라지고, 부모 스레드에는 terminator 가
+등록된 적이 없다. 허가가 남아 있지 않으면 기다리지 않고 그 호출만 호출 스레드에서 inline 으로 돌린다. 이때도 전제는 유지된다 —
+그 호출은 워커가 아니라 루프 자신의 스레드에서 돌고, terminator 도 그 스레드를 가리키므로 늦은 interrupt 는 병렬 디스패치가 없을
+때와 같이 루프의 소비 체크포인트(§8.1)가 흡수한다. 호출 스레드 자신이 전용 스레드를 기다리다 인터럽트되면 미완 전용 스레드에 같은
+지렛대를 걸고, 끝난 뒤 자기 플래그를 되돌려 §8.2 의 승격 지점이 보게 한다.
 근거는 [`parallel-foreground-task.md` §2.3](../subagent/parallel-foreground-task.md#23-전용-스레드가-interrupt-문제를-푸는-방식) ·
 [§6.7](../subagent/parallel-foreground-task.md#67-부모-취소-시-자식-전파-그리고-늦은-interrupt-가-부모-스레드에-남지-않음) 이다.
 
@@ -373,7 +378,8 @@ static boolean isCancelledOrInterrupted(CancellationSignal signal) {
 복원되므로(§8.3) 취소는 유실되지 않는다.
 
 BLOCKED 를 강제하지 않는 자문 체인(PostTool · OnStop · 세션/서브에이전트 라이프사이클)에서 이 답은 아무도 얻지 않은 "성공" 대신
-"답을 못 받았다" 를 남기며, 이미 끝난 훅은 영향이 없다. 기다려 달라고 선언한 훅(`ExecutionHook#ignoresInterrupt()`)은 예외로 끝까지
+"답을 못 받았다" 를 남기며, 이미 끝난 훅은 영향이 없다 — 대기는 `ExecutorService#submit` 이 돌려준 `FutureTask` 의 `get` 이고,
+`FutureTask#get` 은 이미 완료된 값을 인터럽트 플래그와 무관하게 돌려주므로 **진짜로 기다리던 것만** BLOCKED 가 된다. 기다려 달라고 선언한 훅(`ExecutionHook#ignoresInterrupt()`)은 예외로 끝까지
 기다린 뒤 플래그를 다시 세운다 — 둘 다 [`hook-cancellation.md` §2.2](../hook/hook-cancellation.md#22-스레드의-길) 가 정한다.
 
 ### 8.8 PostTool 앞의 소비

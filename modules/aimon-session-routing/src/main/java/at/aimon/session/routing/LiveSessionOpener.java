@@ -35,14 +35,13 @@ import at.aimon.core.agent.session.SessionId;
  * threaded into each {@link #open} call is derived by the manager from {@code SubmitRequest.agentRef} and an optional
  * {@code SubmitRequest.contextDiscriminator}; the opener's job is to <em>look up</em> the matching pre-registered
  * context and bind it to a fresh {@link LiveSession}, not to register one lazily. Implementations <strong>must
- * not</strong> create a fresh {@code AgentRuntime} per {@link #open} call. The application must register the
- * context once at bootstrap via {@code OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)} (optionally
- * with a discriminator) and reuse the same instance for every cache miss.
+ * not</strong> create a fresh {@code AgentRuntime} per {@link #open} call; every cache miss for the same id must
+ * reuse the same instance.
  *
  * <p>
  * The returned {@link LiveSession#close()} does not close the {@code AgentRuntime}. Closing the context is
- * the application owner's responsibility and must happen only at agent removal or application shutdown — typically
- * via {@code OrcaAgentRuntimeManager#destroyRuntime(id)}. Neither this opener nor
+ * its owner's responsibility: in the bootstrap assembly, the stack teardown closes the runtimes it declared and
+ * {@code AgentRuntimeResolver} reclaims the tenant runtimes it created once they are idle. Neither this opener nor
  * {@code SessionRouter#close()} closes those agent-scoped resources, so MCP clients leak if the owner
  * forgets.
  *
@@ -62,23 +61,24 @@ import at.aimon.core.agent.session.SessionId;
  * </pre>
  *
  * <p>
- * Each {@code (agent, discriminator)} pair must be registered once at bootstrap (via
- * {@code OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, discriminator, ...)}) before the first submit
- * that needs it; the opener does not register lazily.
+ * The opener itself never creates or registers a runtime. In the bootstrap assembly ({@code StackLiveSessionOpener})
+ * it asks {@code AgentRuntimeResolver}: runtimes of the agents declared in the stack spec — with or without a
+ * discriminator — are built at assembly and registered when the stack starts, and an undeclared id with a
+ * discriminator (a tenant runtime) is created by the resolver on first use. A host that implements this interface
+ * on its own must have the runtime in the registry before the first submit that needs it.
  *
  * <h2>Hooks hot reload (optional)</h2>
  *
  * <p>
  * Web bootstraps that want {@code hooks.json} edits to propagate to the live registry without restarting can call
- * {@code at.aimon.core.config.hook.HookHotReloadBootstrap.builder()...start()} once at startup, alongside the
- * {@code OrcaAgentRuntimeManager.getOrCreateRuntime} call. The returned {@code Started} handle is
- * application-scoped and must be closed at shutdown so the polling thread exits cleanly. CLI uses the same helper —
- * see {@code aimon-cli/AgentSetupFactory#setupHookHotReload} for a reference call shape.
- * {@code start()} throws {@code HookConfigParseException} when a {@code hooks.json} that is present does not parse or
- * cannot be read, so a host that calls it at startup does not come up with its file guards off. A host whose
- * scheduled-task repository is persistent should load {@code hooks.json} before scheduling starts &mdash; assemble the
- * stack, call {@code start()} here, then {@code AimonStack.startScheduling()} &mdash; because a stored routine can fire
- * as soon as the engine starts, and until the file is loaded it runs without the file's guards.
+ * {@code at.aimon.core.config.hook.HookHotReloadBootstrap.builder()...start()} once at startup, alongside runtime
+ * registration. The returned {@code Started} handle is application-scoped and must be closed at shutdown so the polling
+ * thread exits cleanly. CLI uses the same helper — see {@code aimon-cli/AgentSetupFactory#setupHookHotReload} for a
+ * reference call shape. {@code start()} throws {@code HookConfigParseException} when a {@code hooks.json} that is
+ * present does not parse or cannot be read, so a host that calls it at startup does not come up with its file guards
+ * off. A host whose scheduled-task repository is persistent should load {@code hooks.json} before scheduling starts
+ * &mdash; assemble the stack, call {@code start()} here, then {@code AimonStack.startScheduling()} &mdash; because a
+ * stored routine can fire as soon as the engine starts, and until the file is loaded it runs without the file's guards.
  *
  * <p>
  * Where the commands run follows the execution they are about, whatever the environment provider: a {@code command}

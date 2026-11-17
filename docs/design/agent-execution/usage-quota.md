@@ -100,8 +100,8 @@
 `QuotaGuard` 는 생성 시점에 scope 목록과 limit 목록을 **고정**한다. 기간 버킷만은 `check` / `charge` 때마다 주입된
 `Clock` 과 `ZoneId` 로 다시 계산한다 — 자정을 넘는 긴 실행이 다음 날 버킷에 기록되게 하기 위해서다.
 
-`QuotaGuardFactory` 는 장부·정책·resolver·`Clock`·`ZoneId`·`failClosed` 를 든 객체이고, 턴마다(예약 루틴은 실행마다)
-`create(QuotaResolutionContext)` 로 guard 를 만든다. 실행기는 에이전트 범위의 싱글턴인데 guard 는 실행마다 새로
+`QuotaGuardFactory` 는 장부·정책·resolver·`Clock`·`ZoneId`·`failClosed` 를 든 객체이고, 실행기의 실행마다(턴도, rewake 리플레이 같은
+세션 없는 실행도. 예약 루틴은 루틴 실행마다) `create(QuotaResolutionContext)` 로 guard 를 만든다. 실행기는 에이전트 범위의 싱글턴인데 guard 는 실행마다 새로
 해석되어야 하기 때문이다. 실행기의 기본값은 `QuotaGuardFactory.disabled()` 이고, 그때 모든 실행은
 `QuotaGuard.disabled()` 를 받는다. [§1.2](#12-원칙) 의 무변경 기본값은 이 한 자리에서 지켜진다.
 
@@ -208,7 +208,7 @@ DefaultSubagentExecutor ─ re-publishes QUOTA_GUARD as is ─▶ forks inside t
 | `attributes` | 요청의 `executionAttributes` | 실행 속성(`RoutineExecutionAttributes`) | — |
 
 세션 범위는 요청의 `getSessionId()` 에서만 온다. 트랜스크립트가 세션 없는 요청에 발급하는 id 는 쓰지 않으므로, 세션 id
-없이 들어온 턴(rewake 리플레이 등)에는 세션 범위가 걸리지 않는다.
+없이 들어온 실행(rewake 리플레이 등 — 턴이 아닌 세션 없는 실행)에는 세션 범위가 걸리지 않는다.
 
 **테넌트는 코어가 정하지 않는다.** 이 저장소에서 테넌트는 bootstrap 의 관례(`AgentRuntimeId` 의 discriminator,
 `agent:ops:acme`)일 뿐이다. 그 관례를 쓰는 앱도, `Principal` 속성이나 실행 속성을 쓰는 앱도 있으므로 코어는 기본 resolver
@@ -262,7 +262,7 @@ resolver 나 정책이 던지면 WARN 을 남기고 계량 없이 진행한다.
 ## 6. 멈춘 실행 — `QUOTA_EXCEEDED`
 
 쿼터로 멈춘 실행은 `CompletionReason.QUOTA_EXCEEDED` 로 끝난다. `COST_BUDGET_EXCEEDED` / `TOKEN_BUDGET_EXCEEDED` 를
-재사용하지 않는 이유: 그 둘은 "턴 예산을 올리면 풀린다" 를 뜻하고, 쿼터는 그렇지 않다. 사용자에게 줄 다음 행동이 다르면
+재사용하지 않는 이유: 그 둘은 "실행 예산을 올리면 풀린다" 를 뜻하고, 쿼터는 그렇지 않다. 사용자에게 줄 다음 행동이 다르면
 값도 달라야 한다.
 
 **분류.** `QUOTA_EXCEEDED` 는 한도에 의한 종료로, 예산 멈춤(`COST_BUDGET_EXCEEDED` 등)과 같은 무리다. 실패한 실행
@@ -461,7 +461,7 @@ guard 는 실행 속성을 해석한 뒤, 도구 컨텍스트를 만들기 전�
 | 포크의 scope | 부모의 guard(결정된 key 목록)를 그대로 쓴다 | 포크에서 다시 해석 — 포크에는 세션이 없어 세션 scope 가 빠지고, 그것이 우회로다 |
 | 전파 키 | `QUOTA_GUARD` 는 write-once | 덮어쓸 수 있는 키 — enricher 가 `disabled()` 로 바꿔 끼워 그 아래 포크 전체를 계량 밖으로 뺄 수 있다 |
 | 판정 자리 | 각 루프의 LLM 호출 직전 한 자리 | 턴 시작 전 별도 거부 경로 — 같은 판정이 두 곳에 있으면 어긋난다. 소진된 쿼터는 iteration 0 판정이 LLM 호출 없이 멈춘다 |
-| 멈춘 실행의 사유 | 새 값 `QUOTA_EXCEEDED` | `COST_BUDGET_EXCEEDED` / `TOKEN_BUDGET_EXCEEDED` 재사용 — 그 둘은 "턴 예산을 올리면 풀린다" 를 뜻하고, 사용자에게 줄 다음 행동이 다르다 |
+| 멈춘 실행의 사유 | 새 값 `QUOTA_EXCEEDED` | `COST_BUDGET_EXCEEDED` / `TOKEN_BUDGET_EXCEEDED` 재사용 — 그 둘은 "실행 예산을 올리면 풀린다" 를 뜻하고, 사용자에게 줄 다음 행동이 다르다 |
 | 장부 장애의 기본 | fail-open(WARN 후 계속) | fail-closed 기본 — soft 한 쿼터를 지키려고 장부 장애로 모든 에이전트를 멈추는 것은 더 큰 손실이다 |
 | fail-closed 의 결과 | `QuotaLedgerUnavailableException` → `ERROR` | `QUOTA_EXCEEDED` 로 끝낸다 — 쿼터를 넘은 것이 아니라 판정할 수 없었던 것이다. `Optional` 에는 그 칸이 없다 |
 | resolver·정책 실패 | WARN 후 계량 없이 진행(턴·루틴 공통) | 실행을 실패시킨다 — 턴은 트랜스크립트 저장 전에 결과 없이 사라지고, 루틴은 앱 resolver 고장으로 멈춘다 |

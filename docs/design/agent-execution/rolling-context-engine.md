@@ -154,6 +154,10 @@ minAfter = system + head + summaryTokenRatio × effective + minTailRatio × effe
 롤링 가능 ⇔ minAfter < warning  (warning 은 0 이상으로 clamp)
 ```
 
+기본값으로 계산하면 이렇다 — 128K 창(`ModelContextLimits` 의 기본: 출력 예약 20,000 · 비율 0.8 · warningBuffer 20,000)에서
+effective 는 108,000, auto 는 86,400, warning 은 66,400 이다. 요약 예산(`summaryTokenRatio` 0.08)이 8,640, 최소 tail 이 5,400
+이므로 **시스템 프롬프트와 head 를 합쳐 52,360 토큰 이상**이면 롤링할 수 없어 기본 engine 의 동작으로 물러난다.
+
 - **판정 시점에 본다** — 시스템 프롬프트 크기는 빌드 시점에 알 수 없다
 - **불가능하면 기본 engine 의 동작으로 물러난다** — 그 모델 · 그 시스템 프롬프트 조합에서는 내부의 `DefaultContextEngine` 이
   호출을 맡는다. 작은 창에서 롤링을 강행하면 매 iteration `WARN` 에 머물다 blocking 에서 head 까지 삼키는, 기본 engine 보다

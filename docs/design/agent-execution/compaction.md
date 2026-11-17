@@ -30,11 +30,12 @@ context engine 은 뷰가 창을 넘기 전에 줄인다([`context-engine.md`](c
 - **프로바이더 중립** — `LlmClient` 인터페이스만으로 동작한다. Anthropic `cache_edits` 기반 압축(L1)은 이 원칙과 충돌하므로
   쓰지 않는다(§11)
 - **원본 무손상** — 요약 호출이 실패하면 대화는 바뀌지 않는다. 뷰 모드에서는 성공해도 기록은 바뀌지 않고 뷰 상태만 바뀐다.
-  in-place(v1 쓰기 모드)에서는 요약을 손에 쥔 뒤 단 한 번의 `replaceWith` 로만 교체한다
+  in-place(v1 버퍼, 또는 뷰 모드를 못 하는 engine 이 v2 버퍼를 만났을 때의 in-place 폴백)에서는 요약을 손에 쥔 뒤 단 한 번의
+  `replaceWith` 로만 교체한다
 - **재귀 불가** — 요약 호출이 다시 압축을 일으키지 않는다(§6.4)
 - **훅으로 열되 루프는 막지 않는다** — Pre 훅은 블로킹, Post 훅은 논블로킹
 - **반복 실패는 차단한다** — 연속 실패가 임계에 닿으면 AUTO 경로를 끊는다(circuit breaker, §5.2)
-- **압축 실패는 턴을 죽이지 않는다** — 압축은 최적화이지 필수 단계가 아니다. 호출이 정말 불가능한 자리에서만 실행을 끝낸다(§11)
+- **압축 실패는 실행을 죽이지 않는다** — 압축은 최적화이지 필수 단계가 아니다. 호출이 정말 불가능한 자리에서만 실행을 끝낸다(§11)
 
 ### 1.2 용어
 
@@ -60,7 +61,8 @@ engine 이다. 실행기는 iteration 머리에서 `ContextEngine.prepare` 만 �
 
 - 기본 engine 은 `DefaultCompactionGuard.decide(sessionId, systemPrompt, view, model, budgetForced, Compactor)` 로 사다리를
   재사용한다. 같은 세션 락 · 사다리 · 사전조건 · breaker 를 호출자가 준 뷰에 돌리고, 압축 자체는 콜백(`Compactor`)으로
-  호출자에게 돌려준다. v1 쓰기 모드에서는 같은 가드가 기록을 in-place 로 압축한다
+  호출자에게 돌려준다. in-place 경로(v1 버퍼, 또는 in-place 폴백)에서는 같은 가드가 기록을 in-place 로 압축한다. 어느 쪽인지는
+  노드의 쓰기 모드가 아니라 버퍼의 형식이 고른다([`context-engine.md` §8.1](context-engine.md#81-뷰-모드와-in-place))
 - 롤링 engine 은 같은 순서의 사다리를 자기 구간 계획 위에 돌린다. 사전조건과 세션 락은 롤링 자신의 것이다
   ([`rolling-context-engine.md`](rolling-context-engine.md))
 - 두 engine 모두 요약 텍스트는 같은 요약기에서 얻는다
@@ -99,10 +101,11 @@ threshold = budgetForced ? warning : auto      (유효 임계값, §4.3)
   나와 일반 AUTO 보다 먼저 발동한다
 - **에이전트별 조정은 `ContextPolicy` 다.** AGENT.md `context` 블록의 `auto-compact-ratio` 가 비율을 바꾸고
   `max-window-tokens` 가 창에 상한을 건다(창을 낮출 수만 있다). `ContextPolicy` 는 모델 레지스트리 위에 얹는 뷰이며 레지스트리의
-  값 자체는 바꾸지 않는다. 에이전트 자신의 턴에 적용된다. blocking 한계는 비율이 아니라 (상한을 건) 창을 따른다
+  값 자체는 바꾸지 않는다. 에이전트 자신의 실행(턴과 세션 없는 실행)에 적용된다. blocking 한계는 비율이 아니라 (상한을 건) 창을 따른다
 - **모든 크기는 시스템 프롬프트를 포함해 잰다.**
 
-생성자가 강제하는 불변 규칙은 넷이다 — 비율은 (0, 1], `reservedOutputTokens + warningBuffer < contextWindow`(유효 창이 경고
+생성자가 강제하는 불변 규칙(`ModelContextLimits.validate()`)은 다음과 같다 — 네 크기(`contextWindow` · `reservedOutputTokens` ·
+`warningBuffer` · `blockingBuffer`)는 양수, 비율은 (0, 1], `reservedOutputTokens + warningBuffer < contextWindow`(유효 창이 경고
 대역을 담는다), `reservedOutputTokens + blockingBuffer < contextWindow`(blocking 한계가 양수), `blockingBuffer ≤
 reservedOutputTokens`. 위반은 `IllegalArgumentException` 이다. 비율이 1 에 가까우면 auto 가 blocking 한계보다 위에 올 수
 있다. 판정이 blocking 을 먼저 보므로(§4.1) 그때는 blocking 한계에서 압축이 시작된다.
@@ -161,7 +164,7 @@ in-memory 구현으로 충분하고, 어셈블리가 빌드 시점에 구성한�
 
 - **AUTO 경로만 센다.** MANUAL(`/compact`)의 실패는 실패 결과로 돌려줄 뿐 세지 않는다
 - **일시적 실패만 센다.** `CompactionBlockedByHookException`(훅이 의도적으로 막음), `CompactionReentrancyException`(프로그래머
-  오류), `NothingToCompactException`(요약할 것이 없음), 실행 신호가 선 뒤의 `LlmCallCancelledException`(§6.3)은 세지 않는다.
+  오류), `NothingToCompactException`(요약할 것이 없음), 실행 신호가 선 뒤의 `LlmCallCancelledException`(§6.2 의 취소 규칙, §6.3 의 표)은 세지 않는다.
   이것들을 세면 설정대로 동작한 것이 AUTO 압축을 조용히 꺼 버린다
 - **성공은 리셋한다.** 압축이 성공하면 카운터는 0 으로 돌아간다. `/compact` 의 성공도 engine 안에서 같은 리셋을 한다 — 판정
   밖에서 성공한 압축도 이 세션이 압축되는 세션이라는 증거이기 때문이다
@@ -230,7 +233,7 @@ engine 이 `summarize` 로 한다.
 **메타데이터.** 요약 호출은 `tools` 가 빈 리스트이고 `component = compaction-engine`, `feature = COMPACTION` 이다. 호출자가 준
 `LlmCallMetadata` 가 겹치는 필드에서 이기고 요약기의 기본값이 나머지를 채운다. 실행기는 자기 metadata 에서 호출 지점
 (`component` · `parentComponent` · `feature`)을 뺀 것(`LlmCallMetadata.withoutCallSite()`)을 넘기므로 principal · 그룹 키 · 태그는
-호출자 것이, `component` · `feature` 는 요약기 것이 된다. 애플리케이션이 턴에 붙인 라우팅 · 정책 태그를 요약 호출의 프로바이더도
+호출자 것이, `component` · `feature` 는 요약기 것이 된다. 애플리케이션이 실행에 붙인 라우팅 · 정책 태그를 요약 호출의 프로바이더도
 본다. 그룹 키(`traceId`)도 호출자 것이다 — 메인 턴은 턴의 `traceId`(호출자가 주지 않았으면 세션 id), 포크는 부모의 그룹 키,
 `/compact` 는 세션 id 다. 요약기의 세션 id 기본값은 호출자가 `traceId` 를 주지 않을 때만 쓰인다.
 
@@ -344,7 +347,16 @@ MANUAL 에서는 강등 경고가 따로 보고한다.
 
 **발화 횟수.** PreCompact 는 요약 호출마다 그 앞에서 한 번, PostCompact 는 요약이 설치될 때마다 한 번 발화한다. `summarize`
 경로의 PostCompact 는 설치한 쪽이 부르는 `summaryInstalled` 에서 발화한다. 기본 engine 이 blocking 한계에서 한 `prepare` 안에
-요약을 두 번 하면 호출자에게는 압축 한 번이지만 훅에게는 두 번이다([`context-engine.md`](context-engine.md)). 한 번만
+요약을 두 번 하면 호출자에게는 압축 한 번이지만 훅에게는 두 번이다([`context-engine.md`](context-engine.md)). 그 결과가 둘 있다.
+
+- **두 번째 PreCompact 의 block 은 두 번째 요약의 실패다.** 두 번째 발화는 첫 요약이 남긴 뷰(마커, 미응답 메시지, PostCompact 가
+  붙인 것)를 대상으로 하고, 피드백은 그 호출의 요약 지침, AUTO 의 block 은 그 호출의 거부다. 막히면 첫 압축은 남고 뷰는 한계를
+  넘은 채 간다
+- **복원 훅이 붙인 것은 한 번 헛되이 요약된다.** 두 번째 요약이 필요한지는 PostCompact 가 붙인 것까지 든 보낼 뷰로 판정하므로
+  첫 PostCompact 를 미룰 수 없다. 그래서 무언가를 다시 붙이는 훅(최근 읽은 파일)은 첫 요약 뒤에 붙이고, 두 번째 요약이 그것까지
+  흡수하고, 훅이 다시 붙인다 — 최종 뷰에는 한 번만 남지만 그 토큰은 한 번 헛되이 요약된다
+
+한 번만
 발화하게 하려면 `summarize` 에 "훅은 이미 돌았다" 를 알리고 그 지침을 두 번째 호출로 넘길 길과, 다시 붙인 것만으로 뷰가 한계
 이상이 될 때의 규칙이 필요하다. 둘 다 SPI 변경이라 두지 않는다.
 
@@ -416,8 +428,8 @@ MANUAL 에서는 강등 경고가 따로 보고한다.
 | MANUAL 의 Pre 훅 block | 경고로 강등하고 진행 | AUTO 처럼 중단 — 명시 요청한 사용자 의도를 훅이 이긴다 |
 | 훅 발화 횟수 | 요약 호출마다 Pre, 설치마다 Post — blocking 의 두 번째 요약에서도 | 압축당 한 번 — "훅은 이미 돌았다" 와 지침 이월을 알릴 SPI 변경이 필요하다 |
 | L1 Cached Microcompact | 쓰지 않는다 | Anthropic `cache_edits` — 비용 절감 효과가 크지만 `LlmClient` 에 프로바이더 전용 메서드를 들여야 하고 다른 구현에는 의미가 없다. 프로바이더 내부 최적화로 다루는 길은 열려 있다 |
-| in-place 교체 | v1 쓰기 모드는 기존 `TranscriptBuffer` 를 `replaceWith` 로 한 번에 교체한다. 뷰 모드는 기록을 고치지 않고 뷰 상태를 바꾼다([`context-engine.md`](context-engine.md)) | `CompactedTranscriptBuffer` 같은 새 타입 — 실행기가 두 종류를 구분 처리해야 한다 |
-| 압축 실패 | 턴을 죽이지 않는다. 판정이 실패한 압축을 보고하면 실행기는 WARN 을 남기고 줄이지 않은 뷰로 LLM 호출을 계속한다. blocking 한계 이상에서 압축이 실패한 `BLOCK` 에서만 `ContextWindowExceededException(estimatedTokens, blockingLimit, reason)` 으로 실행을 끝낸다 | 압축 실패 = 실행 실패 — 최적화 단계의 실패가 계속할 수 있는 실행을 끝낸다 |
+| in-place 교체 | in-place 경로(v1 버퍼, 또는 in-place 폴백)는 기존 `TranscriptBuffer` 를 `replaceWith` 로 한 번에 교체한다. 뷰 모드는 기록을 고치지 않고 뷰 상태를 바꾼다([`context-engine.md`](context-engine.md)) | `CompactedTranscriptBuffer` 같은 새 타입 — 실행기가 두 종류를 구분 처리해야 한다 |
+| 압축 실패 | 실행을 죽이지 않는다. 판정이 실패한 압축을 보고하면 실행기는 WARN 을 남기고 줄이지 않은 뷰로 LLM 호출을 계속한다. blocking 한계 이상에서 압축이 실패한 `BLOCK` 에서만 `ContextWindowExceededException(estimatedTokens, blockingLimit, reason)` 으로 실행을 끝낸다 | 압축 실패 = 실행 실패 — 최적화 단계의 실패가 계속할 수 있는 실행을 끝낸다 |
 | 정밀 토큰 추정 | core 는 휴리스틱(과대 추정), 토크나이저는 프로바이더 모듈 | core 에 토크나이저 — 프로바이더별 의존이 core 로 들어온다 |
 | 모델 한계 레지스트리 | in-memory, 어셈블리가 빌드 시점에 구성 | 영속 저장소 — 읽기 전용 설정이라 멀티 노드에서도 나눌 상태가 없다 |
 

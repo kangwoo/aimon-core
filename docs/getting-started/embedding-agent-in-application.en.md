@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 0a9ab698
+source_commit: 340f79c5
 ---
 
 # Embedding an AIMON agent in your application
@@ -1817,8 +1817,8 @@ Every old type name that used to appear in this document has been renamed.
 > is governed by
 > [`agent-runtime-scope.md` §5 Creation and registration](../design/agent-execution/agent-runtime-scope.md#5-생성과-등록).
 > The old migration section, with its Before / After code all the way to "if your host is Spring, that wiring
-> is deleted, not moved", survives in revision `05b4e424` of that document. The table below is the dictionary
-> you read that section with.
+> is deleted, not moved", survives as §4 of revision `05b4e424` of that document and is not in the current one.
+> The table below is the dictionary for reading the old names left in 0.1.x code as their current names.
 
 | Old name | Current name |
 |----------|--------------|

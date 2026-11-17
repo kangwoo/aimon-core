@@ -60,7 +60,9 @@ execute(runtime, request)
   승인을 묻지 않는다.
 - **정체 가드**(`StalledIterationGuard`)는 도구 결과를 기록한 뒤, 큐 주입 전에 검사한다. 모든 도구 결과가 오류인 iteration 이
   이어지면 다음 LLM 호출 전에 끝낸다. 실패 응답을 계속 돌려 토큰만 쓰는 반복(참조 구현의 death-spiral)을 끊는 것이 목표다.
-  정의는 [`truncation-and-stall.md`](truncation-and-stall.md) 에 있다.
+  목표는 같지만 **트리거가 다르다.** 참조 구현의 가드는 "마지막 메시지가 API 에러" 일 때 continuation 을 건너뛴다. 이
+  프레임워크에서 도구 실패는 예외가 아니라 `ToolResult.error()` 결과로 돌아오므로, 같은 반복은 "iteration 의 결과가 **전부**
+  오류" 라는 모양으로 나타나고 가드는 그것을 센다. 정의는 [`truncation-and-stall.md` §4](truncation-and-stall.md#4-정체-가드) 에 있다.
 - **큐 주입**은 iteration 끝, 도구 결과를 기록한 뒤 다음 LLM 호출 전에 한다. 이 런타임에 들어온 사용자 입력을 꺼내
   `<system-reminder>` 로 감싼 user 메시지로 붙인다. 큐 관리자가 없으면 아무것도 하지 않는다. 도구 직후 경계에서 drain 하지 않는
   이유는 [`interrupt.md`](interrupt.md), 사용법은
@@ -114,7 +116,8 @@ soft 이므로 실행을 멈추지 않고 `isUnlimited()` 에도 들어가지 �
 만들고 OnStop 훅을 돌린 뒤 `CompletionReason.MAX_ITERATIONS` 로 정상 반환한다. 상한은 정책 한도이지 오류가 아니고, 예외는
 진짜 오류에만 쓴다.
 
-이 규칙은 턴 루프 한정이다. 포크 루프의 상한 처리는 [`subagent/execution.md`](../subagent/execution.md) 에 있다.
+이 규칙은 턴 루프 한정이다. 포크 루프의 상한 처리(grace round 와, 그것이 없을 때의 `MAX_ITERATIONS`)는
+[`subagent/execution-policy.md` §8.1](../subagent/execution-policy.md#81-iteration-한도의-grace-round) 에 있다.
 
 ## 4. 비용 추적 — `CostEstimator`
 
@@ -125,8 +128,8 @@ public interface CostEstimator  { Money estimate(String model, TokenUsage usage)
 public interface ModelPriceTable { Optional<ModelPrice> priceOf(String model); }
 ```
 
-- 기본 구현은 `TablePricedCostEstimator` + `InMemoryModelPriceTable`(설정 주입)이다. 가격표에 없는 모델은 `Money.ZERO` 와
-  경고 로그다. 가격표에 없다는 이유로 실행을 실패시키지 않는다.
+- 기본 구현은 `TablePricedCostEstimator` + `InMemoryModelPriceTable`(설정 주입)이다. 가격표에 없는 모델은 `Money.zeroUsd()` 와
+  경고 로그다(모델 이름당 한 번). 가격표에 없다는 이유로 실행을 실패시키지 않는다.
 - 루프는 iteration 마다 토큰을 누적하는 자리에서 비용도 누적하고, `OrcaAgentExecutionResult.getCostSummary()` 가 모델별 토큰과
   비용을 노출한다.
 - `ExecutionBudget.maxCostUsd` 는 opt-in USD 축이다. `BudgetTracker` 가 토큰 · 벽시계와 같은 방식으로 STOP 을 판정하고 결과는
@@ -229,10 +232,12 @@ final class LoopTransition { /* reason, iteration, Optional<note> */ }
   | provider 신호 | 중립 예외 |
   |---------------|-----------|
   | 429 (`Retry-After` 는 delta-seconds 와 RFC1123 둘 다 파싱) | `LlmRateLimitedException` |
-  | 5xx, 529(Anthropic 의 overloaded) | `LlmOverloadedException` |
-  | context-length 신호 | `LlmPromptTooLongException` |
   | 401 / 403 | `LlmAuthException` |
-  | 그 밖 | 모듈 예외 |
+  | 500 · 502 · 503 · 504 · 529(Anthropic 의 overloaded), 또는 본문의 overloaded 신호 | `LlmOverloadedException` |
+  | 400 / 422 + 본문의 context-length 신호 | `LlmPromptTooLongException` |
+  | 그 밖의 400 / 422 | `LlmInvalidRequestException` |
+  | 그 밖 | 모듈 예외(`AnthropicException`) |
+  | 스트림 도중의 오류 이벤트(HTTP 200 위) | 본문이 rate limit 이면 `LlmRateLimitedException`, 아니면 `LlmOverloadedException` |
 
 - **연속 실패 카운터.** 세 루프는 각자 로컬 카운터를 든다. activating 예외면 늘리고 아니면 0 으로 되돌린다.
   `LlmFallbackPolicy.consecutiveFailureThreshold` 에 닿았거나 같은 모델의 재시도 예산이 바닥났을 때(최후 수단) 다음 모델로 바꾸고
@@ -252,7 +257,8 @@ final class LoopTransition { /* reason, iteration, Optional<note> */ }
 - **켜는 조건.** 스트리밍 · `concurrency.enabled` · `ToolConcurrencyConfig.streamingOverlap`(기본 false) 셋이 모두 켜졌을 때만
   iteration 마다 `StreamingToolScheduler` 를 설치한다. 하나라도 꺼지면 스케줄러가 없고 provider 의 신호는 무시된다. 이때 모든 경로가
   중첩하지 않는 경로와 바이트 단위로 같다.
-- **신호.** 스케줄러는 `TOOL_USE_READY` chunk(advisory)를 소비한다. chunk 계약은
+- **신호.** 스케줄러는 `TOOL_USE_READY` chunk(advisory)를 소비한다. chunk 계약과 매퍼가 그것을 내는 규칙(sink 로만 흘리고
+  aggregator 로는 흘리지 않는다, 프로바이더별로 블록이 완성되는 자리)은
   [`llm/streaming.md` §3](../llm/streaming.md#3-llmstreamchunk--네-kind-와-생성-시점-불변식) 에 있다. 스케줄러는 provider 가 내는
   오름차순 index 가 최종 응답의 도구 순서와 같다는 전제에 선다. 그래서 고아 future 나 수확되지 않는 도구가 생기지 않는다.
 - **안전성 판정.** 새로 만들지 않는다. 병렬 디스패치의 2단 게이트를 도구별로 재사용한다 —
@@ -290,7 +296,7 @@ final class LoopTransition { /* reason, iteration, Optional<note> */ }
 | 재진입 사유의 어휘 | 실제 재진입 자리가 있는 사유만 | `TRUNCATION_CONTINUE` · `PROMPT_OVERFLOW_RETRY` 를 미리 넣음 | 없는 경로를 가리키는 값은 관측을 거짓말로 만든다 |
 | 턴 루프의 iteration 전처리 | 두 루프(턴 · 포크)의 공통부를 먼저 정하고 양쪽을 그 모양에 맞춘다 | 전처리(취소 → 예산 → 압축 → 스팬 → `LoopTransition`)를 `IterationGate` 로 뽑음 | `IterationGate` 는 턴 루프 안에 새 이음매를 만들어 두 루프 사이의 접합점(`LoopTransition`)을 가로지른다. 한쪽만 그 모양이 되면 공용 코어가 맞춰야 할 형태가 하나 는다 |
 | 비용 계산 | `CostEstimator` 로 분리 | `TokenUsage` 에 가격을 얹음 | SRP. 토큰 수와 가격 정책은 바뀌는 이유가 다르다 |
-| 가격표에 없는 모델 | `Money.ZERO` + 경고 | 실행 실패 | 가격표 누락이 실행을 죽이면 안 된다 |
+| 가격표에 없는 모델 | `Money.zeroUsd()` + 경고 | 실행 실패 | 가격표 누락이 실행을 죽이면 안 된다 |
 | 동적 컨텍스트의 자리 | SYSTEM 은 시스템 프롬프트, 갱신형은 단일 `<system-reminder>` 메시지 | 모든 블록을 한곳에 | 정적 프롬프트를 캐시에 유리한 자리에 두고 동적 꼬리를 분리한다 |
 | git 상태 조회 | VFS 의 `.git/HEAD` | 실행기가 git 프로세스를 띄움 | 프로세스를 띄우면 멀티 인스턴스에서 작업공간의 정의가 노드마다 달라진다 |
 | `CompactBoundary.strategyName` | 상수 — "압축 경계" 라벨. 종류는 `CompactionMetadata.kind` | `CompactionMetadata.kind` 에서 파생 | 파생은 이벤트 계약을 바꾼다. 종류는 이미 `CompactionMetadata` 가 싣는다. 남은 일은 backlog 가 정본이다 |
@@ -308,7 +314,8 @@ final class LoopTransition { /* reason, iteration, Optional<note> */ }
 - 정체 가드를 큐 주입 뒤로 옮기지 않는다. 오류뿐인 결과가 다음 LLM 호출로 흘러간다.
 - 정체 가드 자리에서 스레드 인터럽트 플래그를 소비하는 검사를 쓰지 않는다. 플래그 소비는 iteration 꼬리의 취소 검사 한 곳이 맡는다 —
   [`interrupt.md`](interrupt.md).
-- iteration 상한을 예외로 던지지 않는다.
+- 턴 루프에서 iteration 상한을 예외로 던지지 않는다. 그렇다고 `MaxIterationsExceededException` 을 지우지는 않는다 — 포크 루프
+  (`DefaultSubagentExecutor`)가 grace round 없이 상한에 닿을 때 여전히 던지고 받아 `MAX_ITERATIONS` 결과로 바꾼다.
 - `LoopTransitionReason` 에 배선되지 않은 사유를 넣지 않는다. `LoopTransition` 을 제어 흐름에 쓰지 않는다.
 - `CompactBoundary` emit 헬퍼의 clamp 를 지우지 않는다. 관측 코드가 실행을 깨뜨린다.
 - `ContextAssembler` 의 실패가 턴을 죽이게 두지 않는다. 실행기에서 git 프로세스를 띄우지 않는다.

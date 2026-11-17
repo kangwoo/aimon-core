@@ -1,12 +1,14 @@
-# 에이전트 실행 — 등록 항목 23건 (열림 23 · 닫힘 0)
+# 에이전트 실행 — 등록 항목 22건 (열림 22 · 닫힘 0)
 
 출처는 2026-11-17 의 `docs/design/agent-execution/` 문서 재구성이다. 재구성 전의 다섯 문서 — 실행기(`orca-executor.md`
-§13 · §10 · §11.2), 런타임 범위(`agent-runtime-scope.md` §6), 아티팩트(`artifact.md` §10), 압축(`compaction.md` §11),
+§13 · §10), 런타임 범위(`agent-runtime-scope.md` §6), 아티팩트(`artifact.md` §10), 압축(`compaction.md` §11),
 context engine(`context-engine.md` §12 · §13.5) — 가 본문 끝에 들고 있던 열린 항목과, 재구성하면서 코드와 대조해 드러난 설계
-공백 넷(AE-6 · AE-15 · AE-17 · AE-18)을 여기로 옮겼다. 설계 문서는 현재 설계만 적고, 남은 일은 여기에 둔다.
+공백 넷(AE-5 · AE-14 · AE-16 · AE-17)을 여기로 옮겼다. 설계 문서는 현재 설계만 적고, 남은 일은 여기에 둔다.
 
 옮기지 않은 것과 그 이유:
 
+- **포크 루프의 스트리밍 툴 중첩**(옛 `orca-executor.md` §11.2) — 이미
+  [`tool-contract-open-items.md`](tool-contract-open-items.md) TC-17 이 같은 항목으로 갖는다. 새 번호를 주면 중복 등록이 된다
 - **투기적 side-work** — 이미 [`../design/backlog/orca-executor-speculative-side-work.md`](../design/backlog/orca-executor-speculative-side-work.md) 가 갖는다
 - **잘림 이어쓰기(continuation)** — 열린 항목이 아니라 기각한 대안이다. 잘림 문서의 결정 표가 갖는다
 - **부분 스트림 tombstone 정리** — 닫았다. 재시도 · 모델 교체 시 폐기된 시도의 부분 출력 정리는
@@ -19,8 +21,8 @@ context engine(`context-engine.md` §12 · §13.5) — 가 본문 끝에 들고 
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**다.
 
-각 항목의 **어디** 줄은 줄 번호 없이 파일만 가리키며, 모두 2026-11-17 에 확인했다. 경로는
-`modules/aimon-core/src/main/java/at/aimon/core/` 기준이고, 다른 모듈은 모듈 경로부터 적는다.
+각 항목의 **어디** 줄은 모두 2026-11-17 에 확인했다. 줄 번호는 이름을 적은 멤버에만 붙였고(`:줄`), 파일 전체가 대상인
+것은 파일만 적는다. 경로는 `modules/aimon-core/src/main/java/at/aimon/core/` 기준이고, 다른 모듈은 모듈 경로부터 적는다.
 
 ---
 
@@ -38,27 +40,13 @@ context engine(`context-engine.md` §12 · §13.5) — 가 본문 끝에 들고 
 `IterationGate` 로 뽑는 것. 메서드는 짧아지지만 *메인 루프 안*에 새 이음매를 하나 더 만들어, 공용 코어를 뽑을 때 맞춰야 할
 형태가 하나 는다. 착수 순서는 "메인 루프를 정리하고 나중에 합친다" 가 아니라 "두 루프의 공통부를 먼저 정한다" 다.
 
-**어디.** `agent/impl/orca/OrcaAgentExecutor.java`, `subagent/execution/DefaultSubagentExecutor.java`,
-`agent/loop/LoopTransition.java`. 설계는 [실행기](../design/agent-execution/orca-executor.md).
+**어디.** `agent/impl/orca/OrcaAgentExecutor.java`(`executeReActLoop` `:1696`), `subagent/execution/DefaultSubagentExecutor.java`
+(`runReActLoop` `:653`), `agent/loop/LoopTransition.java`. 설계는 [실행기](../design/agent-execution/orca-executor.md).
 
 **언제 다시 볼까.** 두 루프 중 한쪽에만 iteration 규칙을 더하는 변경이 또 생길 때, 또는 `OrcaAgentExecutor` 를 나누는
 작업이 시작될 때 — 그 작업은 이 항목의 순서를 따른다.
 
-## AE-2 — 포크 루프는 스트리밍 툴 중첩을 쓰지 않는다 · **열림**
-
-**무엇을.** `DefaultSubagentExecutor` 에도 `StreamingToolScheduler` 를 설치할 수 있게 한다.
-
-**왜.** `ToolConcurrencyConfig.streamingOverlap` 을 켜도 툴 실행이 스트림에 겹치는 것은 메인 루프뿐이다. 포크 루프에는
-스케줄러 참조가 없어, 같은 설정 아래에서 포크의 툴 지연은 그대로 사용자 지연이 된다. SPI 상으로는 같은 dispatcher 를 주입하면
-된다.
-
-**어디.** `subagent/execution/DefaultSubagentExecutor.java`, `agent/tool/StreamingToolScheduler.java`. 설계는
-[실행기](../design/agent-execution/orca-executor.md).
-
-**언제 다시 볼까.** 포크의 툴 지연이 체감된다는 보고가 있을 때, 또는 AE-1 로 두 루프가 코어를 공유하게 될 때(그때는 따로
-할 일이 없어진다).
-
-## AE-3 — 프롬프트 초과 복구는 drop 한 계층뿐이다 · **열림**
+## AE-2 — 프롬프트 초과 복구는 drop 한 계층뿐이다 · **열림**
 
 **무엇을.** `LlmPromptTooLongException` 복구를 2계층으로 만든다 — 먼저 요약 압축을 시도하고, 실패했을 때만 가장 오래된
 메시지를 버리는 drop 으로 폴백한다.
@@ -66,25 +54,27 @@ context engine(`context-engine.md` §12 · §13.5) — 가 본문 끝에 들고 
 **왜.** 지금 `DefaultContextEngine.recover` 는 `DefaultPromptSizeRecoveryStrategy` 로 drop 만 한다. 하드 실패는 없지만,
 손실이 적은 요약보다 손실이 큰 drop 이 먼저 쓰인다 — 프롬프트 초과를 만난 턴은 요약될 수 있었던 앞부분을 통째로 잃는다.
 
-**어디.** `agent/context/DefaultContextEngine.java`(`recover`), `agent/compact/DefaultPromptSizeRecoveryStrategy.java`.
+**어디.** `agent/context/DefaultContextEngine.java`(`recover` `:243`), `agent/compact/DefaultPromptSizeRecoveryStrategy.java`.
 설계는 [context engine](../design/agent-execution/context-engine.md), 실행기 쪽 배선은
 [실행기](../design/agent-execution/orca-executor.md).
 
 **언제 다시 볼까.** 프롬프트 초과 복구로 맥락을 잃었다는 보고가 있을 때.
 
-## AE-4 — 런타임 모델 해상도가 없다 · **열림**
+## AE-3 — 런타임 모델 해상도가 없다 · **열림**
 
 **무엇을.** 실행 중 상황에 따라 모델을 바꾸는 해상도 규칙(plan-mode 승격, 200k 를 넘는 컨텍스트의 승격)을 둘지 정한다.
 
 **왜.** 참조 구현 대비 남은 격차다. 지금 모델 교체는 `LlmFallbackPolicy` 의 과부하 fallback 뿐이고, 요청의 모델 이름은
 [모델 이름 해석](../design/llm/model-name-resolution.md) 의 정적 순서로 정해진다. 그 문서도 실행 중 승격은 다루지 않는다.
+관측되는 결과: 컨텍스트가 설정된 모델의 창을 넘어서는 실행은 더 큰 창의 모델로 옮겨 가지 않고 같은 모델에서 압축과
+prompt-too-long 복구(drop)로만 버틴다 — 창이 컸다면 원문으로 남았을 앞부분을 잃는다.
 
 **어디.** `llm/invoke/LlmCallGateway.java`, `llm/retry/LlmFallbackPolicy.java`. 설계는
 [실행기](../design/agent-execution/orca-executor.md).
 
 **언제 다시 볼까.** 큰 컨텍스트에서 더 큰 창의 모델로 옮겨야 하는 에이전트가 생길 때.
 
-## AE-5 — 컨텍스트 refresh 는 턴 시작 1회뿐이다 · **열림**
+## AE-4 — 컨텍스트 refresh 는 턴 시작 1회뿐이다 · **열림**
 
 **무엇을.** `ContextAssembler` 의 재조립 트리거를 정한다 — N iteration 주기, 파일 변경 이벤트, 또는 지금대로.
 
@@ -93,10 +83,10 @@ context engine(`context-engine.md` §12 · §13.5) — 가 본문 끝에 들고 
 
 **어디.** `agent/context/ContextAssembler.java`. 설계는 [실행기](../design/agent-execution/orca-executor.md).
 
-**언제 다시 볼까.** 긴 턴에서 낡은 컨텍스트 때문에 틀린 행동이 보고될 때, 또는 AE-23(캐시 경계)이 들어가 재조립 비용을 잴 수
+**언제 다시 볼까.** 긴 턴에서 낡은 컨텍스트 때문에 틀린 행동이 보고될 때, 또는 AE-22(캐시 경계)이 들어가 재조립 비용을 잴 수
 있게 될 때.
 
-## AE-6 — `CompactBoundary.strategyName` 이 PRUNE 에도 "summarization" 이다 · **열림**
+## AE-5 — `CompactBoundary.strategyName` 이 PRUNE 에도 "summarization" 이다 · **열림**
 
 **무엇을.** 압축 경계 이벤트의 `strategyName` 을 `CompactionMetadata.kind`(`PRUNE` · `ROLLING` · `FULL` · `FALLBACK`)에서
 파생할지 정한다.
@@ -107,25 +97,26 @@ prune 만으로 끝나는 압축(`CompactionKind.PRUNE`)도 COMPACT 결정으로
 `CompactionMetadata.kind` 가 싣는다고 적고, 상수의 javadoc 도 같은 뜻(고정된 경계 라벨, 실제 종류는 `kind`)으로 적는다. 남은
 것은 값 자체가 요약이라고 말한다는 점이다. 파생으로 바꾸면 이벤트 계약이 바뀌므로 소비자 확인이 먼저다.
 
-**어디.** `agent/impl/orca/OrcaAgentExecutor.java`(`COMPACTION_STRATEGY_NAME`, `emitCompactBoundary`),
+**어디.** `agent/impl/orca/OrcaAgentExecutor.java`(`COMPACTION_STRATEGY_NAME` `:320`), `agent/impl/orca/AgentEventDispatcher.java`
+(`emitCompactBoundary` `:164`),
 `agent/stream/CompactBoundary.java`, `agent/compact/CompactionMetadata.java`. 설계는
 [실행기](../design/agent-execution/orca-executor.md), 종류는 [롤링 context engine](../design/agent-execution/rolling-context-engine.md).
 
 **언제 다시 볼까.** `strategyName` 으로 압축 종류를 구분하려는 소비자(관측 · UI)가 생길 때.
 
-## AE-7 — hot-reload 로 교체된 런타임을 누가 닫는지 정해지지 않았다 · **열림**
+## AE-6 — hot-reload 로 교체된 런타임을 누가 닫는지 정해지지 않았다 · **열림**
 
 **무엇을.** agent 정의가 실행 중에 바뀔 때의 런타임 재발급 정책과, 교체된 이전 인스턴스의 자원 회수 책임을 정한다.
 
 **왜.** `AgentRegistry` 는 같은 이름의 agent 를 등록하면 교체한다. 그 agent 의 런타임이 쥔 도구 레지스트리 · 훅 레지스트리 ·
 MCP 연결을 누가 닫는지는 정해져 있지 않다 — 교체가 반복되면 닫히지 않은 런타임이 쌓일 수 있다.
 
-**어디.** `agent/AgentRegistry.java`, `agent/impl/orca/OrcaAgentRuntimeManager.java`(`destroyRuntime`). 설계는
+**어디.** `agent/AgentRegistry.java`, `agent/impl/orca/OrcaAgentRuntimeManager.java`(`destroyRuntime` `:234`). 설계는
 [런타임 범위](../design/agent-execution/agent-runtime-scope.md).
 
 **언제 다시 볼까.** agent 정의를 재시작 없이 바꾸는 기능을 만들 때.
 
-## AE-8 — 세션 단위 MCP 슬롯이 없다 · **열림**
+## AE-7 — 세션 단위 MCP 슬롯이 없다 · **열림**
 
 **무엇을.** 세션마다 다른 MCP 서버 연결이 필요할 때 라이브 세션 쪽에 슬롯을 더한다.
 
@@ -136,18 +127,22 @@ MCP 연결을 누가 닫는지는 정해져 있지 않다 — 교체가 반복�
 
 **언제 다시 볼까.** 세션 단위 MCP 연결을 요구하는 쓰임새가 생길 때.
 
-## AE-9 — 런타임 id 의 이름 형식을 강제하지 않는다 · **열림** *(결정 대기)*
+## AE-8 — 런타임 id 의 이름 형식을 강제하지 않는다 · **열림** *(결정 대기)*
 
 **무엇을.** `agent:<name>[:<discriminator>]` 의 각 부분에 권장 규칙(영문 소문자 · 숫자 · 하이픈)을 강제할지 정한다.
 
 **왜.** 지금 `AgentRuntimeId` 는 콜론과 빈 값(blank)만 막는다. 그 밖의 문자는 통과하므로 로그 · 메트릭 · 저장 키에서 id 를 읽기
-어려워질 수 있다. 강제하면 이미 쓰는 id 가 거부될 수 있다.
+어려워질 수 있다. 강제하면 이미 쓰는 id 가 거부될 수 있다. 관측되는 결과: 로컬 작업공간을 쓰는 bootstrap 조립에서
+`/` · `\` · `..` 를 담은 discriminator 는 id 를 만들 때가 아니라 그 테넌트 런타임의 첫 사용 때 `AgentWorkspaceLayout` 이
+`AimonBootstrapException` 으로 거절한다 — 같은 값이 한 층에서는 통과하고 다음 층에서 요청 실패로 드러난다. 공백 · 대문자
+같은 나머지 문자는 두 층을 다 통과해 디렉터리 이름과 로그에 그대로 실린다.
 
-**어디.** `agent/AgentRuntimeId.java`. 설계는 [런타임 범위](../design/agent-execution/agent-runtime-scope.md).
+**어디.** `agent/AgentRuntimeId.java`(`of` `:77`),
+`modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/spec/AgentWorkspaceLayout.java`(`requireUsableSegment` `:67`). 설계는 [런타임 범위](../design/agent-execution/agent-runtime-scope.md).
 
 **언제 다시 볼까.** id 의 문자 때문에 저장 키나 메트릭 이름이 깨졌다는 보고가 있을 때.
 
-## AE-10 — "현재 요청 → 어느 discriminator" 를 프레임워크가 주지 않는다 · **열림** *(결정 대기)*
+## AE-9 — "현재 요청 → 어느 discriminator" 를 프레임워크가 주지 않는다 · **열림** *(결정 대기)*
 
 **무엇을.** 요청에서 discriminator 를 고르는 패턴(테넌트 컨텍스트, request scope)을 프레임워크가 일부라도 제공할지 정한다.
 
@@ -160,7 +155,7 @@ discriminator 인지는 호출자가 정해 `SubmitRequest.contextDiscriminator`
 
 **언제 다시 볼까.** 두 번째 호스트가 같은 discriminator 매핑을 직접 쓰게 될 때.
 
-## AE-11 — 포크의 아티팩트가 결과에 드러나지 않는다 · **열림**
+## AE-10 — 포크의 아티팩트가 결과에 드러나지 않는다 · **열림**
 
 **무엇을.** 포크가 모은 아티팩트를 `SubagentExecutionResult` 로 올린다.
 
@@ -172,7 +167,7 @@ discriminator 인지는 호출자가 정해 `SubmitRequest.contextDiscriminator`
 
 **언제 다시 볼까.** 포크가 만든 파일을 사용자에게 내려받게 해야 할 때.
 
-## AE-12 — `downloadToken` 발급자가 없다 · **열림** *(결정 대기)*
+## AE-11 — `downloadToken` 발급자가 없다 · **열림** *(결정 대기)*
 
 **무엇을.** 다운로드 토큰을 코어가 발급할지, 애플리케이션 계층의 일로 남길지 정한다.
 
@@ -183,7 +178,7 @@ discriminator 인지는 호출자가 정해 `SubmitRequest.contextDiscriminator`
 
 **언제 다시 볼까.** 두 번째 호스트가 다운로드 토큰을 직접 발급하게 될 때.
 
-## AE-13 — 파일을 만드는 다른 도구는 아티팩트 위임을 쓰지 않는다 · **열림**
+## AE-12 — 파일을 만드는 다른 도구는 아티팩트 위임을 쓰지 않는다 · **열림**
 
 **무엇을.** `Bash` 처럼 파일을 만들 수 있는 도구에도 아티팩트 데코레이터의 위임 패턴을 넓힌다.
 
@@ -195,7 +190,7 @@ discriminator 인지는 호출자가 정해 `SubmitRequest.contextDiscriminator`
 
 **언제 다시 볼까.** 셸로 만든 산출물을 내려받게 해 달라는 요구가 있을 때.
 
-## AE-14 — `tool_use` 없는 assistant 메시지의 아티팩트가 압축 스트리핑에서 떨어진다 · **열림**
+## AE-13 — `tool_use` 없는 assistant 메시지의 아티팩트가 압축 스트리핑에서 떨어진다 · **열림**
 
 **무엇을.** `MessageStripper` 가 `tool_use` 없는 assistant 메시지의 `artifacts` 도 보존하게 한다.
 
@@ -203,12 +198,12 @@ discriminator 인지는 호출자가 정해 `SubmitRequest.contextDiscriminator`
 `Message.assistant(response, List.of(), artifacts)` — `tool_use` 없이 아티팩트를 가진 메시지 — 를 만들므로, 그 아티팩트는 요약
 입력을 만드는 스트리핑에서 떨어진다.
 
-**어디.** `agent/compact/MessageStripper.java`. 설계는 [아티팩트](../design/agent-execution/artifact.md),
+**어디.** `agent/compact/MessageStripper.java`(`rebuild` `:124`). 설계는 [아티팩트](../design/agent-execution/artifact.md),
 [압축](../design/agent-execution/compaction.md).
 
 **언제 다시 볼까.** 압축 뒤 커맨드가 만든 아티팩트가 사라졌다는 보고가 있을 때.
 
-## AE-15 — 전사의 아티팩트는 저장소 구분을 싣지 않는다 · **열림**
+## AE-14 — 전사의 아티팩트는 저장소 구분을 싣지 않는다 · **열림**
 
 **무엇을.** `MessageArtifact`(와 `ArtifactMetadata`, 전사 코덱)에 저장소(`ArtifactStorage` — WORKSPACE / CONTROL)를 싣는다.
 
@@ -218,14 +213,14 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 등록된 아티팩트를 전사만 보고 내려받으면 어느 저장소를 열지 알 수 없다. 지금 보관 사본의 다운로드는 실행 결과의 `FileArtifact`
 를 써야 한다.
 
-**어디.** `agent/artifact/FileArtifact.java`(`toMessageArtifact`, `getStorage`), `llm/MessageArtifact.java`,
+**어디.** `agent/artifact/FileArtifact.java`(`toMessageArtifact` `:136`, `getStorage` `:146`), `llm/MessageArtifact.java`,
 `base/ArtifactMetadata.java`, `subagent/task/codec/JsonSessionSnapshotCodec.java`. 설계는
 [아티팩트](../design/agent-execution/artifact.md).
 
 **언제 다시 볼까.** 실행이 끝난 뒤 전사만으로 보관 사본을 내려받는 호스트가 생길 때. 전사 코덱을 바꾸는 일이므로 롤링
 업그레이드 규칙(모르는 필드는 버리고 읽는다)을 함께 정한다.
 
-## AE-16 — L2 Session Memory Compact 가 없다 · **열림**
+## AE-15 — L2 Session Memory Compact 가 없다 · **열림**
 
 **무엇을.** 백그라운드 요약 에이전트가 세션 메모리를 미리 갱신해 두고, 압축 때 그것을 요약으로 쓰는 계층(L2)을 설계한다.
 
@@ -233,11 +228,12 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 시점에서 뺄 수 있다. 백그라운드 요약 에이전트가 선행 조건이고 별도 설계 대상이다.
 [`../design/backlog/self-managed-context-engine.md`](../design/backlog/self-managed-context-engine.md) 는 L2 를 다루지 않는다.
 
-**어디.** 설계는 [압축](../design/agent-execution/compaction.md).
+**어디.** 아직 코드가 없다. 미리 만든 요약을 돌려줄 자리는 요약기 SPI `agent/compact/CompactionEngine.java`(`summarize` `:92`)이고,
+그것을 부르는 쪽은 `agent/context/DefaultContextEngine.java` 다. 설계는 [압축](../design/agent-execution/compaction.md).
 
 **언제 다시 볼까.** 압축 시점의 요약 지연이 턴 지연의 문제로 보고될 때, 또는 백그라운드 에이전트 실행 기반이 생길 때.
 
-## AE-17 — 공유 compaction breaker 를 bootstrap · 스타터가 배선하지 않는다 · **열림**
+## AE-16 — 공유 compaction breaker 를 bootstrap · 스타터가 배선하지 않는다 · **열림**
 
 **무엇을.** 멀티 인스턴스 배포에서 `SessionRecordCompactionFailureStore` 를 기본으로 배선할지 정하고, 정하면 `AimonStackBuilder` ·
 스타터에 배선한다.
@@ -249,42 +245,42 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 문서는 지금 "어셈블리가 직접 갈아끼운다(bootstrap · 스타터는 하지 않는다)" 로 적는다.
 
 **어디.** `agent/compact/SessionRecordCompactionFailureStore.java`, `agent/impl/orca/OrcaAgentRuntimeFactory.java`
-(`withCompactionFailureStore`), `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackBuilder.java`. 설계는
+(`withCompactionFailureStore` `:581`), `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackBuilder.java`. 설계는
 [압축](../design/agent-execution/compaction.md).
 
 **언제 다시 볼까.** 스케일아웃 배포에서 breaker 가 노드마다 따로 열린다는 보고가 있을 때, 또는 세션 레코드 저장소를 쓰는
 다른 노드 로컬 상태를 bootstrap 이 기본 배선하게 될 때.
 
-## AE-18 — v2 의 커스텀 guard 거절은 지원 조립에서만 강제된다 · **열림**
+## AE-17 — v2 의 커스텀 guard 거절은 지원 조립에서만 강제된다 · **열림**
 
 **무엇을.** v2 쓰기 형식에서 커스텀 `CompactionGuard` · 요약하지 못하는 요약기 · engine 없는 기본 guard 를 거절하는 검사를
 `OrcaAgentRuntime.Builder` 경로에도 걸지, 아니면 그 경로를 알려진 틈으로 문서에 남길지 정한다.
 
 **왜.** 거절은 `DefaultContextEngine.Builder.writeFormat(V2)` 의 `build()` 에서만 일어난다. `OrcaAgentRuntimeFactory` 는 노드의
 쓰기 형식으로 그것을 걸지만, `OrcaAgentRuntime.Builder` 가 파생하는 engine 은 형식을 받지 않고 `.writeFormat(SessionLogFormat.V1)`
-로 만들어진다. 그래서 그 경로로 들어온 커스텀 guard 는 기동 시 거절되지 않고, 그 노드가 v2 레코드를 만나면 AE-19 의 모양으로
+로 만들어진다. 그래서 그 경로로 들어온 커스텀 guard 는 기동 시 거절되지 않고, 그 노드가 v2 레코드를 만나면 AE-18 의 모양으로
 압축하지 않는다. 설계 문서는 계약을 "지원 조립(`OrcaAgentRuntimeFactory` · `AimonStackBuilder` · 스타터)에서 기동 실패" 로 좁혀
 적는다.
 
-**어디.** `agent/impl/orca/OrcaAgentRuntime.java`(`Builder#build`), `agent/context/DefaultContextEngine.java`(`Builder`).
+**어디.** `agent/impl/orca/OrcaAgentRuntime.java`(`Builder#build` `:504`), `agent/context/DefaultContextEngine.java`(`Builder` `:812`).
 설계는 [context engine](../design/agent-execution/context-engine.md).
 
 **언제 다시 볼까.** 팩토리를 거치지 않고 `OrcaAgentRuntime.Builder` 로 런타임을 조립하는 호스트가 v2 를 쓰게 될 때.
 
-## AE-19 — in-place 로 압축할 수 없는 v2 로그는 압축되지 않는다 · **열림**
+## AE-18 — in-place 로 압축할 수 없는 v2 로그는 압축되지 않는다 · **열림**
 
 **무엇을.** 뷰 모드를 못 하는 engine 이 뷰 상태나 manifest 를 가진 v2 버퍼를 만났을 때의 동작을 정한다 — 압축할 길을 주거나,
 그 조합을 더 이르게 실패시킨다.
 
 **왜.** 그런 engine 은 투영한 뷰를 보내고 압축하지 않는다. 로그는 계속 자라고, blocking 한계에 닿기 전까지는 prompt-too-long
 복구(뷰에서 drop)만 크기를 줄인다. 그 구성으로 v2 레코드를 오래 서빙하면 턴이 결국 한계에서 실패한다. 지원 조립에서는 그런
-노드가 v2 에서 기동하지 않으므로, 이것은 v1 노드가 v2 로 올라간 레코드를 만났을 때(롤링 업그레이드)와 AE-18 의 경로에서 생긴다.
+노드가 v2 에서 기동하지 않으므로, 이것은 v1 노드가 v2 로 올라간 레코드를 만났을 때(롤링 업그레이드)와 AE-17 의 경로에서 생긴다.
 
 **어디.** `agent/context/DefaultContextEngine.java`. 설계는 [context engine](../design/agent-execution/context-engine.md).
 
-**언제 다시 볼까.** v1 → v2 롤링 업그레이드를 하는 배포가 생길 때, 또는 AE-18 을 처리할 때.
+**언제 다시 볼까.** v1 → v2 롤링 업그레이드를 하는 배포가 생길 때, 또는 AE-17 을 처리할 때.
 
-## AE-20 — 롤링 요약의 풍화를 검증하지 않는다 · **열림** *(결정 대기)*
+## AE-19 — 롤링 요약의 풍화를 검증하지 않는다 · **열림** *(결정 대기)*
 
 **무엇을.** 누적 요약의 섹션 항목에 id 를 붙이고, 갱신 전후 diff 로 "삭제된 결정" 을 탐지할지 정한다.
 
@@ -297,7 +293,7 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 **언제 다시 볼까.** 긴 세션에서 앞서 정한 결정을 잊었다는 보고가 있을 때, 또는 압축 관측값으로 요약 크기의 비정상 감소가
 보일 때.
 
-## AE-21 — 토큰 추정 오차를 보정하지 않는다 · **열림** *(결정 대기)*
+## AE-20 — 토큰 추정 오차를 보정하지 않는다 · **열림** *(결정 대기)*
 
 **무엇을.** 휴리스틱 토큰 추정을 프로바이더가 돌려준 usage 로 보정할지 정한다.
 
@@ -309,7 +305,7 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 
 **언제 다시 볼까.** 압축이 실제 창보다 훨씬 이르게 일어난다는 관측이 있을 때.
 
-## AE-22 — 기본 engine 에서는 전체 compaction 뒤 되찾기가 없다 · **열림** *(결정 대기)*
+## AE-21 — 기본 engine 에서는 전체 compaction 뒤 되찾기가 없다 · **열림** *(결정 대기)*
 
 **무엇을.** `DefaultContextEngine` 의 전체 compaction 뒤에도 `SessionHistoryTool` 을 열지 정한다.
 
@@ -321,7 +317,7 @@ toolUseId · downloadToken 만 복사한다. 전사에 영속되는 것은 `Mess
 
 **언제 다시 볼까.** CP-3 의 결정이 날 때, 또는 기본 engine 에서 요약 뒤 사실을 잃었다는 보고가 있을 때.
 
-## AE-23 — LLM 어댑터가 프롬프트 캐시 경계를 붙이지 않는다 (CTX-05) · **열림**
+## AE-22 — LLM 어댑터가 프롬프트 캐시 경계를 붙이지 않는다 (CTX-05) · **열림**
 
 **무엇을.** 어댑터가 `SystemPromptParts` 의 이음매에 캐시 경계를 붙인다(`LlmClient` 의 parts-aware `sendMessage` 를
 override). 그 뒤에 시스템 프롬프트의 메모리 주입을 고정할지 정한다.
@@ -332,7 +328,7 @@ context SYSTEM 블록이 실행마다 바뀔 수 있어 이득이 적다. 메모
 선행 조건이다 — 그때 고정 단위는 "메모리 스냅샷이 의미 있게 바뀌었을 때" 같은 명시적 갱신 정책이 낫다. 코드 주석 ·
 테스트는 이 일을 `CTX-05` 라는 이름으로 추적한다.
 
-**어디.** `llm/LlmClient.java`(parts-aware `sendMessage`), `agent/impl/orca/SystemPromptRenderer.java`,
+**어디.** `llm/LlmClient.java`(parts-aware `sendMessage` `:131`), `agent/impl/orca/SystemPromptRenderer.java`,
 `modules/aimon-llm-anthropic/src/main/java/at/aimon/core/llms/anthropic/AnthropicLlmClient.java`. 설계는
 [context engine](../design/agent-execution/context-engine.md).
 
