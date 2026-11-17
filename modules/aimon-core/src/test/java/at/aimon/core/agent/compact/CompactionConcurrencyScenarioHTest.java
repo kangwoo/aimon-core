@@ -27,7 +27,7 @@ import at.aimon.core.llm.ModelContextWindowRegistry;
 import at.aimon.core.llm.token.TokenEstimator;
 
 /**
- * Integration test for design §11.2 scenario H (AUTO/MANUAL concurrency).
+ * Integration test for AUTO/MANUAL compaction concurrency.
  *
  * <p>
  * Verifies the per-{@link SessionId} {@link java.util.concurrent.locks.ReentrantLock} inside

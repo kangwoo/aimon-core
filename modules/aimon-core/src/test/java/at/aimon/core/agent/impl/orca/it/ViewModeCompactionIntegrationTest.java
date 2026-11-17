@@ -53,7 +53,7 @@ import at.aimon.core.subagent.task.codec.JsonSessionSnapshotCodec;
  *
  * <p>
  * In view mode the part the model has not answered yet is not summarized short of the blocking limit — everything
- * after the view's last assistant message, together with the call that message made (context-engine §13.10). A big
+ * after the view's last assistant message, together with the call that message made (context-engine › 미응답 부분). A big
  * tool result read in the current iteration is exactly that part, so it cannot be folded away until the model has
  * answered it. The oversized read therefore happens on turn 1, which answers it, and the compaction hint is given to
  * turn 2. The fixture is sized as in {@link CompactionTurnIntegrationTest} — above the warning band, below

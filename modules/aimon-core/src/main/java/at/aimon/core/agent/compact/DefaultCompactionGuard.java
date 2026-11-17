@@ -33,7 +33,7 @@ import at.aimon.core.llm.token.TokenEstimator;
 
 /**
  * Default {@link CompactionGuard} implementation enforcing the four-state decision rule (NONE / WARN / COMPACT / BLOCK)
- * defined in §3.2 of the design document.
+ * defined in {@code docs/design/agent-execution/compaction.md} › 판정 사다리.
  *
  * <p>
  * Behaviour highlights:
@@ -55,7 +55,8 @@ import at.aimon.core.llm.token.TokenEstimator;
  * prevent unbounded growth in long-running processes that handle many short-lived sessions. The failure-count
  * state lives in a pluggable {@link CompactionFailureStore} ({@link InMemoryCompactionFailureStore} by default, which
  * breaks the circuit per process; a deployment that wants one counter shared across instances passes
- * {@link SessionRecordCompactionFailureStore} over its record store — design §8).
+ * {@link SessionRecordCompactionFailureStore} over its record store — compaction design ›
+ * {@code CompactionFailureStore} — 멀티 노드).
  * </ul>
  *
  * <p>
@@ -72,7 +73,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
     /**
      * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compaction succeeded and the view
      * is still at or above the blocking limit: nothing more could be summarized, and the view is sent as it is — the
-     * provider, or prompt-too-long recovery, has the last word (context-engine §13.10). The same fact is on the
+     * provider, or prompt-too-long recovery, has the last word (context-engine › blocking 한계). The same fact is on the
      * compaction's record as {@link CompactionMetadata#isOverBlockingLimit()}.
      */
     public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
@@ -260,7 +261,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * {@code NONE}), the threshold ladder (blocking → circuit breaker → auto → warning), the precondition, and the
      * circuit breaker's bookkeeping around the {@code compactor}'s result. This is how a context engine that keeps
      * the log append-only reuses today's decision rules without the guard's {@link CompactionEngine} rewriting the
-     * transcript (context-engine §4).
+     * transcript (context-engine › 판정과 AUTO 압축).
      *
      * <p>
      * A {@code compactor} that had nothing it may summarize answers with a failure carrying
@@ -518,7 +519,8 @@ public class DefaultCompactionGuard implements CompactionGuard {
         if (last.getRole() == Role.ASSISTANT && last.hasToolUses()) {
             return allToolUsesResolved(messages);
         }
-        // USER turn — design §3.2 also requires that all in-flight tool_uses (if any) are resolved before compaction.
+        // USER turn — compaction design › 사전조건 also requires that all in-flight tool_uses (if any) are resolved before
+        // compaction.
         // In practice they are, since user messages are appended after tool results, but we verify defensively to
         // cover mid-turn queue injection paths.
         if (last.getRole() == Role.USER) {

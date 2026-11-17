@@ -42,9 +42,9 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <p>
  * <b>Pages.</b> A page holds up to {@code maxReadTokens} estimated tokens — the whole log can be several model windows
  * long, and the API shape is what stops a caller loading it at once. A page ends only at a legal cut (context-engine
- * §3.4, §7), so a page handed to one LLM call never carries an unanswered {@code tool_use} or an orphan
- * {@code tool_result}; a run that cannot be cut is kept whole even when it exceeds the budget. Every page holds at
- * least one entry.
+ * › 뷰 상태 연산과 합법 절단면, › 메모리와의 관계), so a page handed to one LLM call never carries an unanswered {@code tool_use} or an
+ * orphan {@code tool_result}; a run that cannot be cut is kept whole even when it exceeds the budget. Every page holds
+ * at least one entry.
  *
  * <p>
  * <b>A bound that holds.</b> An unanswered {@code tool_use} — a call whose result a crash never wrote — would keep

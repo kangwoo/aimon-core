@@ -234,7 +234,7 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
-     * Sets the default maximum quota per agent runtime.
+     * Sets the default maximum number of scheduled tasks per owner ({@link at.aimon.core.base.Principal}).
      *
      * <p>
      * This is only used if no custom quota manager is provided.
@@ -334,7 +334,7 @@ public final class SchedulingEngineBuilder {
      *
      * <p>
      * Not to be confused with {@link #quotaManager(TaskQuotaManager)} and {@link #defaultMaxQuota(int)}, which cap
-     * how many <em>tasks</em> a runtime may schedule.
+     * how many <em>tasks</em> an owner ({@link at.aimon.core.base.Principal}) may schedule.
      * </p>
      *
      * <p>

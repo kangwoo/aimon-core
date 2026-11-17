@@ -144,9 +144,9 @@ public final class SummaryRequest {
     }
 
     /**
-     * Whether this summary is one generation of a rolling summary (context-engine §5.4): the ten sections with
-     * {@code Key decisions and constraints} added, the cumulative sections kept, and a target length. {@code false} —
-     * the default — is the nine-section summary a full compaction has always asked for.
+     * Whether this summary is one generation of a rolling summary (rolling-context-engine › 요약 갱신): the ten sections
+     * with {@code Key decisions and constraints} added, the cumulative sections kept, and a target length.
+     * {@code false} — the default — is the nine-section summary a full compaction has always asked for.
      */
     public boolean isRolling() {
         return rolling;

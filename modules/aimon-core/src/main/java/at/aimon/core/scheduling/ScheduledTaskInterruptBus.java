@@ -22,7 +22,7 @@ import at.aimon.core.agent.interrupt.InterruptReason;
  * <b>Only the event is distributed, not the signal.</b> A {@link at.aimon.core.agent.interrupt.CancellationSignal} is
  * a per-run in-memory object and stays one; what has to cross the wire is the fact that somebody asked for a stop.
  * That is the same division the session side makes with {@code SessionSignalBus} (see
- * {@code docs/design/agent-execution/interrupt.md} §11), and it is why this interface carries an id and a reason
+ * {@code docs/design/agent-execution/interrupt.md} › 멀티 노드 전파), and it is why this interface carries an id and a reason
  * rather than a coordinator.
  *
  * <p>

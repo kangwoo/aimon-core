@@ -134,8 +134,8 @@ import at.aimon.core.tracing.Tracer;
  * owner cancelled it, which is the failure this seam exists to close.
  *
  * <p>
- * Propagation follows the framework's cooperative-first rule (see {@code docs/design/agent-execution/interrupt.md}),
- * so what an interrupt actually stops depends on the step's tool:
+ * Propagation follows the framework's cooperative-first rule (see {@code docs/design/scheduling/routine-interrupt.md} ›
+ * 전파 사다리), so what an interrupt actually stops depends on the step's tool:
  *
  * <ul>
  * <li>The run stops at the next <b>step boundary</b> unconditionally. This holds for every tool, including ones that
@@ -194,8 +194,8 @@ import at.aimon.core.tracing.Tracer;
  * executor adds two things, neither of which refuses a step. An attempt that failed <em>because</em> of the quota,
  * while the guard still reports it, is not retried, since the retry would stop the same way. And a run filed as a
  * success while the guard reports a violation logs a WARN, so a run whose LLM work was stopped does not pass silently
- * (backlog UQ-4). Without a factory no guard is resolved and the key is absent, as before (usage-quota design §4.3,
- * §4.4).
+ * (backlog UQ-4). Without a factory no guard is resolved and the key is absent, as before (usage-quota design ›
+ * 예약 루틴).
  */
 public class RoutineExecutor {
 
@@ -1090,7 +1090,7 @@ public class RoutineExecutor {
      * execution attributes, from which a resolver may read a tenant.
      *
      * <p>
-     * Fail-safe, as a turn's is (usage-quota §11.2): an application resolver or policy that throws leaves the run
+     * Fail-safe, as a turn's is (usage-quota › 장부 장애): an application resolver or policy that throws leaves the run
      * unmetered, loudly, rather than stopping it. Only the ledger's failures are subject to {@code failClosed}.
      */
     private RunQuota createQuotaGuard(ScheduledTask task, RunAttributes attributes) {
@@ -1356,7 +1356,7 @@ public class RoutineExecutor {
             // Somebody interrupted the thread driving this routine without going through the coordinator. The catch
             // has already consumed the flag, so promote it into the run's signal rather than re-arming it: the run
             // then unwinds reporting CANCELLED, which carries the fact the flag no longer can, and no live interrupt
-            // rides along into the next step's blocking calls (interrupt design §8.2).
+            // rides along into the next step's blocking calls (interrupt design › 승격).
             coordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED);
             return false;
         } finally {

@@ -105,7 +105,7 @@ import at.aimon.core.tools.session.SessionHistoryTool;
  * does — a system prompt that names no tool, and a report tool that hands each report out once. The window is 16K and
  * not 8K because a {@code SessionHistory} result's size does not scale with the window; at 8K one retrieval can leave
  * the rolling engine nothing legal to do. The executor's client is wrapped in a {@link MainCallRecorder} there, and
- * only there (context-engine §13.11).
+ * only there (testing/context-engine-pressure-rig › 비교 프로파일).
  *
  * <p>
  * Kept in step with the copy in {@code aimon-llm-openai}: the two provider modules share no test source set, and
@@ -199,7 +199,7 @@ final class ContextEngineLiveRig {
         tools.register(new ReportTool(wiring.reports, wiring.reportDesk));
         if (rolling) {
             // The tool's own default cut: its fresh result may exceed the rolling tail, and the engine keeps it
-            // verbatim until the model has answered it (context-engine §13.10).
+            // verbatim until the model has answered it (context-engine › 미응답 부분).
             tools.register(new SessionHistoryTool());
         }
         final DefaultAgent agent = DefaultAgent.builder().name("ContextEngineLiveAgent").maxIterations(6)

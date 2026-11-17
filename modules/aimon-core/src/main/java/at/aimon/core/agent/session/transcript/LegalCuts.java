@@ -27,7 +27,8 @@ import at.aimon.core.llm.ToolUseResult;
  * The start of the list is always legal; its end is legal once every call is answered. This is the condition the
  * compaction engine has always checked at a range's cut points, extended by the second half; the view state operations
  * ({@code summarize}, {@code drop}) and ingest chunking all cut by it, because a provider rejects a request whose pairs
- * are split and so does the deriver's LLM. Design: {@code docs/design/agent-execution/context-engine.md} §3.4.
+ * are split and so does the deriver's LLM. Design: {@code docs/design/agent-execution/context-engine.md} › 뷰 상태 연산과 합법
+ * 절단면.
  *
  * <p>
  * Stateless.

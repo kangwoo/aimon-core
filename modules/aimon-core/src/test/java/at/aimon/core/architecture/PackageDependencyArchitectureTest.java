@@ -119,9 +119,9 @@ class PackageDependencyArchitectureTest {
     // restoration. Hook contexts (PreCompactContext, PostCompactContext) in turn reference compaction value types
     // (CompactionTrigger, CompactionMetadata), so the coupling is bidirectional and intentional.
     private static final String PKG_AGENT_COMPACT = AgentCorePackage.class.getPackageName() + ".compact..";
-    // Narrow carve-out: the ContextEngine SPI (context-engine design §3) lives under agent.context. Its request carries
-    // the HookRegistry a compacting engine hands to PreCompact / PostCompact hooks, so the package may reference that
-    // one hook type and nothing else from at.aimon.core.hook.
+    // Narrow carve-out: the ContextEngine SPI (context-engine design › SPI) lives under agent.context. Its request
+    // carries the HookRegistry a compacting engine hands to PreCompact / PostCompact hooks, so the package may
+    // reference that one hook type and nothing else from at.aimon.core.hook.
     private static final String PKG_AGENT_CONTEXT = AgentCorePackage.class.getPackageName() + ".context..";
     // The execution-environment SPI (docs/design/tool/execution-environment.md). Its neutral packages are named
     // exactly — not with ".." — wherever another package may use them, so environment.impl stays out of reach.
@@ -313,7 +313,7 @@ class PackageDependencyArchitectureTest {
         // design §8) — the SPI types
         // and the resolve helper, never environment.impl.
         // Usage-quota addition: a background run carries the submitting execution's QuotaGuard onto its per-run
-        // launch context (usage-quota §4.3) — the guard value only, never a ledger or a quota impl.
+        // launch context (usage-quota › 포크 전파) — the guard value only, never a ledger or a quota impl.
         // Background-ceiling addition (TC-25): a background run is narrowed by its submitter's allow-list and
         // programmatic settings (BackgroundSubmission) — the value types and the intersection helper only.
         ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(

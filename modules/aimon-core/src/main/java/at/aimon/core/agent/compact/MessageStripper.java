@@ -20,8 +20,8 @@ import at.aimon.core.llm.content.TextContentBlock;
  * Image and document blocks are replaced with text placeholders (e.g. {@code [image]}, {@code [document]}) so the
  * summary model receives only text content. Tool uses, role, and artifacts are preserved structurally; tool result
  * content and text content blocks pass through the configured {@link SensitivePatternRedactor} (default
- * {@link SensitivePatternRedactor#none()}, no redaction) — design §9.3 mitigation for secret/PII leakage in
- * summary prompts.
+ * {@link SensitivePatternRedactor#none()}, no redaction) — compaction design › opt-in 부품 mitigation for secret/PII
+ * leakage in summary prompts.
  *
  * <p>
  * Stateless and thread-safe.

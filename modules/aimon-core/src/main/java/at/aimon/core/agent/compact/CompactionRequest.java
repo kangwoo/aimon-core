@@ -114,7 +114,7 @@ public final class CompactionRequest {
     }
 
     /**
-     * Returns the optional sub-range of messages to summarize (design §4.3, partial compaction).
+     * Returns the optional sub-range of messages to summarize (compaction design › 실행 순서, partial compaction).
      *
      * <p>
      * When absent, the engine summarizes the entire conversation (current behavior). When present, only the in-range

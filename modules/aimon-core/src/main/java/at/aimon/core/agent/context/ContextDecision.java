@@ -119,7 +119,7 @@ public final class ContextDecision {
     /**
      * How many messages the view held before the decision took effect — the "before" of a compaction's boundary event,
      * compared with {@link #getView()} as the "after". Both are view sizes: with an append-only log, compaction does
-     * not shrink the log, only the view (context-engine §10). Empty when the engine did not report it.
+     * not shrink the log, only the view (context-engine › 선택과 관측). Empty when the engine did not report it.
      */
     public OptionalInt getViewSizeBefore() {
         return viewSizeBefore < 0 ? OptionalInt.empty() : OptionalInt.of(viewSizeBefore);

@@ -36,7 +36,8 @@ import at.aimon.core.tools.session.SessionHistoryTool;
 
 /**
  * Runs one {@link ContextPressureTask} on one comparison rig and reports what came of it: the pressure phase, one
- * fetch per turn, then the question phase, one question per turn, then the scoring (context-engine §13.11).
+ * fetch per turn, then the question phase, one question per turn, then the scoring (testing/context-engine-pressure-rig
+ * › 무엇을 재는가).
  *
  * <p>
  * A run never throws for something the model or the provider did. A turn that fails in the pressure phase closes the
@@ -242,7 +243,8 @@ final class ContextPressureRun {
 
     /**
      * The report as Markdown: a header with the profile's numbers, a table with one row per cell and a table with one
-     * row per question. How to read it is in {@code CONTRIBUTING.md} › Live-API tests and context-engine §13.11.
+     * row per question. How to read it is in {@code CONTRIBUTING.md} › Live-API tests and
+     * testing/context-engine-pressure-rig › 결과 상태와 보고서 읽는 법.
      *
      * @param title
      *            what ran, e.g. the provider and model

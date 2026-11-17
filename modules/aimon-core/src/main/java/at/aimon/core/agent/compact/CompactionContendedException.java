@@ -4,7 +4,7 @@ import at.aimon.core.agent.exception.AgentException;
 
 /**
  * The failure reason of a {@code /compact} that found another compaction of the same session in progress
- * (context-engine §5.6).
+ * (rolling-context-engine › 복구와 {@code /compact}).
  *
  * <p>
  * The session lock is taken with {@code tryLock}: waiting would stall the command behind a summary call, and doing

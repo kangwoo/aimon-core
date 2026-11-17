@@ -1616,8 +1616,8 @@ public class AgentSetupFactory {
             SessionId sessionId, Workspace workspace, PeerView observer, OutputFormatter outputFormatter) {
         final var transcriptManager = agentExecutor.getTranscriptManager();
         // The log as it was said: what the runtime injected is left out, and on a version-2 log a compaction left the
-        // original in place, so no summary is fed in as if it were conversation (context-engine §7, L5). Sealed ranges
-        // are part of what was said, so the log is read through the reader, a page at a time, when there is one.
+        // original in place, so no summary is fed in as if it were conversation (context-engine › 메모리와의 관계, L5). Sealed
+        // ranges are part of what was said, so the log is read through the reader, a page at a time, when there is one.
         final List<List<Message>> pages = transcriptManager.getLogReader()
                 .map(reader -> readConversationPages(reader, sessionId))
                 .orElseGet(() -> List.of(transcriptManager.initialize(sessionId, null).getConversationMessages()));

@@ -910,7 +910,7 @@ public class TranscriptBuffer {
      *
      * <p>
      * On a version-2 buffer the mark survives compaction and recovery: they change the view state, not the log, so a
-     * compacted execution is ingested as it was said, not as its summary (context-engine §7).
+     * compacted execution is ingested as it was said, not as its summary (context-engine › 메모리와의 관계).
      *
      * <p>
      * Empty means one of three things, and the caller treats them the same way — send nothing:

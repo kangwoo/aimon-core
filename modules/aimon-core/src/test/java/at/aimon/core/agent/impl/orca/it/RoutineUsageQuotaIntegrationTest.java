@@ -43,7 +43,7 @@ import at.aimon.core.subagent.Subagent;
  * <p>
  * What only this layer shows: that a fork started by a routine step lands on the task owner's principal key — the run
  * has no session and the fork never resolves a guard of its own — and that the owner's quota then stops the next
- * step's fork before it reaches the LLM. This is the bypass issue #267 closed (usage-quota §4.3, UQ-2). The routine
+ * step's fork before it reaches the LLM. This is the bypass issue #267 closed (usage-quota › 예약 루틴, UQ-2). The routine
  * does not refuse the step: the fork's own check does, and {@code Task} reports that stop the way it reports every
  * fork stop, as a {@code Completion reason:} line in a successful result.
  */

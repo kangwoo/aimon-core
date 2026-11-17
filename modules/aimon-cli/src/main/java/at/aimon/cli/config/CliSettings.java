@@ -37,7 +37,7 @@ public class CliSettings {
     // events, by default — so the agent reacts while nobody types (idle-wake design §8). Off by default for the same
     // reason as the monitor: it starts turns nobody asked for. Enable via `cli.enableWake: true`.
     private boolean enableWake = false;
-    // The session log format the CLI writes (session-log §7.3): v2 (default) or v1. v2 keeps the log append-only and
+    // The session log format the CLI writes (session-log › 형식): v2 (default) or v1. v2 keeps the log append-only and
     // is what an agent with `context-engine: rolling` needs. The CLI keeps sessions in memory, so there is no older
     // node that could fail to read v2 — the switch exists only so the default stays the format every other assembly
     // defaults to.

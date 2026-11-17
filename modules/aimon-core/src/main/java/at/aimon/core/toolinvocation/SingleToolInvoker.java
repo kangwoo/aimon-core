@@ -311,11 +311,11 @@ public final class SingleToolInvoker {
      * cannot set the flag again. The flag is then consumed <em>only when the execution's signal has tripped</em>. A
      * terminator fires only on a trip, and whatever set the flag — a terminator, or the caller too — the signal then
      * already carries the cancellation, so the flag is a leftover that would make {@code DefaultHookExecutor} answer
-     * the hooks' waits with BLOCKED (interrupt design §8.7), and an output-masking PostTool hook would then not run on
-     * a result the tool already produced. A flag on an untripped signal did not come from a terminator: it is the
-     * caller's own interrupt, and is left for the checkpoint or sweep that owns it (§8.2, §8.3). Promoting it here
-     * would move it into a coordinator nobody may read — the slash-command path's is private and closed when the
-     * command ends — and lose it.
+     * the hooks' waits with BLOCKED (interrupt design › 두 번째 겹 — 훅 실행기의 인터럽트 답), and an output-masking PostTool hook
+     * would then not run on a result the tool already produced. A flag on an untripped signal did not come from a
+     * terminator: it is the caller's own interrupt, and is left for the checkpoint or sweep that owns it (interrupt
+     * design › 승격, › 스윕과 복원). Promoting it here would move it into a coordinator nobody may read — the slash-command
+     * path's is private and closed when the command ends — and lose it.
      */
     private static void quiesce(TerminatorRegistrar registrar, ToolInvocationSpec spec) {
         if (registrar == null) {

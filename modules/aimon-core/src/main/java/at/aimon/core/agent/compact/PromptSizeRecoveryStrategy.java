@@ -7,7 +7,7 @@ import at.aimon.core.llm.exception.LlmPromptTooLongException;
 
 /**
  * Last-resort fallback consulted when the LLM provider rejects a request with {@link LlmPromptTooLongException} despite
- * all upstream compaction safeguards (the last net in the conversation compaction design doc §10.3). The executor
+ * all upstream compaction safeguards (the last net in the conversation compaction design doc › 설계 결정). The executor
  * reaches it through {@link at.aimon.core.agent.context.DefaultContextEngine#recover}, which installs the shortened
  * list and hands back the view to retry with.
  *

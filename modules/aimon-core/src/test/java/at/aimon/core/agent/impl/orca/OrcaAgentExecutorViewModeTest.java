@@ -62,7 +62,7 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * <p>
  * Three claims of the context-engine design, end to end: the model sees the {@code [boundary, summary]} pair followed
  * by the input it has not answered yet, verbatim (the in-place mode summarized that input too — context-engine
- * §13.10), the record keeps every message that was said (L3), and the execution that was compacted is still offered
+ * › 미응답 부분), the record keeps every message that was said (L3), and the execution that was compacted is still offered
  * to memory as it was said (L4).
  */
 @DisplayName("OrcaAgentExecutor with DefaultContextEngine in view mode")

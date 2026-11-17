@@ -25,7 +25,7 @@ import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
 
 /**
- * Verifies {@link DefaultCompactionEngine} partial-compaction behavior (design §4.3).
+ * Verifies {@link DefaultCompactionEngine} partial-compaction behavior (compaction design › 실행 순서).
  *
  * <p>
  * Covers: prefix-only summary preserves the tail verbatim, mid-range summary preserves both prefix and tail, the

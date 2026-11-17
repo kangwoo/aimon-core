@@ -151,10 +151,15 @@ final class AgentEventDispatcher {
      * Emits a {@link CompactBoundary} event when a compaction step ran before {@code iteration}.
      *
      * <p>
-     * {@code messagesAfter} is clamped to {@code messagesBefore} defensively: L3 summarisation normally collapses many
-     * messages into a marker-plus-summary pair, so {@code after < before} holds, but the {@link CompactBoundary}
-     * constructor forbids {@code after > before} and a degenerate compaction on a tiny conversation must never surface
-     * that invariant violation as a thrown exception inside the ReAct loop.
+     * The event carries {@link OrcaAgentExecutor#COMPACTION_STRATEGY_NAME}, a fixed compaction-boundary label emitted
+     * for every compaction step — summarizing or a rolling {@code PRUNE} alike; what the step did is in
+     * {@code CompactionMetadata.kind}, not here.
+     *
+     * <p>
+     * {@code messagesAfter} is clamped to {@code messagesBefore} defensively: a compaction step normally leaves the
+     * view no larger than it was, so {@code after <= before} holds, but the {@link CompactBoundary} constructor forbids
+     * {@code after > before} and a degenerate compaction on a tiny conversation must never surface that invariant
+     * violation as a thrown exception inside the ReAct loop.
      */
     void emitCompactBoundary(int iteration, int messagesBefore, int messagesAfter) {
         if (hasNoListeners()) {

@@ -9,7 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The observability fields a rolling engine reports (context-engine §10): kind, view shape, summary size and the
+ * The observability fields a rolling engine reports (context-engine › 선택과 관측): kind, view shape, summary size and the
  * absorbed seq range.
  */
 class CompactionMetadataRollingFieldsTest {

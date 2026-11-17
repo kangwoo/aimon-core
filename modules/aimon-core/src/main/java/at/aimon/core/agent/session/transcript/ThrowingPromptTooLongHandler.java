@@ -32,8 +32,8 @@ import at.aimon.core.llm.invoke.PromptTooLongHandler;
  * was meant to be superseded by was never built as a gateway handler: prompt-too-long recovery for the Orca loops is
  * {@link at.aimon.core.agent.context.ContextEngine#recover}, which the executor consults after the gateway call fails.
  * A handler that rewrote the transcript inside the gateway would be a second party shrinking the view, which the engine
- * exists to rule out (context-engine design §8.2) &mdash; so Orca wires no handler, and this one remains only for
- * gateway users outside it.
+ * exists to rule out (context-engine design › 기존 공개 SPI 의 처분) &mdash; so Orca wires no handler, and this one remains
+ * only for gateway users outside it.
  *
  * <h2>Usage</h2>
  *

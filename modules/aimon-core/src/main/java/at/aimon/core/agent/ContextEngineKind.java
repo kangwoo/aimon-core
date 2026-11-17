@@ -7,7 +7,7 @@ import java.util.stream.Collectors;
 
 /**
  * Which context engine an agent's runtime is built with — the policy deciding how the LLM view of a long conversation
- * is shrunk (context-engine §10).
+ * is shrunk (context-engine › 선택과 관측).
  *
  * <p>
  * Chosen per agent, because the runtime is agent-scoped: AGENT.md frontmatter {@code context-engine}, or a deployment

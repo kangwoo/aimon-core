@@ -58,7 +58,7 @@ import at.aimon.core.llm.token.TokenEstimator;
 
 /**
  * A {@link ContextEngine} for long conversations: it keeps the start and the recent end of the view verbatim and
- * summarizes the middle, widening one summary span a little at a time (context-engine §5).
+ * summarizes the middle, widening one summary span a little at a time (rolling-context-engine).
  *
  * <pre>
  * log:   s0 s1 s2 ............................................ sN
@@ -92,7 +92,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <b>What the model has not read yet.</b> Every cut stops at the view's
  * {@linkplain ViewProjection#firstUnreadPosition() unread part} — the tool results answering the last {@code tool_use},
  * or the input after the last reply — so no compaction elides it or absorbs it into the summary before the model has
- * responded to it (context-engine §13.10). When that part alone keeps the view over the threshold, the engine warns
+ * responded to it (context-engine › 미응답 부분). When that part alone keeps the view over the threshold, the engine warns
  * instead of compacting; at the blocking limit it absorbs everything before it, head included, and sends the view even
  * if it is still over, with a WARN; when nothing is left to absorb it blocks.
  *
@@ -105,7 +105,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  *
  * <p>
  * The engine never registers the post-compaction restore hooks: the tail is already verbatim, and re-attached files
- * would pile up in the tail and bring the next compaction forward (context-engine §5.7).
+ * would pile up in the tail and bring the next compaction forward (rolling-context-engine › 복원 훅).
  *
  * <p>
  * Thread-safe. Work on one session is serialized by a node-local {@code tryLock}; the circuit breaker lives in the
@@ -123,7 +123,7 @@ public final class RollingContextEngine implements ContextEngine {
      * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compacted view is still at or
      * above the blocking limit: everything before the unread part was summarized, head included, and the unread part
      * alone keeps it there. The view is sent as it is; the provider, or prompt-too-long recovery, has the last word
-     * (context-engine §13.10). The same fact reaches the execution result as
+     * (rolling-context-engine › 미응답 부분만으로 넘칠 때). The same fact reaches the execution result as
      * {@link CompactionMetadata#isOverBlockingLimit()} on that compaction's record.
      */
     public static final String STILL_OVER_BLOCKING = DefaultCompactionGuard.STILL_OVER_BLOCKING;
@@ -288,9 +288,9 @@ public final class RollingContextEngine implements ContextEngine {
      *
      * <p>
      * Skips the threshold decision and follows the cut selection: the tail budget, then half of it, then the last
-     * legal cut — without the {@code WARN} row, since the user asked (context-engine §5.6). A concurrent compaction of
-     * the same session makes this fail with {@link CompactionContendedException} rather than wait or do nothing. On
-     * success the circuit breaker is reset.
+     * legal cut — without the {@code WARN} row, since the user asked (rolling-context-engine › 복구와 {@code /compact}). A
+     * concurrent compaction of the same session makes this fail with {@link CompactionContendedException} rather than
+     * wait or do nothing. On success the circuit breaker is reset.
      */
     @Override
     public CompactionResult compactNow(ContextRequest request, String instructions) {
@@ -360,7 +360,9 @@ public final class RollingContextEngine implements ContextEngine {
                 limits.getBlockingLimit());
     }
 
-    /** The decision ladder: blocking → circuit breaker → auto → warning (context-engine §5.6). */
+    /**
+     * The decision ladder: blocking → circuit breaker → auto → warning (rolling-context-engine › 언제 — 후퇴와 FALLBACK).
+     */
     private ContextDecision decide(Call call) {
         final SessionId sessionId = call.buffer.getSessionId();
         final int estimated = call.estimated;
@@ -466,7 +468,7 @@ public final class RollingContextEngine implements ContextEngine {
      * The reason a successful blocking-limit compaction reports. When the view still sits at or above the blocking
      * limit — the unread part alone keeps it there — the reason says so. Only the summarizing path can end there: a
      * prune plan exists only when it lands below the threshold, which is below the blocking limit. The action stays
-     * {@code COMPACT}: the view goes out as it is (context-engine §13.10).
+     * {@code COMPACT}: the view goes out as it is (rolling-context-engine › 미응답 부분만으로 넘칠 때).
      */
     private static String blockingReason(Call call, CompactionResult result) {
         final int post = result.getMetadata().getPostCompactTokenCount();
@@ -519,10 +521,11 @@ public final class RollingContextEngine implements ContextEngine {
     }
 
     /**
-     * The log's own message at {@code seq}, for a position the view shows elided. Context-engine §5.4 feeds the summary
-     * the originals being absorbed, not the view: prune elides exactly the region the next widening absorbs, so reading
-     * the view would let every pruned tool result reach the cumulative summary only as its placeholder. The region is
-     * outside the span, so it is hot; {@code shown} is kept only if the entry is somehow not carried.
+     * The log's own message at {@code seq}, for a position the view shows elided. Rolling-context-engine › 요약 갱신 feeds
+     * the summary the originals being absorbed, not the view: prune elides exactly the region the next widening
+     * absorbs, so reading the view would let every pruned tool result reach the cumulative summary only as its
+     * placeholder. The region is outside the span, so it is hot; {@code shown} is kept only if the entry is somehow not
+     * carried.
      */
     private static Message original(SessionLogState state, long seq, Message shown) {
         final List<SessionLogEntry> entry = state.entriesIn(seq, seq + 1);
@@ -821,7 +824,8 @@ public final class RollingContextEngine implements ContextEngine {
         }
 
         /**
-         * Returns the first seq after the head, or {@code floorSeq} when the head is empty (context-engine §5.2).
+         * Returns the first seq after the head, or {@code floorSeq} when the head is empty (rolling-context-engine ›
+         * head).
          */
         private long headEnd() {
             final long floor = state.getFloorSeq();
@@ -909,10 +913,10 @@ public final class RollingContextEngine implements ContextEngine {
         }
 
         /**
-         * Tries eliding the large tool results in what the tail-budget cut would absorb (context-engine §5.5), and
-         * returns the elisions when they alone bring the view under {@code threshold}. When no cut fits the tail
-         * budget — the unread part alone is larger — the last cut before the unread part bounds the region instead,
-         * so the older results can still be elided (context-engine §13.10).
+         * Tries eliding the large tool results in what the tail-budget cut would absorb (rolling-context-engine › L0
+         * prune), and returns the elisions when they alone bring the view under {@code threshold}. When no cut fits the
+         * tail budget — the unread part alone is larger — the last cut before the unread part bounds the region
+         * instead, so the older results can still be elided (rolling-context-engine › L0 prune).
          */
         private Plan prunePlan(int threshold, int minTokens) {
             final List<Cut> cuts = cuts(spanFrom(false));
@@ -1165,7 +1169,7 @@ public final class RollingContextEngine implements ContextEngine {
 
         /**
          * Declares the log format this node writes. {@link SessionLogFormat#V1} makes {@link #build()} fail: rolling
-         * keeps its span in the view state, which a version-1 record cannot store (session-log §7.3).
+         * keeps its span in the view state, which a version-1 record cannot store (session-log › 형식).
          *
          * @param writeFormat
          *            the format this node writes (must not be null; default {@link SessionLogFormat#V2})

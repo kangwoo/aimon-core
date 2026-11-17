@@ -32,20 +32,20 @@ public enum InterruptReason {
 
     /**
      * The session's distributed lock lease could not be renewed in time, so the holder node must surrender the
-     * turn before another node may legitimately take over (web session manager, routing design §7.4).
+     * turn before another node may legitimately take over (web session manager, routing › 리스의 수명과 갱신).
      */
     LEASE_LOST,
 
     /**
      * An external caller (typically the web session manager) explicitly released the session, requesting that any
-     * in-flight turn surrender promptly so cached resources can be evicted (design §6.3 A).
+     * in-flight turn surrender promptly so cached resources can be evicted (routing › 종료 — 넷, A).
      */
     SESSION_RELEASED,
 
     /**
      * A peer node detected via the idempotency store's holder-loss sweeper that the original holder has gone silent,
-     * triggering a takeover. Surfaced to subscribers so the failed turn ends with a visible terminal event (design
-     * §6.3 D).
+     * triggering a takeover. Surfaced to subscribers so the failed turn ends with a visible terminal event
+     * (routing › 종료 — 넷, D).
      */
     HOLDER_LOST,
 

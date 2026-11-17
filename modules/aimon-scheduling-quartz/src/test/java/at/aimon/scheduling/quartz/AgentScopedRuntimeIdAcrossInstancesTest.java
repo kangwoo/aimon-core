@@ -47,7 +47,7 @@ import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
  * {@code agent:<name>} ids and their resolvability via per-node registries &mdash; is fully exercised in a single JVM,
  * and adding a containerised database here would only test Quartz's clustering, not the agent-scoped contract that
  * this PR introduces. The decision is documented in
- * {@code docs/design/agent-execution/agent-runtime-scope.md} §2.1.
+ * {@code docs/design/agent-execution/agent-runtime-scope.md} › {@code AgentRuntimeId} — 결정론적 발급.
  */
 class AgentScopedRuntimeIdAcrossInstancesTest {
 

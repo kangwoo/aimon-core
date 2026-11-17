@@ -427,7 +427,7 @@ public final class AimonStackBuilder {
                 .withPendingTurnRegistry(pendingTurnRegistry).withSubagentBehaviorRegistry(codeSubagentBehaviorRegistry)
                 .withRewakeService(rewakeService).withUseStreaming(executorSpec.isStreaming())
                 .withCostEstimator(costEstimator);
-        // Usage quotas (usage-quota §7.1). Off without a ledger: the factory is then the disabled one, which is what
+        // Usage quotas (usage-quota › 설정 모양). Off without a ledger: the factory is then the disabled one, which is what
         // the executor holds anyway. The ledger is borrowed — application-scoped, never enrolled for teardown.
         // One instance, shared with the scheduling engine below, so a turn and a routine provably meter alike.
         final QuotaSpec quotaSpec = spec.getQuota();

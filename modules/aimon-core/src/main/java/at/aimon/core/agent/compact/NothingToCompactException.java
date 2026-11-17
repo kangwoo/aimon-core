@@ -4,7 +4,7 @@ import at.aimon.core.agent.exception.AgentException;
 
 /**
  * The failure reason of a compaction that had nothing it may summarize: everything in the view is either already a
- * summary or something the model has not answered yet (context-engine §13.10).
+ * summary or something the model has not answered yet (context-engine › 판정과 AUTO 압축).
  *
  * <p>
  * It is not a fault. No summary was asked for, no hook fired and the view is unchanged, so it does not count against

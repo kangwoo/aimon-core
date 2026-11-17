@@ -134,7 +134,7 @@ public class LlmSkillExecutor implements SkillExecutor {
 
     private static final NoOpSkillHookActivator NO_HOOKS = new NoOpSkillHookActivator();
 
-    /** The skill loop never shrinks its view (context-engine design §3.2): its scratch buffer stays short. */
+    /** The skill loop never shrinks its view (context-engine design › 호출 지점): its scratch buffer stays short. */
     private static final ContextEngine CONTEXT_ENGINE = ContextEngine.passthrough();
 
     private final LlmClient llmClient;

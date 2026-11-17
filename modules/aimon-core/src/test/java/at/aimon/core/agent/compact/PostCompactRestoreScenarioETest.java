@@ -35,7 +35,7 @@ import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.tools.file.ReadTool;
 
 /**
- * Integration test for design §11.2 scenario E (PostCompact restore E2E).
+ * Integration test for the PostCompact restore path, end to end.
  *
  * <p>
  * Wires the real {@link DefaultCompactionEngine}, {@link DefaultHookExecutionManager}, {@link DefaultHookRegistry},

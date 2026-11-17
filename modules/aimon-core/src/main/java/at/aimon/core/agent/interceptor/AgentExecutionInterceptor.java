@@ -21,7 +21,7 @@ import at.aimon.core.agent.AgentRuntime;
  * <b>스트리밍 이벤트와의 관계:</b> 인터셉터는 실행 체인을 <em>제어</em>하는 동기 계층이고,
  * {@link at.aimon.core.agent.stream.AgentExecutionEvent}와 {@link at.aimon.core.agent.stream.StreamingAgentExecutor}
  * 는 실행 진행을 <em>관찰</em>하는 정보성 이벤트 계층이다. 두 계층은 직교한 관심사로 설계됐으며, 상세한 역할
- * 분리는 {@code docs/design/agent-execution/interceptor.md} §7 "스트리밍 이벤트와의 관계"를 참조한다.
+ * 분리는 {@code docs/design/agent-execution/interceptor.md} › 스트리밍 이벤트와의 관계를 참조한다.
  *
  * <p>
  * 사용 예제:

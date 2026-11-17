@@ -9,8 +9,9 @@ import java.util.regex.Pattern;
  *
  * <p>
  * Used by {@link MessageStripper} to strip secrets and PII from message content before it is forwarded to the summary
- * LLM call (design §9.3 — mitigation for secret/PII leakage in summary prompts). The redactor is intentionally
- * conservative: it operates on raw text only, applies patterns in order, and never inspects structured fields.
+ * LLM call (compaction design › opt-in 부품 — mitigation for secret/PII leakage in summary prompts). The redactor is
+ * intentionally conservative: it operates on raw text only, applies patterns in order, and never inspects structured
+ * fields.
  *
  * <p>
  * Built-in patterns ({@link #defaults()}) cover the most common high-confidence credentials:

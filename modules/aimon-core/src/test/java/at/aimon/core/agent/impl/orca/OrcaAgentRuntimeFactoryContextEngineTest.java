@@ -39,8 +39,8 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.tools.session.SessionHistoryTool;
 
 /**
- * Which context engine {@link OrcaAgentRuntimeFactory} builds (context-engine §10): the deployment default, an agent's
- * own {@code context-engine}, and the refusal of rolling on a node that writes version-1 logs.
+ * Which context engine {@link OrcaAgentRuntimeFactory} builds (context-engine › 선택과 관측): the deployment default, an
+ * agent's own {@code context-engine}, and the refusal of rolling on a node that writes version-1 logs.
  */
 @DisplayName("OrcaAgentRuntimeFactory context engine selection")
 class OrcaAgentRuntimeFactoryContextEngineTest {

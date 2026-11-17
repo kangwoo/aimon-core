@@ -32,7 +32,7 @@ import at.aimon.core.llm.token.TokenEstimator;
 
 /**
  * Lets the agent read back what the view no longer shows: a message by its seq — the number an elided tool result's
- * placeholder names — or the messages matching a search (context-engine §6).
+ * placeholder names — or the messages matching a search (rolling-context-engine › {@code SessionHistoryTool}).
  *
  * <p>
  * <b>Scope.</b> The current session's {@link LogOrigin#CONVERSATION} entries, sealed ranges included, read through
