@@ -13,6 +13,16 @@ session-log §12.7 과 context-engine §13.8 이다. SL-6 은 그 뒤 context-en
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**다. 줄 번호는 **마지막 확인 날짜와 함께** 적는다. 아래 인용은
 전부 2026-09-24 기준이다.
 
+> **정정** *(2026-11-17)*: 위 문단들과 SL-6 이 가리키는 `context-engine.md` 의 절은 이제 없다. `docs/design/agent-execution/`
+> 재구성이 그 문서를 현재 설계만 적는 문서로 다시 쓰면서 "구현과의 차이"(§13)와 "열린 질문"(§12)을 걷어 냈다. 옛 절의 내용이
+> 간 자리는 이렇다 — §13.7(CLI 의 쓰기 형식 스위치)은 [`rolling-context-engine.md` §11](../design/agent-execution/rolling-context-engine.md#11-v2-쓰기-형식과-조정-값)
+> 이 설정 키만 갖고, §13.8(CLI 롤링 턴의 끝에서 끝까지 테스트)은 옮기지 않았다. §13.10(모델이 아직 답하지 않은 것은 압축하지
+> 않는다)의 규칙은 [`context-engine.md` §7](../design/agent-execution/context-engine.md#7-미응답-부분) 이, 기본 engine 쪽은
+> [§8](../design/agent-execution/context-engine.md#8-defaultcontextengine) 이 갖는다 — SL-6 이 인용한 "기본 engine 의 뷰
+> 모드는 바꾸지 않았다" 항목은 SL-6 의 닫힘으로 뒤집혔고 지금의 §8 은 바뀐 뒤의 동작만 적는다. 옛 문장은 마지막 판본
+> `493cb3fb` 에 있다(`git show 493cb3fb:docs/design/agent-execution/context-engine.md`). session-log 의 §12.x 인용은 이 재구성과
+> 무관하다. 본문의 문장은 규칙 둘대로 고치지 않고 둔다.
+
 ---
 
 ## SL-1 — 조립된 스택의 레코드 쓰기는 펜스 없이 간다 · **닫힘**

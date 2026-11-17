@@ -557,7 +557,7 @@ class DefaultHookExecutorTest {
         return !thread.isAlive();
     }
 
-    // ---- interrupted waits (interrupt design §8) --------------------------------------------
+    // ---- interrupted waits (interrupt design › 스레드 인터럽트 플래그 위생) ------------------------
 
     /** A hook that blocks long enough that its future is still pending when the caller stops waiting. */
     private static PreToolHook blockingHook() {
@@ -572,7 +572,7 @@ class DefaultHookExecutorTest {
     }
 
     /**
-     * The security case from interrupt design §8: on a thread whose interrupt flag is already set,
+     * The security case from interrupt design › 스레드 인터럽트 플래그 위생: on a thread whose interrupt flag is already set,
      * {@code Future#get} throws without waiting, so under the fail-open exception mapper every hook in the chain
      * reported SUCCESS without having run — an interrupt was a way past a PreTool BLOCK. An interrupted wait must
      * come back BLOCKED instead, and the caller's cancellation must still be on the thread afterwards.

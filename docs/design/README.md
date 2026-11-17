@@ -33,19 +33,16 @@
 
 | 문서 | 무엇이 있나 |
 |------|------------|
-| [`orca-executor.md`](agent-execution/orca-executor.md) | 메인 ReAct 루프 — iteration 구조, 도구 디스패치, 예산, 스트리밍 |
-| [`agent-runtime-scope.md`](agent-execution/agent-runtime-scope.md) | `AgentExecutionContext` → `AgentRuntime` 재정의. agent-scoped 로 옮긴 이유와 `AgentRuntimeId` 가 결정론적인 이유 |
-| [`interrupt.md`](agent-execution/interrupt.md) | `InterruptBehavior` 4종, capability 와 coordinator 분리, 도구를 안전하게 끊는 경로 |
+| [`orca-executor.md`](agent-execution/orca-executor.md) | 턴 루프 — 루프 뼈대, 정상 종료와 `StopReason`, 예산(하드 STOP · `SHOULD_COMPACT` · 상한은 정상 반환), 비용 추적, `ContextAssembler`, `LoopTransition`, `CompactBoundary` 이벤트, 게이트웨이 재시도와 모델 fallback, 스트리밍 도구 중첩 |
+| [`truncation-and-stall.md`](agent-execution/truncation-and-stall.md) | 네 도구 루프(턴 · 포크 · 스킬 · deriver)가 공유하는 종료 판정 — `max_tokens` 에서 잘린 응답의 마커와 `TRUNCATED`, 잘린 도구 호출을 실행하지 않고 거절하는 이유, reasoning 절 WARN, 정체 가드(`StalledIterationGuard`)와 `ERROR` 재사용 |
+| [`agent-runtime-scope.md`](agent-execution/agent-runtime-scope.md) | `AgentRuntime` 이 agent-scoped 인 이유, 결정론적 `AgentRuntimeId`, `close()` 목록과 닫지 않는 것, 선언된 런타임과 테넌트 런타임의 생성, opener 가 id 형식을 모르는 이유 |
 | [`interceptor.md`](agent-execution/interceptor.md) | `AgentExecutionInterceptor` — `execute()` 경계를 가로채는 동기 체인 |
-| [`compaction.md`](agent-execution/compaction.md) | 컨텍스트가 차기 전 대화 요약. 트리거 조건, 실패 처리, `/compact` |
-| [`context-engine.md`](agent-execution/context-engine.md) | (IMPLEMENTED, 차이는 §13) LLM 에 보낼 뷰를 정하는 `ContextEngine` — 판정·복구·`/compact` 를 한 자리에, 장기 대화용 롤링 engine |
-| [`context-engine-pressure-rig.md`](agent-execution/context-engine-pressure-rig.md) | (IMPLEMENTED — 테스트 소스만, 차이는 §9) `default` · `rolling` engine 을 같은 과제로 재는 뷰 압력 리그의 승인된 설계 — 두 engine 을 같은 16K 창에 놓는 비교 프로파일, 롤링이 prune 을 먼저 하므로 단위 크기가 재는 것을 정한다는 것, 한 번만 내주는 출처, 과금 실행의 opt-in. 지금의 리그는 `context-engine.md` §13.11 |
+| [`interrupt.md`](agent-execution/interrupt.md) | 실행 중단 — `InterruptBehavior` 4종, 단방향 신호와 사유·설명, 실행당 coordinator, 호스트에서 신호까지, 루프의 경계 게이트, 스레드 플래그 위생, LLM 호출 중단, 종료 사유와 이벤트, 멀티 노드 |
+| [`context-engine.md`](agent-execution/context-engine.md) | 기록과 뷰 — LLM 에 보낼 뷰를 정하는 `ContextEngine` SPI, 뷰의 결정성, 뷰 상태 연산과 합법 절단면, 미응답 부분, 기본 engine 의 뷰 모드 · in-place · 복구, 기존 SPI 의 처분 |
+| [`rolling-context-engine.md`](agent-execution/rolling-context-engine.md) | 장기 대화 engine — head · span · tail, 요약 갱신, L0 prune, 후퇴와 FALLBACK, 롤링 가능성 검사, `SessionHistoryTool` |
+| [`compaction.md`](agent-execution/compaction.md) | 두 engine 이 함께 쓰는 압축 판정과 요약 — `ModelContextLimits` 임계값, 판정 사다리, circuit breaker 와 `CompactionFailureStore`, 요약기(`CompactionEngine`), 요약 프롬프트와 인젝션 방어, 훅, `/compact` |
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
-| [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
-| [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
-| [`usage-quota.md`](agent-execution/usage-quota.md) | (IMPLEMENTED — 1단계, 차이는 §11) 세션·사용자·테넌트·일 단위 누적 사용량 한도 — 실행 1회의 `ExecutionBudget` 과 따로 두는 이유, 포크까지 한 장부에 기록하는 경로, soft limit 의 초과 상한 |
-| [`usage-quota-routine-forks.md`](agent-execution/usage-quota-routine-forks.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) 예약 루틴의 포크에 쿼터를 건 #267 설계(백로그 UQ-2 의 루틴 절반) — 실행 1회에 guard 하나인 이유, 세션 없이 태스크 소유자로 해석하는 것, 거절을 단계 경계에서 하는 이유와 §4.2 의 "판정은 한 곳" 과 부딪히지 않는 이유, 모든 단계를 막는 결정, 기각한 대안 — 단계 게이트와 모든 단계를 막는 결정은 PR 리뷰에서 뒤집혔다(§8.4) |
-| [`skill-loop-truncation-and-fork-stall.md`](agent-execution/skill-loop-truncation-and-fork-stall.md) | 그 판정이 스킬 루프와 `ReActLlmDeriver` 에 닿는 자리 — 포크와 스킬 루프가 턴의 정체 가드를 함께 쓰는 이유, 멈춘 포크를 새 값이 아닌 `ERROR` 로 두고 열한 독자가 그것을 읽는 방식, `Task` 도구가 잘린 포크를 말하는 줄 |
+| [`usage-quota.md`](agent-execution/usage-quota.md) | 세션·주체·테넌트 × 일 단위 누적 사용량 한도 — 실행 1회의 `ExecutionBudget` 과 따로 두는 이유, 턴·포크·스킬 루프의 기록·판정 지점, 포크 전파, soft limit 의 초과 상한, 예약 루틴(단계 게이트를 두지 않는 이유) |
 
 ### session — 영속 세션과 노드 로컬 핸들
 
@@ -59,6 +56,7 @@
 | [`inbox.md`](session/inbox.md) | 크로스 노드 우편함 `SessionInbox` — 봉투, `collect` 의 원자성, 한 항목의 디코드 실패를 그 항목에 가두는 격리와 주소 회수, `UNREADABLE`, 우선순위, 기각한 지우기 전 디코드·dead-letter |
 | [`idempotency.md`](session/idempotency.md) | 멱등 제출 — 매트릭스, 두 TTL 과 touch, 예약 홀더, 수집된 메시지의 넘겨받기(승리·거절·알 수 없음), 홀더 유실 회복과 고아 메시지 재-초인종 |
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마·전달 메커니즘·보장 차이, 소유자와 세그먼트의 저장 모양, 선택 기준 |
+| [`turn-retry.md`](session/turn-retry.md) | 중단된 턴의 재시도와 되감기 — seq 로 적는 되감기 지점, 표시와 지우기, 평범한 턴으로서의 재시도, 컴팩션의 두 모드와 지점, 멀티모달 입력, `SubmitOptions` 보존 |
 
 ### tool — 도구 계약
 
@@ -130,6 +128,7 @@
 | [`memory/pluggable-memory-backend.md`](memory/pluggable-memory-backend.md) | 메모리 백엔드 교체 — 서비스 고도의 다섯 티어 SPI 와 능력 협상, 없는 수집 이음매, Honcho·Dyad 대조 |
 | [`knowledge/knowledge-and-rag.md`](knowledge/knowledge-and-rag.md) | `KnowledgeStore` SPI, 키워드 검색, OpenSearch 벡터/RAG |
 | [`scheduling/llm-scheduling-agent.md`](scheduling/llm-scheduling-agent.md) | 자연어를 cron + routine 으로 굳혀 세션 없이 다시 돌리는 경로 |
+| [`scheduling/routine-interrupt.md`](scheduling/routine-interrupt.md) | 예약 루틴 실행의 중단 · 취소 · 드레인 — 중단 ≠ 취소, 전파 사다리, 결과 3분류, `ScheduledTaskInterruptBus`, occurrence key 와 묘비 |
 | [`observability/tracing.md`](observability/tracing.md) | 실행 트레이싱 — 계측 지점, payload 캡처, 레닥션 |
 | [`observability/subagent-trace-nesting.md`](observability/subagent-trace-nesting.md) | (IMPLEMENTED, 승인본, 차이는 §8) 서브에이전트 실행을 `TOOL(Task) → SUBAGENT → ITERATION → {LLM, TOOL}` 로 중첩시킨 설계 — span 부모를 바꾸는 세 경계(도구 컨텍스트 · 매니저 · 포크 iteration), SUBAGENT span 을 hook 이 아니라 매니저에 둔 이유, 백그라운드 포크의 부모, 기각한 대안 |
 | [`observability/subagent-tracing-backlog.md`](observability/subagent-tracing-backlog.md) | (IMPLEMENTED, 승인본, 차이는 §8) 서브에이전트 트레이싱 백로그 ST-1 ~ ST-6 처리 — 슬래시 명령 `COMMAND` span, 예약 루틴 `ROUTINE` root, 매니저가 만든 실행기로의 tracer 전달, 백그라운드 `queuedMs` · 거부 span, SUBAGENT 의 `executionId`, compaction 요약 호출의 span 위치, 기각한 대안 |
@@ -169,6 +168,8 @@
 | [`testing/shipped-logback-and-test-classpath-followups.md`](testing/shipped-logback-and-test-classpath-followups.md) | CLI 배포본이 싣는 Logback 을 1.5.13 에서 1.6.3 으로 올린 결정 — 1.5.x 의 어느 버전도 아닌 이유(CVE-2026-19880 은 1.6.3 에서만 고쳐졌다), 권고를 id 로 찾지 않고 검색하는 이유, 모듈 빌드 스크립트가 `@Incubating` Gradle API 를 부르는 조건과 조용히 지나갈 수 있는 절반, 메모리 계약 스위트를 JUnit 바닥에서 한 번 돌린 기록, #111 이 남긴 기록 넷의 정리 |
 | [`testing/packed-logback-and-advisory-reporting-followups.md`](testing/packed-logback-and-advisory-reporting-followups.md) | 발행되지 않는 샘플 앱이 싣는 Logback 을 Spring Boot 의 `logback.version` 으로 카탈로그의 1.6.3 에 맞춘 결정 — 권고 범위 안의 버전을 알리는 스캐너를 두지 않고 읽기에 기댄다고 적은 이유(GitHub 과 OSV 가 두 CVE 를 어떤 패키지에도 잇지 않는다), Dependabot 의 열린 PR 한도를 5 에서 50 으로 올린 이유, CLI 가 시작할 때 Logback 상태를 찍게 하던 참조되지 않은 appender, #127 의 기록이 GitHub 권고 데이터베이스와 Dependabot 에 대해 틀린 자리의 정정 |
 | [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) | export 된 프로바이더 키가 평범한 빌드를 과금되는 라이브 API 실행으로 바꾸는 문제 — 키가 환경에 있으면 시작하지 않는 릴리스 스크립트, 거부 목록을 키 게이트와 대조하는 인구조사, 가드가 읽는 파일을 테스트 입력으로 선언하는 규칙 |
+| [`testing/agent-runtime-integration-tests.md`](testing/agent-runtime-integration-tests.md) | `OrcaAgentRuntime` 통합 테스트의 층(IT-L0 ~ IT-L4)과 하네스 계약 — `LlmClient` 만 대역으로 두는 이유, `aimon-core/src/test` 배치, 노드 격리와 라우팅, 커버리지 맵 |
+| [`testing/context-engine-pressure-rig.md`](testing/context-engine-pressure-rig.md) | `default` · `rolling` engine 을 같은 16K 창 · 같은 과제로 재는 뷰 압력 리그 — 압력과 대조 수준, prune 이 먼저라서 단위 크기가 재는 것, 한 번만 내주는 출처, 문자열 채점, 과금 opt-in |
 
 ### backlog — 아직 결정하지 않은 것
 
@@ -296,7 +297,7 @@
 | `implemented/agent-execution-interceptor-design.md` | [`agent-execution/interceptor.md`](agent-execution/interceptor.md) |
 | `implemented/conversation-compaction-design.md` | [`agent-execution/compaction.md`](agent-execution/compaction.md) |
 | `implemented/file-artifact-design.md` | [`agent-execution/artifact.md`](agent-execution/artifact.md) |
-| `implemented/orca-runtime-integration-test-design.md` | [`agent-execution/integration-test-layers.md`](agent-execution/integration-test-layers.md) |
+| `implemented/orca-runtime-integration-test-design.md` | [`testing/agent-runtime-integration-tests.md`](testing/agent-runtime-integration-tests.md) |
 | `implemented/session-first-restructure-design.md` | [`session/session-model.md`](session/session-model.md) |
 | `implemented/conversation-state-persistence-design.md` | [`session/session-model.md`](session/session-model.md) |
 | `implemented/conversation-decomposition-scope.md` | [`session/session-model.md`](session/session-model.md) |
@@ -329,6 +330,14 @@
 | `tool/execution-environment-283-run-directory-followups.md` | [`hook/hook-tamper-boundary.md`](hook/hook-tamper-boundary.md) · [`tool/shell-contract.md`](tool/shell-contract.md) — 마지막 판본 `c9a12620` |
 | `hook/hook-shell-cancellation-ee80.md` | [`hook/hook-cancellation.md`](hook/hook-cancellation.md) — 마지막 판본 `2a1a59b2` |
 | `hook/hook-cancellation-followups-ee93-ee97.md` | [`hook/hook-cancellation.md`](hook/hook-cancellation.md) · [`agent-execution/interrupt.md`](agent-execution/interrupt.md) §6.1 — 마지막 판본 `8613c51b` |
+| `agent-execution/max-tokens-truncation-reporting.md` | [`agent-execution/truncation-and-stall.md`](agent-execution/truncation-and-stall.md) — 마지막 판본 `96870e07` |
+| `agent-execution/skill-loop-truncation-and-fork-stall.md` | [`agent-execution/truncation-and-stall.md`](agent-execution/truncation-and-stall.md) — 마지막 판본 `e94b5248` |
+| `agent-execution/usage-quota-routine-forks.md` | [`agent-execution/usage-quota.md`](agent-execution/usage-quota.md) §9 — 마지막 판본 `d5a9774f` |
+| `agent-execution/context-engine-pressure-rig.md` | [`testing/context-engine-pressure-rig.md`](testing/context-engine-pressure-rig.md) — 마지막 판본 `7da424e4` |
+| `agent-execution/integration-test-layers.md` | [`testing/agent-runtime-integration-tests.md`](testing/agent-runtime-integration-tests.md) — 마지막 판본 `8c8de45f` |
+| `agent-execution/interrupt.md` §12 · §15 | [`scheduling/routine-interrupt.md`](scheduling/routine-interrupt.md) · [`session/turn-retry.md`](session/turn-retry.md) — 나뉘기 전 판본 `fdf693e3` |
+| `agent-execution/context-engine.md` §5 · §6 · §13.11 | [`agent-execution/rolling-context-engine.md`](agent-execution/rolling-context-engine.md) · [`testing/context-engine-pressure-rig.md`](testing/context-engine-pressure-rig.md) — 나뉘기 전 판본 `493cb3fb` |
+| `agent-execution/agent-runtime-scope.md` §4 (마이그레이션 Before/After · 영속 데이터 변환) | 제거 — 현재 생성·등록 규칙은 [`agent-execution/agent-runtime-scope.md`](agent-execution/agent-runtime-scope.md) §5. 옛 절차는 판본 `05b4e424` |
 | `implemented/skill-command-unification-design.md` | [`skill/command-unification.md`](skill/command-unification.md) |
 | `implemented/skill-approval-conversation-scope-design.md` | [`skill/approval-scope.md`](skill/approval-scope.md) |
 | `implemented/hook-system-upgrade-design.md` | [`hook/hook-system.md`](hook/hook-system.md) |

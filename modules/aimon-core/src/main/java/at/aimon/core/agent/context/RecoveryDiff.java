@@ -17,7 +17,7 @@ import at.aimon.core.llm.Message;
  * instance may appear twice, so matching by instance alone would be ambiguous, and matching positions in order is
  * not. The positions left unmatched are merged into runs before they become seq ranges, so an assistant
  * {@code tool_use} dropped together with its {@code TOOL} result is one range and is not refused as two illegal cuts
- * (context-engine §8.2).
+ * (context-engine › 기존 공개 SPI 의 처분).
  *
  * <p>
  * Refused, with the reason reported: an answer holding a message the view did not (a new one, or one the strategy

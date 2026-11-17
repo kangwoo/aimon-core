@@ -56,7 +56,7 @@ public interface CompactionEngine {
      * @deprecated Rewrites the transcript in place, which a version-2 (append-only) log does not allow. A context
      *             engine calls {@link #summarize(SummaryRequest)}, records the summary in the view state and reports
      *             it through {@link #summaryInstalled}. This entry remains for the version-1 write mode
-     *             (context-engine §8.2).
+     *             (context-engine › 기존 공개 SPI 의 처분).
      */
     @Deprecated
     CompactionResult compact(CompactionRequest request);

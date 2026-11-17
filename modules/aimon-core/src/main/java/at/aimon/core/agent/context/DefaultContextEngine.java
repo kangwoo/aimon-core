@@ -61,7 +61,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <p>
  * <b>Two modes, chosen per transcript by its log format.</b> They differ in whether the record keeps the original,
  * and in one thing the model sees: view mode leaves the messages the model has not answered yet out of the summary,
- * where the in-place mode still summarizes everything (context-engine §13.10).
+ * where the in-place mode still summarizes everything (context-engine › 판정과 AUTO 압축).
  *
  * <ul>
  * <li><b>View mode</b> &mdash; a {@linkplain SessionLogFormat#V2 version-2} log. The log stays append-only. A
@@ -72,7 +72,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * leaving the unanswered messages out could not bring the view under it, are they summarized too, in the same
  * {@code prepare}. A recovery drops what the strategy left out, as seq ranges ({@link TranscriptBuffer#dropFromView})
  * mapped back by position (see {@link RecoveryDiff}). The view is {@link ViewProjection projected} from the log and the
- * view state (context-engine §4).
+ * view state (context-engine › 뷰 모드와 in-place).
  * <li><b>In place</b> &mdash; a version-1 log, which cannot persist a view state. A compaction or a recovery replaces
  * the buffer's messages through {@link TranscriptBuffer#replaceWith(List)}, and the view is the buffer as the decision
  * left it. It is also where a version-2 transcript falls back to, with a one-time WARN, when this engine lacks what
@@ -397,7 +397,7 @@ public final class DefaultContextEngine implements ContextEngine {
      * answering its call, or the input after its reply ({@link ViewProjection#firstUnreadPosition()}) — is what the
      * next call asks the model to respond to. Folding it into the summary hands the model the summarizer's words in
      * place of a tool result it has not read, and a model that calls the tool again gets the same treatment again
-     * (context-engine §13.10). The cut is the last legal one at or before the start of that part, so a tool result
+     * (context-engine › 미응답 부분). The cut is the last legal one at or before the start of that part, so a tool result
      * is never separated from its call: when the unanswered part is a tool result, the message that made the call
      * stays with it. A view that ends with an assistant message has no unanswered part and is summarized whole.
      *
@@ -827,9 +827,9 @@ public final class DefaultContextEngine implements ContextEngine {
          * With {@link SessionLogFormat#V2}, {@link #build()} refuses a {@link CompactionGuard} other than
          * {@link DefaultCompactionGuard} or {@link NoOpCompactionGuard}, and a {@link CompactionEngine} that does not
          * {@linkplain CompactionEngine#supportsSummarize() summarize} — neither can keep the log append-only
-         * (context-engine §8.2). The mode itself is chosen per transcript by its log format; a version-1 node still
-         * serves an upgraded record in view mode when it can. A caller injecting any other guard or a non-summarizing
-         * engine must therefore declare {@link SessionLogFormat#V1} here.
+         * (context-engine › 기존 공개 SPI 의 처분). The mode itself is chosen per transcript by its log format; a version-1
+         * node still serves an upgraded record in view mode when it can. A caller injecting any other guard or a
+         * non-summarizing engine must therefore declare {@link SessionLogFormat#V1} here.
          *
          * @param writeFormat
          *            the format this node writes (must not be null; default {@link SessionLogFormat#V2})

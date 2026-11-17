@@ -223,7 +223,7 @@ public final class SessionSpec {
     }
 
     /**
-     * Returns the session log format this node writes (session-log §7.3).
+     * Returns the session log format this node writes (session-log › 형식).
      *
      * <p>
      * Every build reads both formats; this decides only what is written. A cluster that still runs nodes of a build

@@ -39,7 +39,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * Default {@link CompactionEngine} performing the L3 full-conversation compaction.
  *
  * <p>
- * Sequence (per design §4.1):
+ * Sequence (per compaction design › 실행 순서):
  *
  * <ol>
  * <li>Reentrancy guard via a {@link ThreadLocal} flag — prevents nested compaction triggered from inside a hook or
@@ -51,7 +51,8 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <li>Send a tool-less LLM request with feature {@code COMPACTION}; merge the <em>advisory</em> feedback of the
  * PreCompact hooks into the summary prompt as custom instructions (a blocked result's feedback is its deny reason, not
  * an instruction, and is reported by the block paths above instead).
- * <li>Atomically replace the transcript buffer with the design-§4.5 marker pair: a boundary {@code USER} message
+ * <li>Atomically replace the transcript buffer with the marker pair of compaction design › 경계 마커: a boundary
+ * {@code USER} message
  * carrying JSON metadata wrapped in {@link CompactBoundary#boundaryOpen}/{@link CompactBoundary#boundaryClose},
  * followed by a summary {@code USER} message wrapped in {@link CompactBoundary#summaryOpen}/{@link
  * CompactBoundary#summaryClose} with a "Continue from here." trailer.

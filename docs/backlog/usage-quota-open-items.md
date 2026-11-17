@@ -1,11 +1,19 @@
-# 사용량 쿼터 — 등록 항목 4건 (열림 4 · 닫힘 0)
+# 사용량 쿼터 — 등록 항목 6건 (열림 6 · 닫힘 0)
 
 출처는 [`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) 의 1단계 구현이다.
-그 문서 §11(구현 뒤 — 설계와 달라진 점)이 적은 것 가운데 **1단계 밖으로 결과가 나가는 것**만 여기로 올라왔다.
-설계 §9 의 2·3단계(CLI 표시, Spring Boot 프로퍼티, Redis · Postgres 장부, 세션 삭제 시 키 정리)는 이미 설계가
-단계로 잡아 둔 일이라 여기 옮겨 적지 않는다.
+그 문서의 옛 §11(구현 뒤 — 설계와 달라진 점. 2026-11-17 재구성으로 걷혔다)이 적은 것 가운데 **1단계 밖으로 결과가 나가는 것**만 여기로 올라왔다.
+UQ-5 · UQ-6 은 2026-11-17 의 `docs/design/agent-execution/` 재구성 때 설계의 단계 표(§9)가 2·3단계로 잡아 두었던 일을
+옮긴 것이다 — 설계 문서는 현재 설계만 적으므로, 구현되지 않은 단계와 그 상세는 여기가 갖는다.
 
-`README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §10 · §11 은 설계·구현 시점의 기록이다.
+`README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**다. 설계 문서는 현재 설계만 적는다 — 그 §10 은 범위 밖, §11 은 설계
+결정이며, 설계·구현 시점의 기록이던 옛 §10 · §11 은 재구성으로 바뀌었다.
+
+> **정정** *(2026-11-17)*: 아래 항목 본문의 "설계 §N" 은 재구성 전의 `usage-quota.md` 와 `usage-quota-routine-forks.md` 의
+> 번호다. 지금 [`usage-quota.md`](../design/agent-execution/usage-quota.md) 에서의 자리는 이렇다 — §4.1 · §4.3 · §4.4 · §6 ·
+> §10(범위 밖)은 번호 그대로다. 옛 §11.4(백그라운드 워크플로의 launch context)는 §4.3 이, 옛 §9(단계 표)의 남은 단계는
+> UQ-5 · UQ-6 이 갖는다. `usage-quota-routine-forks.md` 는 `usage-quota.md` §9 로 합쳐졌다 — 그 문서의 §8(구현 뒤)은 §9,
+> §8.4(단계 게이트 철회)는 §9.3, §7 Q3(성공으로 기록되는 쿼터 멈춤)은 §9.5 다. 링크 대상만 바꿨고 본문의 문장은 규칙 둘대로
+> 고치지 않고 둔다.
 
 줄 번호는 **마지막 확인 날짜와 함께** 적는다. 각 인용의 기준 날짜는 그 항목의 **어디** 줄에 있다.
 
@@ -36,7 +44,7 @@
 
 1. 쿼터 사용량이 청구서와 크게 어긋난다는 보고가 들어올 때 — 그때 어느 호출이 몫이 큰지부터 잰다.
 2. LLM 호출 계측을 한 자리로 모으는 작업(예: 게이트웨이 수준의 사용량 훅)이 시작될 때. 쿼터는 그 자리에 붙는다.
-3. 설계 §9 3단계(공유 장부)가 들어가 테넌트 단위 청구 근사에 쓰이기 시작할 때.
+3. UQ-6(공유 장부)이 들어가 테넌트 단위 청구 근사에 쓰이기 시작할 때.
 
 **좁힘 (2026-10-18, #265) — `/skill` 의 비용.** `LlmSkillExecutor` 가 `CostEstimator` 를 받는다
 (`withCostEstimator`, `LlmSkillExecutor.java:200`). 포크 실행기가 받는 길과 같다 — 팩토리의
@@ -66,7 +74,7 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 부트스트랩은 실행기와 같은 인스턴스를 넘긴다) 실행 1회에 guard 하나를 만들고(세션 없음, 주체는 `task.getOwner()` —
 설계 §4.4), 단계 컨텍스트의 `QUOTA_GUARD` 로 포크에 물려준다. 판정은 포크와 스킬이 각자 LLM 호출 전에 하고, 실행기는
 단계를 거절하지 않는다 — 쿼터로 실패한 시도의 재시도만 건너뛴다(PR #271 리뷰에서 바꿨다, 설계 §8.4). 설계와 구현의 차이는
-[`../design/agent-execution/usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §8.
+[`../design/agent-execution/usage-quota-routine-forks.md`](../design/agent-execution/usage-quota.md#9-예약-루틴) §8.
 루틴의 쿼터 멈춤이 문자열로만 남는다는 새 문제는 UQ-4 로 따로 올렸다.
 
 **어디.** (2026-10-18) `OrcaAgentRuntimeFactory.java:1157` (기본 launch context — `quotaGuard` 를 싣지 않는다).
@@ -92,7 +100,7 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 
 **어디.** (2026-10-15) `TurnResultPayload.java:110` · `:203`, `StoredAgentExecutionResult.java:71`.
 
-**언제 다시 볼까.** 설계 §9 2단계(CLI 표시)가 라우팅을 거친 결과를 보여 주게 될 때, 또는 `SessionRouter` 위의 웹
+**언제 다시 볼까.** UQ-5(CLI 표시)가 라우팅을 거친 결과를 보여 주게 될 때, 또는 `SessionRouter` 위의 웹
 프런트엔드가 쿼터 멈춤을 사용자에게 구조적으로 보여 줘야 할 때. 와이어 필드를 더하는 일이므로 롤링 업그레이드
 규칙(`CompletionReason#fromWireName` 과 같은 "모르는 것은 버리고 읽는다")을 함께 정한다.
 
@@ -110,7 +118,7 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 내놓는다. 관측 가능한 결과는 **루틴의 쿼터 멈춤을 알림·대시보드로 따로 보이려면 문자열을 파싱해야 하고**, `Task`
 단계의 경우에는 실행이 성공으로 기록되어 실패 알림에도 걸리지 않는다는 것이다 — PR #271 이 그 경우에 WARN 로그
 하나를 남기게 했지만, 로그는 결과가 아니다. 어느 범위의 어느 기간이 다 찼는지도
-문자열 안에만 있다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
+문자열 안에만 있다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota.md#95-성공으로-기록되는-쿼터-멈춤) §7 Q3 —
 저장 모양과 코덱을 건드리는 일이라 #267 범위 밖에 두었다.
 
 **어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:860`
@@ -119,3 +127,56 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 
 **언제 다시 볼까.** 루틴의 쿼터 멈춤을 운영 알림이나 UI 에서 일반 실패와 구분해 보여 줘야 할 때, 또는 UQ-3 처럼
 결과에 `QuotaViolation` 을 싣는 저장 모양 작업이 시작될 때 — 둘은 같은 직렬화 결정을 공유한다.
+
+---
+
+## UQ-5 — 쿼터가 운영자에게 보이지 않고, Spring Boot 프로퍼티가 없다 · **열림**
+
+**무엇을.** 두 가지를 더한다.
+
+1. **CLI 표시** — `/status` 에 쿼터 사용률(키별 사용량 / 한도)을 보이고, 쿼터로 멈춘 턴에는 어느 키가 막았는지
+   (`QuotaViolation` 의 scope · window · 사용량 · 한도)를 한 줄로 보인다.
+2. **Spring Boot 프로퍼티** — `aimon.quota.*` 프로퍼티가 `StaticQuotaPolicy` 를 만든다. 장부 · resolver 빈은 사용자가 정의하면
+   그것이 이긴다(`@ConditionalOnMissingBean`).
+
+**왜.** 쿼터는 지금 `AimonStackSpec` 의 `QuotaSpec` 으로만 켤 수 있고, 켠 뒤에도 운영자가 볼 수 있는 표면이 없다. CLI 의
+`OutputFormatter#displayResult` 는 성공도 `INTERRUPTED` 도 아닌 결과를 `displayErrorResult` 로 그리므로, 쿼터 멈춤은 일반 오류
+결과처럼 보이고 위반 내용은 따로 보이지 않는다. 관측 가능한 결과는 **사용자가 한도에 닿은 것과 실행이 실패한 것을 화면에서
+구분하지 못한다**는 것이다. 스타터와 CLI 의 main 소스에는 `quota` 문자열이 없다(2026-11-17 확인) — 스타터 사용자는 쿼터를 켤
+프로퍼티가 없어 `AimonStackSpec` 을 직접 다뤄야 한다.
+
+**어디.** (2026-11-17) `modules/aimon-cli/src/main/java/at/aimon/cli/repl/OutputFormatter.java`(`displayResult`),
+`modules/aimon-spring-boot-starter/src/main/java/at/aimon/spring/boot/`(쿼터 배선 없음),
+`modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackSpec.java`(`QuotaSpec`). 설계는
+[사용량 쿼터](../design/agent-execution/usage-quota.md).
+
+**언제 다시 볼까.** 스타터를 쓰는 배포가 쿼터를 켜려 할 때, 또는 쿼터 멈춤을 오류로 오인했다는 보고가 있을 때. 라우팅을
+거친 결과를 보여 주려면 UQ-3 이 먼저다.
+
+---
+
+## UQ-6 — 노드 간 공유 장부가 없고, 세션 `TOTAL` 키가 정리되지 않는다 · **열림**
+
+**무엇을.** 두 가지를 더한다.
+
+1. **공유 장부** — `UsageLedger` 의 Redis · Postgres 구현과 Testcontainers 테스트(`@Tag("docker")`). 설계 시점의 후보는 이렇다.
+
+   | 구현 | 위치 후보 | `charge` |
+   |------|------|----------|
+   | `RedisUsageLedger` | `aimon-session-redis` | `HINCRBY tokens` + `HINCRBYFLOAT cost`, `DAILY` 키는 `EXPIRE` |
+   | `PostgresUsageLedger` | `aimon-session-postgres` | `INSERT … ON CONFLICT DO UPDATE SET tokens = tokens + ?` |
+
+   비용은 장부 안에서 마이크로달러 `long` 으로 저장한다 — 부동소수점 누적 오차를 피하고 Redis 정수 연산을 쓰기 위해서다.
+   `Money` 로의 변환은 경계에서 한 번. `DAILY` 키의 보존 기간은 구현체 설정이다(후보 기본값 7일).
+2. **세션 `TOTAL` 키 정리** — 세션이 삭제될 때 그 세션 scope 의 `TOTAL` 키를 지운다. `TOTAL` 키는 만료하지 않는다.
+
+**왜.** `implements UsageLedger` 인 main 소스는 `InMemoryUsageLedger` 하나다(2026-11-17 확인). 사용량이 노드 메모리에만 있으므로
+멀티 인스턴스 배포에서 같은 주체 · 테넌트의 사용량이 노드마다 따로 쌓이고, 재시작하면 사라진다 — 관측 가능한 결과는 **노드가
+N 개면 주체 · 테넌트 한도가 사실상 N 배가 된다**는 것이다. 또 `InMemoryUsageLedger` 는 세션의 `TOTAL` 키를 정리하지 않아
+세션이 많은 장기 프로세스에서 장부가 계속 자란다(사용 가이드 §9 의 메모리 증가 경고).
+
+**어디.** (2026-11-17) `agent/quota/impl/InMemoryUsageLedger.java`(`modules/aimon-core/src/main/java/at/aimon/core/` 기준),
+`agent/quota/UsageLedger.java`. 설계는 [사용량 쿼터](../design/agent-execution/usage-quota.md).
+
+**언제 다시 볼까.** 쿼터를 켠 배포가 노드를 둘 이상 띄울 때, 또는 장기 프로세스의 장부 메모리가 문제로 보고될 때. UQ-1 의
+세 번째 트리거(테넌트 단위 청구 근사)도 이 항목을 기다린다.

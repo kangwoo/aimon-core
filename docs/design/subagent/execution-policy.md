@@ -102,7 +102,7 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 - 거부가 한 번이라도 있었으면 그 iteration 꼬리(취소 검사 다음, stall guard 전)에서
   `TOOL_CALL_BUDGET_EXCEEDED` 로 끝난다 — 다음 LLM 호출을 쓰지 않는다.
 - 정확히 한도만큼 쓴 포크는 다음 호출에서 답을 낼 수 있다. 그 호출이 또 도구를 요구하면 전부 거부되고 끝난다.
-- `max_tokens` 로 잘린 응답의 호출은 원래대로 거부되며 역시 세지 않는다.
+- `max_tokens` 로 잘린 응답의 호출은 원래대로 거절되며 역시 세지 않는다.
 - **token 을 넘긴 응답의 호출도 실행하지 않는다.** 응답의 usage 는 응답이 온 뒤에야 알 수 있으므로, 정책 포크는
   도구를 넘기기 직전에 예산을 다시 본다. 이미 STOP 이면 그 batch 전부를 `Not run` 으로 답하고, 다음 iteration
   경계가 `TOKEN_BUDGET_EXCEEDED` 로 끝낸다(LLM 호출 없이).
@@ -289,6 +289,37 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 이고 `exitConfirmed == true` 일 때만 완료다. 텍스트에는 미완료일 때 `Completion reason:` 줄, exit 미확인일 때
 `Exit: UNCONFIRMED` 줄이 결과 뒤에 붙는다. `COMPLETED` 결과의 텍스트는 이전과 같다.
 
+**`Completion reason:` 줄.** 줄은 `SubagentResultFormatter.completionReasonLine` 이 만들고, 사유가 `isSuccessful()` 이 아닐
+때만 `Result:` 블록 뒤에 붙는다. 머리부터 `Result:` 까지는 사유와 무관하게 같다. 결과가 `isSuccess()` 인데 사유가 성공이
+아니면(`TRUNCATED`) 줄 끝에 ` (the subagent's final answer is incomplete)` 가 붙고, `QUOTA_EXCEEDED` ·
+`MAX_ITERATIONS_GRACE` 는 각자의 안내 문구를 단다.
+
+- **`Result:` 뒤에 둔다.** `aimon-cli` 의 `SubagentResultDisplayHook` 은 머리의 줄 순서(`Subagent:` · `Task:` · `Status:` ·
+  `Iterations:` · `Tokens:` 다음 `Result:`)를 고정한 정규식으로 이 출력을 읽는다. `Tokens:` 줄과 `Result:` 사이에는 공백만
+  허용된다. 머리 안에 줄이 끼면 매치가 깨지고 CLI 는 서브에이전트 결과를 조용히 그리지 않는다.
+- **완료가 아닐 때만 붙인다.** 늘 붙는 줄은 CLI 가 그리는 모든 서브에이전트 결과에 한 줄을 더한다. 줄이 정보를 갖는
+  것은 끝이 깨끗하지 않을 때뿐이다. 실패에는 사유 이름(`ERROR`, `MAX_ITERATIONS`, `INTERRUPTED`, 예산 이름)이 붙으므로
+  사유가 늘어도 규칙을 다시 볼 필요가 없다.
+- **`TRUNCATED` 를 이름으로 고르지 않고 `isSuccessful()` 로 판정한다.** `CompletionReason` 이 이 구분을 위해 문서화한
+  술어이고, 그러면 `TaskTool` 이 상수를 하나도 품지 않는다.
+
+| 기각한 대안 | 이유 |
+|---|---|
+| 잘린 결과의 상태 단어를 바꾼다(`getStatus()` 가 `TRUNCATED` 를 돌려준다) | `getStatus()` 는 javadoc 이 두 값을 약속하는 공개 메서드이고, `TaskResult.getStatus()` 가 그것과 같기로 약속하며, `AgentOutputTool` 과 CLI 훅이 그 단어를 읽는다. 더 작은 변경(사유 줄)으로 부모 모델에 닿으므로 큰 변경은 이유가 없다 |
+| `Status: SUCCESS (TRUNCATED)` | CLI 훅의 정규식을 깬다 |
+
+**CLI 는 사유 줄에 따로 색을 칠한다.** 색 출력이 켜져 있으면 상태가 `SUCCESS` 일 때 노랑, `FAILURE` 일 때 빨강이다.
+`SUCCESS` 이면서 이 줄을 단 결과는 잘린 답이고, 초록이면 그것을 알리는 한 줄이 성공의 일부로 읽히기 때문이다. 머리 · 답과
+색을 끈 출력은 바뀌지 않는다. `SubagentResultDisplayHook` 은 요약 끝의 사유 줄을 — 이름이 `isSuccessful()` 이 아닌
+`CompletionReason` 일 때만, 곧 `TaskTool` 이 그 줄을 찍는 조건에서만 — 떼어 `OutputFormatter.displaySubagentCompletionReason`
+에 넘긴다.
+
+| 기각한 대안 | 이유 |
+|---|---|
+| 경고 glyph | 색을 바꾸지 않으면 여전히 성공 색이고, 평문 출력을 바꾼다 |
+| 요약 전체를 사유로 칠한다 | 미완료를 말하는 한 줄이 아니라 답을 다시 칠한다 |
+| 헤더를 사유로 칠한다 | 헤더는 `SUCCESS` 로 둔 상태 단어를 찍는다 |
+
 | 결과 의미 | 구조화 결과 |
 |---|---|
 | 정상 완료 | `COMPLETED`, `exitConfirmed=true` |
@@ -385,7 +416,7 @@ executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는
 |---|---|---|
 | `maxToolCalls` (§4) | 세지 않는다. 예산이 바닥난 batch 에서도 처리한다 | 실행되는 도구가 아니라 결과 전달이다. 한도에 닿은 포크가 결과를 못 내면 한도의 목적이 거꾸로 된다 |
 | token 초과 batch (§4) | 처리한다 (다른 호출은 `Not run`) | 같은 이유. payload 는 이미 받은 응답 안에 있다 |
-| `max_tokens` 로 잘린 응답 | 다른 호출과 같이 거부한다 — grace round 의 응답도 (WARN) | 잘린 호출의 인자는 온전히 도착하지 않았다 |
+| `max_tokens` 로 잘린 응답 | 다른 호출과 같이 거절한다 — grace round 의 응답도 (WARN) | 잘린 호출의 인자는 온전히 도착하지 않았다 |
 | `maxConsecutiveToolFailures` (§4.1) | 세지 않고, 차단하지도 않는다 | schema 위반은 고치라고 돌려준 것이다. 차단하면 고칠 길이 막힌다 |
 | `StalledIterationGuard` | 결과 그대로 센다 — 통과는 성공(진전), 거부는 오류 | 거부만 반복하는 포크는 다른 실패와 똑같이 멈춰야 한다 |
 | `getToolCallCount()` | 세지 않는다 | 파이프라인에 넘긴 수라는 정의(§4)를 지킨다 |

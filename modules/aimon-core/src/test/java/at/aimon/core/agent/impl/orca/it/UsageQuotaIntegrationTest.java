@@ -41,7 +41,7 @@ import at.aimon.core.subagent.execution.SubagentResultFormatter;
  * <p>
  * What only this layer can show: that a fork's calls land on the <em>parent turn's</em> session key — the fork has no
  * session of its own — and that the fork is stopped by the same quota, which is what closes the bypass the design is
- * about (usage-quota §1, §4.3).
+ * about (usage-quota › 문제와 원칙, › 포크 전파).
  */
 @DisplayName("Usage quota across turns, sessions and forks")
 class UsageQuotaIntegrationTest {

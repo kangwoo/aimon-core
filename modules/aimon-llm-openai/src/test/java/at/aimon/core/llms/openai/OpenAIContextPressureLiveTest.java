@@ -23,7 +23,7 @@ import at.aimon.core.llms.openai.ContextPressureTasks.TaskKind;
 
 /**
  * The two context engines compared on the tasks of {@link ContextPressureTasks} against the real OpenAI API: the
- * baseline a third engine would have to beat (context-engine §13.11).
+ * baseline a third engine would have to beat (testing/context-engine-pressure-rig › 무엇을 재는가).
  *
  * <p>
  * <strong>What it produces.</strong> A report, not a verdict. Each level in {@code AIMON_CONTEXT_PRESSURE} is run for

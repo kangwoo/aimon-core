@@ -162,8 +162,8 @@ public final class CompactionMetadata {
      * Whether the view was still at or above the blocking limit after this compaction. The rolling context engine
      * reaches that only at the blocking limit, when the messages the model has not answered yet keep the view there
      * after everything before them was absorbed; the default context engine, in view mode, when even a summary of the
-     * whole view does not fit. The view is then sent as it is (context-engine §13.10). Always {@code false} when the
-     * limit was not reported.
+     * whole view does not fit. The view is then sent as it is (context-engine › blocking 한계, rolling-context-engine ›
+     * 미응답 부분만으로 넘칠 때). Always {@code false} when the limit was not reported.
      *
      * @return true when {@link #getBlockingLimit()} is reported and {@link #getPostCompactTokenCount()} reaches it
      */
@@ -174,8 +174,8 @@ public final class CompactionMetadata {
     /**
      * How many summaries this one record stands for. {@code 1} except for the default context engine's blocking-limit
      * pass that had to summarize twice in one {@code prepare}: the summary of what preceded the unanswered messages
-     * left the view at the limit, and a second call summarized the whole view (context-engine §13.10). That pass is
-     * reported as one compaction: {@link #getPreCompactTokenCount()}, {@link #getMessagesSummarized()} and
+     * left the view at the limit, and a second call summarized the whole view (context-engine › blocking 한계). That pass
+     * is reported as one compaction: {@link #getPreCompactTokenCount()}, {@link #getMessagesSummarized()} and
      * {@link #getStartedAt()} describe the view before the first call, {@link #getPostCompactTokenCount()} and
      * {@link #getCompletedAt()} the view after the second, and {@link #getDiscoveredToolNames()} what either call
      * found. Each of the calls spent a summary request and fired the PreCompact and PostCompact hooks.

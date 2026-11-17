@@ -2,7 +2,7 @@ package at.aimon.core.agent.compact;
 
 /**
  * Half-open range {@code [fromIndex, toIndex)} of conversation messages to be summarized by a partial-compaction
- * request (design §4.3).
+ * request (compaction design › 실행 순서).
  *
  * <p>
  * When attached to a {@link CompactionRequest}, the engine summarizes only the in-range messages and preserves the

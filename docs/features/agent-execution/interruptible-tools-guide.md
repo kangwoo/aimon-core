@@ -33,8 +33,9 @@ AIMON의 ReAct 루프는 도중에 다음과 같은 이유로 중단될 수 있�
 | 세션 리스 갱신 실패 | `LEASE_LOST` | 멀티 노드 라우팅 계층 |
 | 외부에서 세션을 명시적으로 릴리스 | `SESSION_RELEASED` | `SessionRouter` |
 | 홀더 유실 감지 후 다른 노드가 인수 | `HOLDER_LOST` | 라우팅 계층의 holder-loss sweeper |
+| 다른 노드가 보낸, 이 빌드가 모르는 사유 이름 | `UNKNOWN` | 사유를 디코드하는 쪽(`InterruptReason#fromWireName`) — 읽는 쪽의 값이라 이 값으로 인터럽트를 거는 곳은 없다(`LiveSession#interrupt` · `SessionRouter#interrupt` 가 거부) |
 
-어떤 원인이든 중단 신호는 **단 하나의 경로** — 현재 실행의 `CancellationSignal` 트립 — 으로 도구 계층에 도달합니다. 표의 다섯째 줄이 그 "실행" 이 언제나 턴은 아니라는 증거입니다: 스케줄 루틴은 세션도 턴도 없이 도는 실행이고, 같은 신호 기계로 끊깁니다([interrupt.md §12](../../design/agent-execution/interrupt.md)). Tool 작성자는 `InterruptBehavior`를 선언해 "이 신호를 어떻게 해석해 달라"를 executor에게 알리고, 필요하다면 `InterruptAccess`로 신호를 직접 관찰합니다.
+어떤 원인이든 중단 신호는 **단 하나의 경로** — 현재 실행의 `CancellationSignal` 트립 — 으로 도구 계층에 도달합니다. 표의 다섯째 줄이 그 "실행" 이 언제나 턴은 아니라는 증거입니다: 스케줄 루틴은 세션도 턴도 없이 도는 실행이고, 같은 신호 기계로 끊깁니다([routine-interrupt.md](../../design/scheduling/routine-interrupt.md)). Tool 작성자는 `InterruptBehavior`를 선언해 "이 신호를 어떻게 해석해 달라"를 executor에게 알리고, 필요하다면 `InterruptAccess`로 신호를 직접 관찰합니다.
 
 기본 동작은 `InterruptBehavior.NON_INTERRUPTIBLE` 입니다. Tool이 이 선언을 오버라이드하지 않으면 **진행 중인 실행은 끝까지 수행**되고, 중단은 다음 iteration 경계에서야 반영됩니다. 이것이 stat/read 같은 짧은 원자적 연산에는 오히려 안전한 기본값입니다.
 
@@ -43,10 +44,10 @@ AIMON의 ReAct 루프는 도중에 다음과 같은 이유로 중단될 수 있�
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  외부 트리거                                                │
-│    REPL SIGINT handler / DefaultAgentSession NOW listener /  │
+│    REPL SIGINT handler / DefaultLiveSession NOW listener /   │
 │    Budget guard / parent cascade / shutdown hook             │
 └────────────────────────┬────────────────────────────────────┘
-                         │ AgentSession#interrupt(InterruptReason)
+                         │ LiveSession#interrupt(InterruptReason)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  InterruptCoordinator (per-turn)                            │
@@ -81,7 +82,7 @@ AIMON의 ReAct 루프는 도중에 다음과 같은 이유로 중단될 수 있�
 
 `Tool.getInterruptBehavior()`는 default로 `NON_INTERRUPTIBLE`을 반환합니다 — 기존 Tool 호환성을 깨지 않기 위한 선택.
 
-### `InterruptReason` (enum, 9 값)
+### `InterruptReason` (enum, 10 값)
 
 위 [개요](#개요) 표 참고. Tool은 reason을 **관측 용도**로만 사용합니다 — 동작 자체는 "취소됐다"만 알면 충분하고, 메시지 포맷/로깅에 reason을 포함해 사용자가 원인을 구분할 수 있게 돕습니다.
 
@@ -413,7 +414,7 @@ skipped 로 채워진 도구 결과) 원래 시작한 자리에서 다시 실행
 프로그램에서 쓸 때는 `LiveSession.retryLastTurn(...)`(되감고 제출까지) 또는 `rewindLastTurn()`(되감고 입력만
 돌려받기 — `Optional<UserInput>`)입니다. 후자를 그대로 다시 제출하려면 `submit(UserInput, SubmitOptions)` 또는
 `offerAsync(UserInput, ...)` 를 씁니다. 설계 근거는
-[`interrupt.md` §15](../../design/agent-execution/interrupt.md).
+[`turn-retry.md`](../../design/session/turn-retry.md).
 
 ## NOW 큐 우선순위 예
 
@@ -423,7 +424,7 @@ skipped 로 채워진 도구 결과) 원래 시작한 자리에서 다시 실행
 시점 T0: Agent가 WebFetch(url1) 시작. (COOPERATIVE, 수 초 소요)
 시점 T1: 사용자가 "잠깐, url2로 해줘" 입력 →
          MessageQueueManager#enqueue(NOW priority, ctx=main).
-시점 T2: DefaultAgentSession#onQueueEvent가 NOW 우선순위 + 동일 컨텍스트
+시점 T2: DefaultLiveSession#onQueueEvent가 NOW 우선순위 + 동일 컨텍스트
          감지 → interrupt(InterruptReason.NOW_PRIORITY_INPUT).
 시점 T3: WebFetchTool이 다음 단계 경계에서 signal.isCancelled() 확인 →
          ToolResult.error("WebFetch interrupted: NOW_PRIORITY_INPUT") 반환.

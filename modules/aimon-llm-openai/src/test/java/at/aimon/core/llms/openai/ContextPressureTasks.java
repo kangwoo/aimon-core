@@ -27,7 +27,7 @@ import at.aimon.core.llm.token.TokenEstimator;
 /**
  * The three tasks the context engines are compared on, as scripts: every user input and every tool result is decided
  * by {@code (kind, seed, pressure)}, and the only things left to the model are its answers and what it looks up again
- * (context-engine §13.11).
+ * (testing/context-engine-pressure-rig › 세 과제와 stratum).
  *
  * <p>
  * <strong>Pressure</strong> is the estimated tokens a task pushes into the log before the first question — the user

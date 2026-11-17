@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: b728dcfe
+source_commit: ec652745
 ---
 
 # Scope Model
@@ -67,7 +67,7 @@ rules see the `TurnId` entry in [`glossary.en.md` §4](glossary.en.md).
 
 | Component | Created | Destroyed |
 |---------|------|------|
-| `AgentRuntime` | once at bootstrap — CLI `AgentSetupFactory`, web `LiveSessionOpener` | at app shutdown, or on explicit agent removal via `OrcaAgentRuntimeManager.destroyRuntime` |
+| `AgentRuntime` | runtimes of the agents declared in the spec (with or without a discriminator) once at assembly — `AimonStackBuilder` builds them and `AimonStack.startRuntimes()` registers them (the CLI's `AgentSetupFactory` assembles that stack). Undeclared ids (tenant runtimes, with a discriminator) are created on first use by `AgentRuntimeResolver` (aimon-bootstrap). `LiveSessionOpener` never creates a runtime; it only asks the resolver | declared runtimes are closed by the stack teardown, in `TeardownPhase.AGENT_RUNTIMES`. Tenant runtimes are closed by `AgentRuntimeResolver` once nothing holds a lease on them and their idle TTL has passed |
 | `McpClientManager` | when the `AgentRuntime` is created | closed explicitly by `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (agent-scoped variant) | `OrcaAgentRuntimeFactory` — only when `workflowRunnerEnabled` | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped variant) | `WorkflowTool` / `GraalJsWorkflowTool`, per call | each one's own try-with-resources |

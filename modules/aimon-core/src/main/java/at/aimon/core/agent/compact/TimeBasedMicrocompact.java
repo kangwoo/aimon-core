@@ -19,10 +19,11 @@ import at.aimon.core.llm.ToolUseResult;
  * budget while preserving message structure (role, tool-use IDs, error flags) for downstream provider serialisation.
  *
  * <p>
- * This is the L0 layer in the conversation compaction stack described in
- * {@code docs/design/agent-execution/compaction.md} §9.1. Unlike the L3
- * full {@link CompactionEngine}, no LLM call is made: tool result content older than {@code maxAge} is replaced
- * verbatim with the {@link #CLEARED_PLACEHOLDER} string. The original tool-use ID and error flag are kept so the
+ * This was once an L0 pass in the conversation compaction stack and is now deprecated (compaction › opt-in 부품). The
+ * live L0 is the rolling context engine's prune, which elides tool result bodies from the view with
+ * {@link TranscriptBuffer#elideInView(long, String)} (rolling-context-engine › L0 prune). Unlike the L3 full
+ * {@link CompactionEngine}, no LLM call is made: tool result content older than {@code maxAge} is replaced verbatim
+ * with the {@link #CLEARED_PLACEHOLDER} string. The original tool-use ID and error flag are kept so the
  * provider conversation contract remains valid.
  *
  * <h2>Idempotency</h2>

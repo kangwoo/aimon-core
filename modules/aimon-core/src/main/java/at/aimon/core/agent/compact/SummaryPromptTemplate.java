@@ -77,9 +77,9 @@ public final class SummaryPromptTemplate {
     }
 
     /**
-     * Builds the system prompt for one generation of a rolling summary (context-engine §5.4): the ten sections, the
-     * cumulative-section rule, an optional target length and, when a span widens, the previous summary to update.
-     * The custom-instruction sandbox is the same as {@link #buildSystemPrompt(String)}'s.
+     * Builds the system prompt for one generation of a rolling summary (rolling-context-engine › 요약 갱신): the ten
+     * sections, the cumulative-section rule, an optional target length and, when a span widens, the previous summary to
+     * update. The custom-instruction sandbox is the same as {@link #buildSystemPrompt(String)}'s.
      *
      * @param customInstructions
      *            optional advisory guidance; may be {@code null}

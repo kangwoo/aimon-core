@@ -51,7 +51,7 @@ import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 
 /**
- * The bootstrap half of usage quotas (usage-quota §7.1): a {@link QuotaSpec} reaches the executor and the scheduling
+ * The bootstrap half of usage quotas (usage-quota › 설정 모양): a {@link QuotaSpec} reaches the executor and the scheduling
  * engine's routine runs (issue #267), its absence leaves both unmetered, and a cost limit the stack can see would never
  * fire is reported.
  */

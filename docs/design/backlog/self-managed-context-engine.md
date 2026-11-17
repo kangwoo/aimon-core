@@ -6,8 +6,8 @@
 > **문서로는 정하지 못한 것**이다 — 저장 계층에 닿는 네 가지로, 종이 위에서 채울 때마다 코드와 어긋났다. 거기에는 답이
 > 아니라 그 과정에서 드러난 제약을 적었다.
 > 적용 대상(착수한다면): `aimon-core`, 그리고 선택 키가 지나는 `aimon-bootstrap` · `aimon-spring-boot-starter` · `aimon-cli`.
-> 선행 설계: [`../agent-execution/context-engine.md`](../agent-execution/context-engine.md) (`ContextEngine` SPI 와 롤링
-> engine), [`../session/session-log.md`](../session/session-log.md) (로그 · 뷰 상태 · 봉인)
+> 선행 설계: [`../agent-execution/context-engine.md`](../agent-execution/context-engine.md) (`ContextEngine` SPI),
+> [`../agent-execution/rolling-context-engine.md`](../agent-execution/rolling-context-engine.md) (롤링 engine), [`../session/session-log.md`](../session/session-log.md) (로그 · 뷰 상태 · 봉인)
 
 ---
 
@@ -76,7 +76,7 @@ TranscriptBuffer    |         v                                                 
 
 **도구는 뷰 상태를 바꾸지 않는다.** 이유는 스레드가 아니다 — `ContextEdit` 은 `CONCURRENT_SAFE` 가 아니므로
 `DefaultParallelToolDispatcher` 가 그 배치를 병렬로 돌리지 않고, 도구는 턴을 돌리는 스레드에서 실행된다. 이유는
-[`context-engine.md` §11](../agent-execution/context-engine.md#11-하지-말-것) 의 "engine 밖에서 뷰를 줄이지 않는다" 다.
+[`context-engine.md` §13](../agent-execution/context-engine.md#13-하지-말-것) 의 "engine 밖에서 뷰를 줄이지 않는다" 다.
 뷰를 줄이는 입구는 `prepare` · `recover` · `compactNow` 셋이고, 편집을 `prepare` 로 모으면 SPI 에 메서드가 늘지 않는다.
 늘어나는 것은 값 타입의 필드다(§9).
 
@@ -118,7 +118,7 @@ SessionViewState
 - **겹침** — 새 `rewrite` 는 기존 `rewrites` · `droppedRanges` · `trims` · `elisions` 를 **통째로 덮거나 닿지 않는다.**
   덮으면 흡수한다. 일부만 걸치면 거절한다(G1)
 - **결정성** — 노트는 만들어진 순간 뷰 상태에 저장되고, 뷰 계산은 읽기만 한다.
-  [`context-engine.md` §3.3](../agent-execution/context-engine.md#33-뷰의-결정성) 이 요약문에 대해 말한 것과 같다
+  [`context-engine.md` §5](../agent-execution/context-engine.md#5-뷰의-결정성) 이 요약문에 대해 말한 것과 같다
 
 ### 3.2 연산
 
@@ -171,7 +171,7 @@ trim:     net saving = tokens(result as the view shows it now) - tokens(new exce
   롤링의 span 이 head 뒤에서 시작하므로 그 앞에 `rewrite` 가 생기면 "span 뒤" 가 깨지기 때문이다. **영역이 빌 수 있다** —
   레코드에 남은 첫 `CONVERSATION` USER 항목보다 앞에서 시작하는 manifest 줄이 있으면(진짜 첫 요청이 복구로 빠져 봉인되었을
   수 있다) 뒤의 메시지를 첫 요청으로 삼지 않는다. 롤링이 head 를 정할 때 쓰는 규칙과 같다
-  ([`context-engine.md` §13.6](../agent-execution/context-engine.md#136-in-place-폴백과-롤링-요약-보강)). 남은
+  ([`rolling-context-engine.md` §2](../agent-execution/rolling-context-engine.md#2-head)). 남은
   `CONVERSATION` USER 항목이 없을 때도 빈다. 빈 영역에서는 G2 가 지키는 것이 없다
 - **G8 이 "줄이는 편집만" 을 맡는다.** `replace` 에서 노트를 한 번 더 빼는 것은 노트가 `ContextEdit` 호출의 입력으로도
   뷰에 남기 때문이다. 하한이 0 이 아니라 1,000 인 것은 편집이 뷰의 가운데를 바꾸기 때문이다 — OpenAI 의 자동 prefix
@@ -183,7 +183,7 @@ trim:     net saving = tokens(result as the view shows it now) - tokens(new exce
   조용히 넓히면 모델이 남기려던 메시지가 함께 사라진다. 거절을 줄이는 것은 `list` 의 일이다(§5)
 - **G3 이 미응답 규칙을 대신한다.** 도구가 실행될 때 호출한 assistant 메시지는 아직 로그에 없다. 그래서 요청 시점의
   `nextSeq` 를 요청에 적어 둔다. `prepare` 가 적용할 때의 미응답 부분
-  ([`context-engine.md` §13.10](../agent-execution/context-engine.md#1310-모델이-아직-답하지-않은-것은-압축하지-않는다))은
+  ([`context-engine.md` §7](../agent-execution/context-engine.md#7-미응답-부분))은
   전부 그 뒤에 있다
 - **`SYNTHETIC` 항목은 head 영역 밖에서는 구간에 들어갈 수 있다.** 롤링의 span 도 이미 그것을 흡수한다. 반드시 남아야 하는
   지시는 시스템 프롬프트에 둔다 — 시스템 프롬프트는 뷰 밖이고 어떤 engine 도 건드리지 않는다
@@ -357,7 +357,7 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 
 | 쟁점 | 결정 | 기각한 대안과 이유 |
 |------|------|-------------------|
-| 편집의 표현 | 뷰 상태 연산 | **로그를 고쳐 쓴다**(레퍼런스 구현) — [`context-engine.md` §1.1](../agent-execution/context-engine.md#11-한-타입이-두-가지-일을-한다) 의 L3 ~ L5 가 되돌아온다. 편집 빈도가 높을수록 더 자주 |
+| 편집의 표현 | 뷰 상태 연산 | **로그를 고쳐 쓴다**(레퍼런스 구현) — [`context-engine.md` §1](../agent-execution/context-engine.md#1-기록과-뷰--무엇을-푸는가) 의 ③ ~ ⑤ 가 되돌아온다. 편집 빈도가 높을수록 더 자주 |
 | 편집의 입구 | 구조화된 도구 `ContextEdit` | **파일 미러링 + 파일 · 셸 도구**(논문, pi-clm) — pi-clm 은 스스로 한계로 적는다: 다른 기계나 컨테이너의 도구 백엔드는 로컬 미러를 볼 수 없다. AIMON 의 셸은 `ExecutionEnvironment` 에서 돌고 그것은 원격일 수 있다. 미러를 그리로 보내면 대화가 실행 환경에 놓인다. 파일의 임의 편집도 결국 뷰 상태 연산으로 번역되어야 하므로(로그는 append-only 다) 표현력의 상한은 같다. 논문에서 구조화된 방식이 자유 편집보다 낮았다는 것은 알고 택한다 — 되살릴 조건은 §12 |
 | 게이트의 세기 | 줄이는 편집만, head 영역과 현재 입력 고정 | **게이트 없음**(pi-clm 의 `clm` 모드 — 크기 제한 없음, 보호 없음, 새 블록과 순서 바꾸기 허용) — 대화형 코딩 도구에서 사람이 편집 diff 를 보는 전제의 선택이다. AIMON 의 에이전트는 사람 없이 돌고 신뢰할 수 없는 입력을 읽는다. 게이트가 이득을 얼마나 깎는지는 재야 한다(§12) |
 | 적용 시점 | 다음 `prepare` (대기열) | **도구가 즉시 적용** — 뷰를 줄이는 주체가 engine 밖에 하나 더 생긴다. **턴 끝에 한 번**(pi-clm) — 한 턴 안에서 iteration 이 수십 번 도는 실행에서는 너무 늦다. **SPI 에 `edit()` 추가** — 입구가 넷이 된다 |
@@ -505,8 +505,9 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 | 사용 가이드 | `docs/features/agent-execution/context-engine-guide.md` 와 그 번역본, `system-reminder` 규약 문서의 key 목록 |
 
 설계 문서에서는 [`session-log.md`](../session/session-log.md) 의 §4(뷰 상태) · §5.1(봉인 가능 조건) · §6.1(rewind)과
-[`context-engine.md`](../agent-execution/context-engine.md) 의 §3.1(값 타입) · §3.2(호출 지점의 알림) · §3.4(뷰 상태
-연산) · §6(`SessionHistoryTool`) · §7(ingest) · §8.2(복구 전략의 마커 인식) · §10(선택 키 · 관측)이 바뀐다.
+[`context-engine.md`](../agent-execution/context-engine.md) 의 §3(값 타입) · §4(호출 지점의 알림) · §6(뷰 상태
+연산) · §9(ingest) · §10(복구 전략의 마커 인식) · §11(선택 키 · 관측), [`rolling-context-engine.md`](../agent-execution/rolling-context-engine.md)
+의 §12(`SessionHistoryTool`)가 바뀐다.
 
 ---
 
@@ -541,7 +542,7 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 - **레코드 크기를 줄이려고 요약을 부르지 않는다**(§8.1)
 - **도구 설명에 전략을 적지 않는다**(§5)
 - **다른 구현의 코드를 옮겨 오지 않는다**
-- [`context-engine.md` §11](../agent-execution/context-engine.md#11-하지-말-것) 의 항목은 전부 그대로다
+- [`context-engine.md` §13](../agent-execution/context-engine.md#13-하지-말-것) 의 항목은 전부 그대로다
 
 ---
 
@@ -550,7 +551,7 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 착수 조건은 하나다 — **이 저장소의 과제에서 이득이 재어졌을 때.**
 
 `ContextEngineLiveRig` 에 engine 을 비교하는 과제는 생겼다 — 뷰 압력을 높인 상태에서 사실 보존(needle), 키-값 조회, 로그
-triage 를 `default` 와 `rolling` 으로 잰다([`context-engine.md` §13.11](../agent-execution/context-engine.md#1311-engine-을-비교하는-과제)).
+triage 를 `default` 와 `rolling` 으로 잰다([뷰 압력 리그](../testing/context-engine-pressure-rig.md)).
 **기준선을 한 번 쟀고, 아래 조건은 충족되지 않았다**(2026-10-07, 16K 창, `claude-haiku-4-5` 와 `gpt-4o-mini`, 시드
 하나 — 수치와 읽은 방법은 [`CP-1`](../../backlog/context-engine-pressure-rig-open-items.md)). 롤링이 약한 칸은 키-값 조회
 하나였고, 거기서 잃은 것은 요약이 지운 사실이 아니라 모델이 되찾지 않은 사실이었다. 그 리그에서 다음이 보이면 이 문서를

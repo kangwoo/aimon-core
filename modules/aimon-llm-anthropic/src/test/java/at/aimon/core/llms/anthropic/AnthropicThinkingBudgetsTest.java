@@ -89,9 +89,10 @@ class AnthropicThinkingBudgetsTest {
     @Test
     @DisplayName("the budget is clamped to maxTokens - 1, not to maxTokens")
     void budgetIsClampedBelowMaxTokens() {
-        // The default maxTokens of 4096 makes this the common case rather than an edge: HIGH clamps whenever the call's
-        // LlmModel sets no maxTokens — an agent definition with no model.maxTokens — and
-        // AnthropicConfig.Builder.maxTokens(int) was not used.
+        // The default maxTokens of 16000 makes this the common case rather than an edge: HIGH's budget is also 16000,
+        // so it clamps to 15999 whenever the call's LlmModel sets no maxTokens — an agent definition with no
+        // model.maxTokens — and AnthropicConfig.Builder.maxTokens(int) was not used. The rows below pin the clamp at
+        // smaller, explicitly configured maxTokens values.
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 4096)).hasValue(4095);
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 8000)).hasValue(7999);
         // So does an unset effort, whose middle rung is exactly 4096 -- the request #83 decided to leave as it is

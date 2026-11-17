@@ -1,11 +1,13 @@
 # File Artifact — 에이전트가 만든 파일을 사용자에게 건넨다
 
-> Status: **IMPLEMENTED** (코어 측). 다운로드 엔드포인트는 애플리케이션 계층의 몫이며 이 저장소에 없다.
-> 적용 대상: `aimon-core`, `aimon-browser-playwright`
+> Status: **IMPLEMENTED** (코어 측). 다운로드 엔드포인트는 애플리케이션 계층의 몫이며 이 저장소에 없다. 남은 것은
+> [§10](#10-남은-것)이 가리킨다.
+> 적용 대상: `aimon-core`. 브라우저 스크린샷 데코레이터는 별도 저장소(aimon-browser)에 있다.
 > 관련 규칙: [`.claude/rules/tool-development.md`](../../../.claude/rules/tool-development.md),
 > [`.claude/rules/immutability-pattern.md`](../../../.claude/rules/immutability-pattern.md)
 > 관련 문서: [`orca-executor.md`](orca-executor.md) (ReAct 루프와 `ExecutionScope`),
-> [`compaction.md`](compaction.md) (압축이 메시지를 다시 쓸 때의 취급)
+> [`compaction.md`](compaction.md) (압축이 메시지를 다시 쓸 때의 취급),
+> [`tool/execution-environment-files.md`](../tool/execution-environment-files.md) (비영속 환경의 보관 사본 규칙)
 
 ---
 
@@ -25,7 +27,8 @@
   (건넬 파일이 다수이고, 아닌 쪽을 명시하는 편이 짧다)
 - **코어는 참조만 관리한다** — 콘텐츠 저장·전송은 `VirtualFileSystem` 과 애플리케이션 계층의 일이다
 - **아티팩트 등록은 도구 결과를 바꾸지 않는다** — 쓰기는 이미 성공했다. 메타데이터 조회가 실패했다고
-  도구를 에러로 만들면 모델이 멀쩡히 저장된 파일을 다시 쓴다
+  도구를 에러로 만들면 모델이 멀쩡히 저장된 파일을 다시 쓴다. 삼키는 범위는 **등록**뿐이고, 위임 도구가 낸 실패는
+  그대로 전달한다
 - **백엔드에 무관하다** — 경로는 `VirtualFileSystem` 기준이므로 Local/GridFS/S3 어디서든 같은 값이다
 
 | 용어 | 뜻 |
@@ -56,26 +59,28 @@
 | 컴포넌트 | 패키지 | 역할 |
 |----------|--------|------|
 | `ArtifactMetadata` | `at.aimon.core.base` | 두 구현이 공유하는 메타데이터 계약 (path, fileName, size, mimeType, toolUseId, downloadToken) |
-| `FileArtifact` | `at.aimon.core.agent.artifact` | 수집기 쪽 구현. `toMessageArtifact()` 로 메시지용 값을 만든다 |
+| `FileArtifact` | `at.aimon.core.agent.artifact` | 수집기 쪽 구현. 공통 계약에 `getStorage()` 를 더한다. `toMessageArtifact()` 로 메시지용 값을 만든다 |
+| `ArtifactStorage` | `at.aimon.core.agent.artifact` | 등록된 경로가 가리키는 저장소 — `WORKSPACE`(작업 환경) / `CONTROL`(제어 저장소) |
 | `MessageArtifact` | `at.aimon.core.llm` | 메시지에 실리는 구현. 전사와 함께 직렬화된다 |
 | `ArtifactCollector` | `at.aimon.core.agent.artifact` | 실행 단위 수집기 (`CopyOnWriteArrayList`) |
 | `ArtifactFileNames` | `at.aimon.core.agent.artifact` | `/` 와 `\` 를 모두 처리하는 파일명 추출 |
 | `ArtifactAware{Write,Edit}Tool` | `at.aimon.core.tools.artifact` | `WriteTool`/`EditTool` 에 위임 + 등록 |
-| `ArtifactAwareBrowserTool` | `at.aimon.browser.playwright.artifact` | 스크린샷 저장 시 등록 |
-| `OrcaFileToolProvider` | `at.aimon.core.agent.impl.orca.tool` | `artifactEnabled` 로 어느 쪽을 등록할지 고른다 |
+| `ArtifactArchive` | `at.aimon.core.tools.artifact` | 등록의 단일 분기 — 비영속 환경이면 제어 저장소에 보관 사본을 만들고 그 경로를 등록한다(§7) |
+| `ArtifactPolicy` | `at.aimon.core.tools.artifact` | 아티팩트 사용 여부와 보관 사본의 파일당·실행당 상한 |
+| `ArtifactAwareBrowserTool` | `at.aimon.browser.playwright.artifact` | 스크린샷 저장 시 등록 — **별도 저장소**(aimon-browser) |
+| `OrcaFileToolProvider` | `at.aimon.core.agent.impl.orca.tool` | `ArtifactPolicy` 로 어느 쪽을 등록할지 고른다 |
 | `OrcaAgentExecutor` / `OrcaAgentExecutionResult` | `at.aimon.core.agent.impl.orca` | 수집기 생성·주입, 결과와 메시지에 부착 |
 
 값 타입이 둘인 것은 계층이 둘이기 때문이다. `FileArtifact` 는 실행 파이프라인(수집기 → 결과)에서 살고,
-`MessageArtifact` 는 LLM 메시지 안에서 살며 세션 전사와 함께 영속된다
-(`at.aimon.core.subagent.task.codec.JsonSessionSnapshotCodec` 가 `downloadToken` 까지 포함해 인코딩한다).
-`at.aimon.core.llm` 은 에이전트 실행 패키지에 의존하지 않으므로 메시지 쪽이 `FileArtifact` 를 직접 들 수
+`MessageArtifact` 는 LLM 메시지 안에서 살며 세션 전사와 함께 영속된다(세션 스냅샷 코덱이 `downloadToken` 까지 포함해
+인코딩한다). `at.aimon.core.llm` 은 에이전트 실행 패키지에 의존하지 않으므로 메시지 쪽이 `FileArtifact` 를 직접 들 수
 없고, 그래서 공통 계약만 `at.aimon.core.base` 에 두고 구현을 갈랐다.
 
 ---
 
 ## 3. 값 타입
 
-`FileArtifact` 와 `MessageArtifact` 는 같은 여섯 필드를 갖는다.
+공통 계약 `ArtifactMetadata` 는 여섯 필드다. `FileArtifact` 는 여기에 `getStorage()` 를 더한다.
 
 | 필드 | 타입 | 필수 | 설명 |
 |------|------|------|------|
@@ -85,6 +90,7 @@
 | `mimeType` | String | X | `Optional` 로 반환 |
 | `toolUseId` | String | X | 이 파일을 만든 `tool_use` 의 id — 어느 호출의 산출물인지 추적 |
 | `downloadToken` | String | X | 다운로드 저장소로 잇는 토큰. **코어는 발급하지 않는다**(§8) |
+| `storage` | `ArtifactStorage` | — | **`FileArtifact` 만.** `path` 가 작업 환경(`WORKSPACE`)과 제어 저장소(`CONTROL`) 중 어디를 가리키는가(§7). `MessageArtifact` 에는 없다 |
 
 둘 다 불변이며 빌더로 만든다. `MessageArtifact.withDownloadToken(...)` 만 예외적으로 새 인스턴스를
 돌려주는 변형자인데, 토큰을 붙이는 주체가 애플리케이션 계층이고 그때는 이미 값이 만들어져 있기 때문이다.
@@ -99,13 +105,11 @@
 
 **실행 단위**로 하나 만든다. 메인 에이전트는 `OrcaAgentExecutor` 가 `ExecutionScope` 를 만들 때,
 서브에이전트 포크는 `DefaultSubagentExecutor` 가 자기 실행을 시작할 때 각각 새로 만든다. `AgentRuntime`
-수준이 아닌 이유는 명확하다 — 런타임은 agent-scoped 이고 여러 세션이 공유하므로, 거기에 두면 다른 세션의
-파일이 내 결과에 섞인다.
+수준이 아닌 이유는 런타임이 agent-scoped 이고 여러 세션이 공유하기 때문이다([agent-runtime-scope](agent-runtime-scope.md)) —
+거기에 두면 다른 세션의 파일이 내 결과에 섞인다.
 
 도구는 `ToolContextKeys.ARTIFACT_COLLECTOR` 로 수집기를 꺼낸다. 없으면 그냥 등록하지 않는다 —
-아티팩트를 쓰지 않는 어셈블리에서도 도구가 그대로 동작해야 한다. (같은 자리를 가리키던 문자열 상수
-`ArtifactCollector.CONTEXT_KEY` 는 제거되었고, 그것이 들고 있던 와이어 이름 `"artifactCollector"` 는
-타입 있는 키 쪽에 그대로 남아 있다.)
+아티팩트를 쓰지 않는 어셈블리에서도 도구가 그대로 동작해야 한다.
 
 `CopyOnWriteArrayList` 를 쓰는 것은 같은 iteration 의 도구들이 병렬로 실행될 수 있기 때문이다
 (`ConcurrencyBehavior.CONCURRENT_SAFE`). 읽기 API 두 개는 그 병렬성을 전제로 설계되었다.
@@ -114,14 +118,14 @@
 - `sliceFrom(int fromIndex)` — "표시해 둔 지점 이후에 들어온 것". **스냅샷을 한 번만 뜨고** 그 안에서
   자른다. 크기를 읽고 다시 원소를 읽는 식이면 두 읽기 사이에 들어온 `add` 가 창을 밀어 버린다.
   범위를 벗어난 `fromIndex` 는 예외가 아니라 빈 리스트다 — 표시 이후 아무것도 안 들어왔다는 뜻일 뿐이고,
-  한 iteration 의 아티팩트 장부 때문에 턴을 죽일 이유는 없다
+  한 iteration 의 아티팩트 장부 때문에 실행을 죽일 이유는 없다
 
 ---
 
 ## 5. 도구 데코레이터
 
-기존 `WriteTool` / `EditTool` 은 **한 줄도 바뀌지 않았다**. 아티팩트 기능은 같은 이름(`"Write"`,
-`"Edit"`)으로 등록되는 별도 클래스가 위임으로 얹는다. 모델은 도구 이름만 보므로 프롬프트도 바뀌지 않는다.
+기존 `WriteTool` / `EditTool` 은 고치지 않는다. 아티팩트 기능은 같은 이름(`"Write"`, `"Edit"`)으로 등록되는 위임
+클래스가 얹는다. 모델은 도구 이름만 보므로 프롬프트도 바뀌지 않는다.
 
 실행 순서는 셋뿐이다.
 
@@ -133,18 +137,17 @@
    실패하면 대체값을 쓴다 — `Write` 는 `content` 의 UTF-8 바이트 길이, `Edit` 는 원본 크기를 알 방법이
    없으므로 `0`. 등록 경로 전체가 try/catch 로 감싸여 있고 실패는 경고 로그로 끝난다
 
-`toolUseId` 는 도구가 만드는 값이 아니라 `ToolContextKeys.CURRENT_TOOL_USE_ID_KEY` 로 주입받는 값이며,
-그것을 넣는 곳은 `at.aimon.core.toolinvocation.SingleToolInvoker` 다 — 도구 호출 1건마다 컨텍스트를
-파생시키는 지점이 거기 하나뿐이므로, 메인 에이전트와 서브에이전트가 같은 코드를 공유한다.
+`toolUseId` 는 도구가 만드는 값이 아니라 `ToolContextKeys.CURRENT_TOOL_USE_ID_KEY` 로 주입받는 값이다(§9).
 
 권한 판정은 위임 도구에게 넘긴다. `Write(/tmp/**)` 같은 패턴은 아티팩트 변형이 등록되어 있든 아니든 같은
 경로를 판정해야 하기 때문이다. `artifact` 플래그는 판정 주체(subject)에 들어가지 않는다 — 그 값은
 "어느 파일을 건드리는가"가 아니라 "쓴 파일을 사용자에게 내려 줄 것인가"를 정하고, 권한 패턴은 전자에
 대한 것이다.
 
-**브라우저 도구**는 두 가지가 다르다. 등록 조건이 `action=screenshot` 이고 `save_path` 가 주어졌을 때로
-좁고, 위임 전에 `artifact` 키를 **입력에서 제거**한다. 위임 대상이 `GenericTool` 이라 입력 `record` 에
-없는 키를 거부하는데, 그 키는 데코레이터가 혼자 선언한 것이기 때문이다.
+**브라우저 도구**(별도 저장소 aimon-browser)는 두 가지가 다르다. 등록 조건이 `action=screenshot` 이고 `save_path` 가
+주어졌을 때로 좁고, 위임 전에 `artifact` 키를 **입력에서 제거**한다. 위임 대상이 `GenericTool` 이라 입력 `record` 에
+없는 키를 거부하는데, 그 키는 데코레이터가 혼자 선언한 것이기 때문이다. 이 두 가지는 그 저장소의 사실이며 이 트리에서
+확인할 수 없다.
 
 ---
 
@@ -156,10 +159,10 @@
 까지 좁혀진다.
 
 **실행 결과** — `OrcaAgentExecutionResult` 는 `artifacts` 필드를 갖고 `AgentExecutionResult.getArtifacts()`
-(기본 구현은 빈 리스트)를 채운다. 부착은 **모든 종료 경로**에서 일어난다 — COMPLETED, TRUNCATED, ERROR,
-INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실패한 실행에도 아티팩트가 실린다는
-뜻이고, 이는 의도다. 파일은 이미 `VirtualFileSystem` 에 있고 사용자는 부분 결과라도 받을 수 있어야 한다.
-호출자는 `isSuccess() == false` 인데 `getArtifacts()` 가 비어 있지 않은 경우를 처리해야 한다.
+(기본 구현은 빈 리스트)를 채운다. 부착은 실행 결과를 만드는 **모든 종료 경로**(정상·잘림·예산·쿼터·오류·중단·보류·상한·
+커맨드)에서 일어난다. 실패한 실행에도 아티팩트가 실린다는 뜻이고, 이는 의도다. 파일은 이미 `VirtualFileSystem` 에 있고
+사용자는 부분 결과라도 받을 수 있어야 한다. 호출자는 `isSuccess() == false` 인데 `getArtifacts()` 가 비어 있지 않은
+경우를 처리해야 한다.
 
 **압축** — `MessageStripper` 는 assistant 메시지를 다시 만들 때 `tool_use` 가 붙어 있으면 `artifacts` 를
 그대로 옮긴다. 압축이 이미지·문서 블록을 걷어내도 파일 참조는 살아남는다.
@@ -171,29 +174,18 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 기본은 **꺼져 있다**. `new OrcaFileToolProvider()` 는 `ArtifactPolicy.disabled()` 이고 평범한
 `WriteTool`/`EditTool` 을 등록한다. 아티팩트가 필요한 어셈블리(Web API 등)가
 `new OrcaFileToolProvider(ArtifactPolicy.enabledWithDefaults())` 를 넘기거나, bootstrap 의
-`ToolSpec.artifactPolicy(...)`, 스타터의 `aimon.tools.artifact.enabled=true` 로 켠다. 아티팩트를 쓸 일이 없는 CLI 는
-`artifact` 파라미터가 스키마에 나타나지 않으므로 모델이 볼 일도 없다.
+`ToolSpec.artifactPolicy(...)`, 스타터의 `aimon.tools.artifact.enabled=true` 로 켠다. 보관 사본의 상한도
+`ArtifactPolicy` 가 갖는다(스타터 `aimon.tools.artifact.max-file-bytes` / `max-execution-bytes`). 아티팩트를 쓸 일이 없는
+CLI 는 `artifact` 파라미터가 스키마에 나타나지 않으므로 모델이 볼 일도 없다.
 
-**비영속 환경에서는 보관 사본을 등록한다**([`../tool/execution-environment-files.md`](../tool/execution-environment-files.md)
-§7). 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로 격리 브랜치) 그 경로는 실행
-뒤 사라질 수 있다. 그래서 `ArtifactArchive` 가 등록 전에 파일을 제어 저장소의
-`artifacts/{archiveKey}/{relativePath}` 로 복사하고 **그 경로**를 등록한다. `archiveKey` 는 `ArtifactCollector` 가 실행마다
-갖는 값이다 — 포크는 자기 `ExecutionId`, 턴은 게시하지 않는 `archive:…` 값. 디렉터리 이름으로 쓸 때는
-`ArtifactArchive.directoryName` 이 `[A-Za-z0-9._-]` 밖의 문자를 `_` 로 바꾼다(`:` 를 거부하는 로컬 저장소 때문).
-`relativePath` 는 실행 환경의 작업 디렉터리 기준 상대 경로다 — 파일 이름만 쓰면 `a/report.md` 와 `b/report.md` 가 한
-사본을 두고 덮어쓰기 때문이다. 작업 디렉터리 밖의 파일은 정규화한 전체 경로로 보관한다. `FileArtifact.getFileName()` 은
-여전히 파일 이름만이다. 같은 파일을 다시 등록하면(`Edit` 는 매번 그렇게 한다) 자기 사본을 덮어쓰고, 실행당 상한에는
-**한 번만**, 마지막 크기로 센다 — 등록 기록 자체는 반복마다 남는다(그 반복이 만든 것을 보고하는 창이기 때문이다).
-복사 자체가 실패해도, 크기를 읽지 못해 상한을 검사할 수 없어도, 등록 도중 다른 예외가 나도 등록하지 않고 결과에 한 줄을
-덧붙인다 — 조용히 빠지는 경로는 없다. 그러면 경로가 가리키는 저장소가 둘이
-되므로 `FileArtifact.getStorage()` 가 `WORKSPACE`(작업 환경 경로) 와 `CONTROL`(제어 저장소 경로) 을 구분하고,
-다운로드 계층은 그에 따라 연다. 복사 상한은 `ArtifactPolicy` 가 갖는다 — 파일당 50 MB, 실행당 총 100 MB(스타터
-`aimon.tools.artifact.max-file-bytes` / `max-execution-bytes`). 넘으면 쓰기는 성공한 채 등록하지 않고 도구 결과에
-그 사실을 한 줄 덧붙인다.
+**비영속 환경에서는 보관 사본을 등록한다.** 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로
+격리 브랜치) 그 경로는 실행 뒤 사라질 수 있으므로, `ArtifactArchive` 가 파일을 제어 저장소로 복사하고 그 경로를 등록한다.
+그러면 경로가 가리키는 저장소가 둘이 되므로 `FileArtifact.getStorage()` 가 `WORKSPACE` 와 `CONTROL` 을 구분한다. 복사
+위치·상한·등록하지 않는 경우의 규칙은 [`tool/execution-environment-files.md` §7](../tool/execution-environment-files.md#7-artifact)
+이 정본이고, 제어 저장소의 경계는 같은 문서 [§3](../tool/execution-environment-files.md#3-제어-저장소-경계)에 있다.
 
-도구가 생성자에서 파일 시스템을 받지 않으므로(실행 환경에서 꺼낸다), 워크트리 격리 브랜치에서도 같은
-도구 인스턴스가 브랜치의 파일 시스템을 본다. 격리를 위해 파일 도구를 재바인딩하던 `WorktreeToolEnvironmentFactory`
-와 그 락스텝 집합 `OrcaFileToolProvider.FILE_TOOL_NAMES` 는 없어졌다.
+도구는 생성자에서 파일 시스템을 받지 않고 실행 환경에서 꺼내므로, 워크트리 격리 브랜치에서도 같은 도구 인스턴스가
+브랜치의 파일 시스템을 본다.
 
 ---
 
@@ -213,38 +205,38 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 필드와 직렬화, `withDownloadToken` 변형자만 준비되어 있고 토큰을 만들고 검증하는 것은 애플리케이션의
 몫이다. 발급 방식은 그쪽 인프라를 따른다(단일 인스턴스면 인메모리 TTL 캐시, 멀티 인스턴스면 Redis 나 DB).
 
-메타데이터 자체는 이제 메시지에 실려 세션 전사와 함께 영속되므로, 다운로드 시점에 실행 결과를 붙들고
-있을 필요는 없다.
+아티팩트 메타데이터는 메시지에 실려 세션 전사와 함께 영속된다. 그러나 전사의 아티팩트(`MessageArtifact`)는 저장소 구분
+(`WORKSPACE` / `CONTROL`)을 싣지 않는다 — `FileArtifact.toMessageArtifact()` 는 공통 계약의 여섯 필드만 옮긴다. 그래서
+전사만 보고는 다운로드 계층이 어느 저장소를 열지 알 수 없고, 보관 사본(`CONTROL`)의 다운로드는 실행 결과의 `FileArtifact`
+를 쓴다. 전사에 저장소를 영속하는 일은 [§10](#10-남은-것)의 backlog 에 있다.
 
 ---
 
 ## 9. 설계 결정
 
-**기존 도구를 고치지 않고 위임한다.** 직접 수정하면 아티팩트가 필요 없는 환경에도 `artifact` 파라미터가
-노출되고, 상속은 불가능하다 — `AbstractTool` 생성자가 스키마를 받으므로 하위 클래스가 스키마를 넓힐 수
-없다. "모든 파일을 자동으로 아티팩트로" 는 임시 파일과 산출물을 구분할 방법을 없애므로 기각했다.
+| 쟁점 | 결정 | 기각한 대안과 이유 |
+|------|------|-------------------|
+| 기존 파일 도구에 기능을 얹는 방식 | 같은 이름으로 등록되는 위임 데코레이터 | 직접 수정 — 아티팩트가 필요 없는 환경에도 `artifact` 파라미터가 노출된다 / 상속 — `AbstractTool` 생성자가 스키마를 받으므로 하위 클래스가 스키마를 넓힐 수 없다 |
+| 무엇이 아티팩트인가 | 모델이 `artifact` 파라미터로 정한다 | 모든 파일을 자동으로 아티팩트로 — 임시 파일과 산출물을 구분할 방법이 없어진다 |
+| 수집기 전달 경로 | `ToolContext` 의 타입 있는 키 `ToolContextKeys.ARTIFACT_COLLECTOR` | `ToolResult` 에 필드 추가 — 모든 도구가 그 변경을 지고 가야 한다 |
+| 등록 실패 | 삼킨다(§1). 범위는 등록뿐이고 위임 도구의 실패는 그대로 전달한다 | 도구를 에러로 — 모델이 이미 저장된 파일을 다시 쓴다 |
+| `toolUseId` 주입 지점 | `at.aimon.core.toolinvocation.SingleToolInvoker` 하나 — 도구 호출 1건마다 컨텍스트를 파생시키는 유일한 지점이라 메인 에이전트와 서브에이전트가 같은 코드를 공유한다 | 도구 실행 관리자 안 — 관심사가 섞인다 / 실행기마다 — 서브에이전트 경로가 빠진다 |
+| 수집기의 수명 | 실행 단위(턴 · 포크) | `AgentRuntime` 수준 — agent-scoped 라 다른 세션의 파일이 섞인다 |
+| 권한 판정 | 위임 도구가 같은 경로로 판정, `artifact` 플래그는 subject 밖 | 플래그를 subject 에 포함 — 권한 패턴은 어느 파일을 건드리는가에 대한 것이다 |
 
-**수집기는 `ToolContext` 로 전달한다.** `ToolResult` 에 필드를 더하면 모든 도구가 그 변경을 지고 가야
-한다. 초기 설계는 문자열 키였고 지금은 타입 있는 `ToolContextKey` 로 옮겨 왔다 — 기존 키는 남겨 두되
-제거 예정으로 표시했다.
+### 9.1 하지 말 것
 
-**등록 실패는 삼킨다.** §1 의 세 번째 원칙 그대로다. 다만 삼키는 범위는 **등록**뿐이고, 위임 도구가
-낸 실패는 그대로 전달된다.
-
-**`toolUseId` 주입은 호출 지점 하나에서.** 도구 실행 관리자 안에서 주입하면 관심사가 섞이고,
-실행기마다 따로 주입하면 서브에이전트 경로가 빠진다. `SingleToolInvoker` 는 두 경로가 공유하는
-유일한 도구 호출 지점이다.
+- 등록 실패를 도구 결과의 에러로 바꾸지 않는다. 쓰기는 이미 성공했다.
+- `artifact` 플래그를 `getBoolean` 으로 그대로 읽어 예외가 `execute()` 를 벗어나게 하지 않는다.
+- 수집기를 `AgentRuntime` 이나 다른 실행보다 오래 사는 자리에 두지 않는다.
+- 수집기를 크기 읽기와 원소 읽기 두 번으로 잘라 내지 않는다. `sliceFrom` 은 스냅샷 하나에서 자른다.
+- 보관 사본(`CONTROL`)을 전사의 `MessageArtifact` 만 보고 내려받으려 하지 않는다. 저장소 구분은 `FileArtifact` 에만 있다.
 
 ---
 
 ## 10. 남은 것
 
-- **포크의 아티팩트가 결과에 드러나지 않는다.** `DefaultSubagentExecutor` 는 수집기를 만들어 컨텍스트에
-  넣지만(도구 패리티), 모인 것을 `SubagentExecutionResult` 로 올리지는 않는다
-- **`downloadToken` 발급자가 없다.** 코어에는 필드·직렬화·변형자만 있다 (§8)
-- **다른 도구로의 확장.** `Bash` 처럼 파일을 만들 수 있는 도구는 아직 같은 위임 패턴을 쓰지 않는다
-- **`tool_use` 없는 assistant 메시지의 아티팩트.** `MessageStripper` 는 `tool_use` 가 붙은 메시지의
-  `artifacts` 만 보존하므로, 커맨드 처리 경로가 만드는 메시지의 아티팩트는 압축 스트리핑에서 떨어진다
+남은 일은 [`agent-execution-open-items.md`](../../backlog/agent-execution-open-items.md) 가 정본이다.
 
 의도적으로 다루지 않는 것: 파일 TTL(정리는 스케줄링과 연동), 파일별 ACL, 청크/재개 다운로드
 (`VirtualFileSystem` 이 이미 스트리밍한다), `FileArtifact` 의 타임스탬프 필드
@@ -258,16 +250,23 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 |--------|------|
 | 공통 계약 | [`ArtifactMetadata.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/base/ArtifactMetadata.java) |
 | 수집기 쪽 값 | [`FileArtifact.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/FileArtifact.java) |
+| 저장소 구분 | [`ArtifactStorage.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/ArtifactStorage.java) |
 | 메시지 쪽 값 | [`MessageArtifact.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/MessageArtifact.java) |
+| 전사 직렬화 | [`JsonSessionSnapshotCodec.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/subagent/task/codec/JsonSessionSnapshotCodec.java) |
 | 수집 | [`ArtifactCollector.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/ArtifactCollector.java) |
 | 파일명 추출 | [`ArtifactFileNames.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/ArtifactFileNames.java) |
 | 쓰기 데코레이터 | [`ArtifactAwareWriteTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareWriteTool.java) |
 | 편집 데코레이터 | [`ArtifactAwareEditTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareEditTool.java) |
+| 등록 분기 · 보관 사본 | [`ArtifactArchive.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactArchive.java) |
+| 사용 여부 · 상한 | [`ArtifactPolicy.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactPolicy.java) |
 | 스크린샷 데코레이터 | [`ArtifactAwareBrowserTool.java`](https://github.com/kangwoo/aimon-browser/blob/main/modules/aimon-browser-playwright/src/main/java/at/aimon/browser/playwright/artifact/ArtifactAwareBrowserTool.java) — 별도 저장소 |
 | 등록 스위치 | [`OrcaFileToolProvider.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/tool/OrcaFileToolProvider.java) |
 | 컨텍스트 키 | [`ToolContextKeys.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/ToolContextKeys.java) |
+| `toolUseId` 주입 | [`SingleToolInvoker.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/toolinvocation/SingleToolInvoker.java) |
+| 압축 시 보존 | [`MessageStripper.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/compact/MessageStripper.java) |
 | 결과 부착 | [`OrcaAgentExecutionResult.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutionResult.java) |
 | 실행 흐름 | [`OrcaAgentExecutor.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutor.java) |
 
 관련 문서: [`tool-development-guide.md`](../../features/tool/tool-development-guide.md),
-[`solid-principles.md`](../../project/solid-principles.md)
+[`solid-principles.md`](../../project/solid-principles.md),
+[`tool/execution-environment-files.md`](../tool/execution-environment-files.md)

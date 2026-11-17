@@ -139,7 +139,7 @@ default List<ToolUseResult> dispatch(List<ToolUse> toolUses,
 
 기본 구현이 전부 opt-out 이므로 풀 없는 디스패처는 영향을 받지 않는다. 안전성 판정을 새로 만들지 않고 §2 의 게이트를 도구별로 재사용한다. 배치 단위의 prefix-safety 와 결과 재조립은 호출자(`StreamingToolScheduler`)가 소유한다.
 
-스케줄러와 켜는 조건의 설계는 [Orca 실행기](../agent-execution/orca-executor.md) 의 "스트리밍 툴 중첩" 절이 정본이다.
+스케줄러와 켜는 조건의 설계는 [Orca 실행기](../agent-execution/orca-executor.md#9-스트리밍-도구-중첩) 의 "스트리밍 도구 중첩" 절이 정본이다.
 
 ---
 

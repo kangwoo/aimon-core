@@ -1054,7 +1054,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .principal(launchContext.getPrincipal().orElse(null))
                     .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
                     .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null))
-                    // The spawning turn's quota guard, so the fork is charged to the turn's keys (usage-quota §4.3).
+                    // The spawning turn's quota guard, so the fork is charged to the turn's keys (usage-quota › 포크 전파).
                     .quotaGuard(launchContext.getQuotaGuard()).forkDepth(launchContext.getForkDepth())
                     // A fork-mode skill's body, rendered again in the fork's environment when that is not the
                     // spawner's (EE-81).

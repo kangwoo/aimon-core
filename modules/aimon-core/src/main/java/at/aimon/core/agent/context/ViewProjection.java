@@ -32,8 +32,8 @@ import at.aimon.core.llm.ToolUseResult;
  * <p>
  * <b>Deterministic.</b> The inputs are the entries and the view state and nothing else — no clock, no randomness, no
  * node-local state — so two nodes projecting the same record send the same view, and the view only changes when the
- * log or the view state does (context-engine §3.3). Entries shown as they are keep their {@link Message} instance,
- * which is what lets a recovery strategy's answer be mapped back onto seqs (context-engine §8.2).
+ * log or the view state does (context-engine › 뷰의 결정성). Entries shown as they are keep their {@link Message} instance,
+ * which is what lets a recovery strategy's answer be mapped back onto seqs (context-engine › 기존 공개 SPI 의 처분).
  *
  * <p>
  * Immutable.
@@ -148,7 +148,7 @@ public final class ViewProjection {
      * <p>
      * The unread part is what the next call asks the model to respond to, so a context engine never elides it,
      * absorbs it into a summary span, or drops it: a tool result elided before the model has read it would be asked
-     * for again, and could be elided again (context-engine §13.10).
+     * for again, and could be elided again (context-engine › 미응답 부분).
      *
      * @return the first unread position, or {@link #size()} when the view is empty or ends with an assistant message
      */

@@ -41,7 +41,7 @@ import at.aimon.core.llm.LlmModel;
  *             state operations on an append-only log. It is accepted only in the version-1 write mode; a node that
  *             writes version 2 refuses one other than {@link DefaultCompactionGuard} (whose rules the default context
  *             engine reuses) or {@link NoOpCompactionGuard} when it is built. To change the decision rules, implement
- *             {@link at.aimon.core.agent.context.ContextEngine} (context-engine §8.2).
+ *             {@link at.aimon.core.agent.context.ContextEngine} (context-engine › 기존 공개 SPI 의 처분).
  */
 @Deprecated
 public interface CompactionGuard {

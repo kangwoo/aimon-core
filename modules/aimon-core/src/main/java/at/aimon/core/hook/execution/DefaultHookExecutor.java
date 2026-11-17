@@ -440,7 +440,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * asked, and the consequence is a security one: on a thread whose interrupt flag is already set,
      * {@link Future#get(long, TimeUnit)} throws without waiting, so every hook in the chain reports SUCCESS without
      * having run. A PreTool hook that was about to return BLOCKED is silently downgraded to allow, which makes an
-     * interrupt a way around a permission block (see {@code docs/design/agent-execution/interrupt.md} §8).
+     * interrupt a way around a permission block (see {@code docs/design/agent-execution/interrupt.md} › 스레드 인터럽트 플래그
+     * 위생).
      *
      * <p>
      * No verdict means no permission to proceed, so an interrupt closes the gate instead — the same shape as
@@ -455,8 +456,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      *
      * <p>
      * This is defence in depth, not the primary defence. The primary one is interrupt-flag hygiene in the ReAct loop
-     * ({@code CancellationSignals}, interrupt design §8.1–§8.3), which keeps a stale flag from reaching this executor
-     * at all; this method covers the paths hygiene has not swept.
+     * ({@code CancellationSignals}, interrupt design › 소비, 승격, 스윕과 복원), which keeps a stale flag from reaching this
+     * executor at all; this method covers the paths hygiene has not swept.
      *
      * <p>
      * <b>The one exemption</b> is a hook that {@linkplain ExecutionHook#ignoresInterrupt() asks to be waited for}:

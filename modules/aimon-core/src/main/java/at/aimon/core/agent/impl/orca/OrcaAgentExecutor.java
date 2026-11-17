@@ -310,11 +310,12 @@ public class OrcaAgentExecutor
 
     /**
      * {@link CompactBoundary#getStrategyName() strategy name} reported when a compaction step runs before an
-     * iteration. The conversation-compaction subsystem performs L3 summarisation (an LLM-generated summary replaces a
-     * span of history — see {@code CompactionEngine}), so the strategy is fixed here rather than derived from
-     * {@code CompactionMetadata}, which carries only the <em>trigger</em> (AUTO/MANUAL) and token deltas, not a
-     * strategy label. The trigger dimension is already observable via the {@code BUDGET_COMPACT} {@link LoopTransition}
-     * tag on the iteration span.
+     * iteration. It is a fixed compaction-boundary label, not a statement of what the step did: the same value is
+     * emitted for every {@code COMPACT} decision the context engine returns, including a rolling engine's
+     * {@code PRUNE} that elides tool results without summarizing anything. What the step actually did is the
+     * {@link at.aimon.core.agent.compact.CompactionKind} in {@code CompactionMetadata.kind} ({@code PRUNE},
+     * {@code ROLLING}, {@code FULL} or {@code FALLBACK}). The budget-forced dimension is observable via the
+     * {@code BUDGET_COMPACT} {@link LoopTransition} tag on the iteration span.
      */
     public static final String COMPACTION_STRATEGY_NAME = "summarization";
 
@@ -1774,10 +1775,11 @@ public class OrcaAgentExecutor
                 if (quotaViolation.isPresent()) {
                     return handleQuotaStop(scope, iterationCount, accumulatedTokens, quotaViolation.get());
                 }
-                // A soft budget hint asks us to proactively compact before spending more tokens. Route this
-                // iteration's compaction gate through forceCompact (lower effective trigger) rather than the normal
-                // auto-compact band. Self-limiting: once memory has been compacted small, forceCompact returns NONE
-                // until the context regrows.
+                // A soft budget hint asks us to proactively compact before spending more tokens. This iteration's
+                // ContextRequest is marked budget-forced and goes through ContextEngine.prepare like any other
+                // iteration; the engine lowers its effective trigger to the warning band instead of the normal
+                // auto-compact band. Self-limiting: once the context has been compacted below the warning band, the
+                // engine does not compact again until the context regrows.
                 final boolean budgetForcedCompaction = decision == BudgetDecision.SHOULD_COMPACT;
                 if (budgetForcedCompaction) {
                     log.info("Budget hint: SHOULD_COMPACT — forcing proactive compaction before iteration {}",
@@ -1795,7 +1797,7 @@ public class OrcaAgentExecutor
                 // Snapshot the message count BEFORE the engine runs — in place, the engine rewrites memory, so
                 // this is the only point where the pre-compaction size is observable for the CompactBoundary
                 // event below. An engine that reports the view's own sizes wins: with an append-only log the
-                // log does not shrink, only the view does (context-engine §10).
+                // log does not shrink, only the view does (context-engine › 호출 지점).
                 final int messagesBeforeCompaction = scope.transcriptBuffer.size();
                 final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction, iterationCount);
                 final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
@@ -1835,7 +1837,7 @@ public class OrcaAgentExecutor
                         log.warn("Compaction guard warning at iteration {}: {}", iterationCount,
                                 compactionDecision.getReason());
                         // A rolling engine that could not bring the view down says so as a FALLBACK record: it
-                        // belongs with the compactions in the result, not only in the log (context-engine §5.6).
+                        // belongs with the compactions in the result, not only in the log (context-engine › 선택과 관측).
                         compactionDecision.getCompactionMetadata().filter(m -> m.getKind() == CompactionKind.FALLBACK)
                                 .ifPresent(scope.compactionEvents::add);
                         break;
@@ -2583,8 +2585,8 @@ public class OrcaAgentExecutor
      * unchanged.
      *
      * <p>
-     * Interrupt gate (interrupt design §7): the callback is gated on the turn's cancellation state, so a trip that
-     * lands <em>mid-batch</em> stops the batch instead of only the next iteration. Without this, a tool that
+     * Interrupt gate (interrupt design › 루프 게이트): the callback is gated on the turn's cancellation state, so a trip
+     * that lands <em>mid-batch</em> stops the batch instead of only the next iteration. Without this, a tool that
      * cooperatively tripped the signal (or an external Ctrl+C landing between two tools) still let every remaining
      * {@code tool_use} of the same LLM response execute — a user who cancelled at tool 1 of 5 watched the other four
      * run to completion.
@@ -3134,7 +3136,7 @@ public class OrcaAgentExecutor
      * <p>
      * Fail-safe like the tracing setup in {@code execute()}, and for the same reason: it runs before the try/finally
      * that saves the transcript, so an application resolver or policy that throws must not lose the turn. Only the
-     * ledger's failures are subject to {@code failClosed} (usage-quota §5.1); a broken resolver leaves the turn
+     * ledger's failures are subject to {@code failClosed} (usage-quota › 장부 장애); a broken resolver leaves the turn
      * unmetered, loudly.
      */
     private QuotaGuard createQuotaGuard(OrcaAgentRuntime agentRuntime, OrcaAgentExecutionRequest executionRequest) {

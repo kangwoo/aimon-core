@@ -1,7 +1,7 @@
 package at.aimon.core.agent.compact;
 
 /**
- * What a compaction did to the view, for observability (context-engine §10).
+ * What a compaction did to the view, for observability (context-engine › 선택과 관측).
  *
  * <p>
  * A rolling engine compacts often and in small steps, so an operator tuning it needs to tell its moves apart;
@@ -9,7 +9,7 @@ package at.aimon.core.agent.compact;
  */
 public enum CompactionKind {
 
-    /** Tool result bodies were elided from the view; nothing was summarized (context-engine §5.5). */
+    /** Tool result bodies were elided from the view; nothing was summarized (rolling-context-engine › L0 prune). */
     PRUNE,
 
     /** A rolling span was widened: the middle of the view was summarized, head and tail kept verbatim. */
@@ -23,7 +23,8 @@ public enum CompactionKind {
 
     /**
      * The engine declined to compact because even its best cut would not bring the view under the threshold, and
-     * warned instead (context-engine §5.6). A metadata of this kind describes a decision, not a summary.
+     * warned instead (rolling-context-engine › 언제 — 후퇴와 FALLBACK). A metadata of this kind describes a decision, not a
+     * summary.
      */
     FALLBACK
 }

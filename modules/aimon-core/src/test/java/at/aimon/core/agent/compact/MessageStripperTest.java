@@ -21,7 +21,8 @@ import at.aimon.core.llm.content.TextContentBlock;
 /**
  * Unit tests for {@link MessageStripper}: covers (a) existing image/document placeholder substitution behavior
  * (no-op redactor preserves backward compatibility) and (b) optional redaction of TextContentBlock content,
- * assistant text, and tool result content via a {@link SensitivePatternRedactor} (design §9.3 mitigation).
+ * assistant text, and tool result content via a {@link SensitivePatternRedactor} (compaction design › opt-in 부품
+ * mitigation).
  */
 class MessageStripperTest {
 

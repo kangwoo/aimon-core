@@ -202,7 +202,7 @@ class DefaultContextEngineViewModeTest {
 
     /**
      * What the model has not answered yet — the tool results after its last call, or the input after its last reply —
-     * is left out of the summary span (context-engine §13.10, SL-6).
+     * is left out of the summary span (context-engine › 미응답 부분, SL-6).
      */
     @Nested
     class Unanswered {

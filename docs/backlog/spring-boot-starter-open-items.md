@@ -2490,6 +2490,13 @@ AgentSession session = sessionFactory.open(conversationId, agentName, options);
 > 가이드도 개요 문서도 전부 "설계 배경" 이다. 이관하는 사람이 실제로 도착하는 자리(임베딩 가이드
 > 부록 B, 옛 이름 매핑표)에 §5 로 가는 줄을 넣었다.
 
+> **정정** *(2026-11-17)*: 위 문단이 "이 저장소에 있다" 고 한 이관 절차서는 이제 `agent-runtime-scope.md` 의 현재 판에 없다.
+> `docs/design/agent-execution/` 재구성이 그 문서를 현재 설계만 적는 문서로 다시 쓰면서 Before/After 절차를 걷어 냈고,
+> 지금의 §5 는 같은 번호지만 런타임의 생성 · 등록 규칙(멱등 생성, 선언된 런타임과 테넌트 런타임)만 갖는다. 절차가 마지막으로
+> 남아 있는 판은 리비전 `05b4e424` 이며 거기서는 §4 "마이그레이션"(4.1 Before · 4.2 · 4.3 After)이다 — 위 문단의 §5 · 5.2 · 5.3
+> 은 이 저장소의 첫 커밋(`eec9ccda`)보다 앞선 번호이고, 그 커밋부터 이미 §4 · 4.2 · 4.3 이었다. 읽으려면 `git show 05b4e424:docs/design/agent-execution/agent-runtime-scope.md`. 옛 이름의 매핑은
+> [`docs/migration/rename-maps.md`](../migration/rename-maps.md) 가 그대로 갖는다. 문단의 문장은 규칙 둘대로 고치지 않고 둔다.
+
 **남는 것.** 바뀐 것은 상태가 아니라 **기다리는 동안 여기서 할 일이 0이 아니었다**는 사실이고, 그 일은
 결정이 아니라 문서였다. 트리거가 당겨 주지 않는다는 §5 서두의 말은 여전히 맞지만, 그것은 *결정*에
 대해서만 맞다.

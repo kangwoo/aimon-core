@@ -241,9 +241,9 @@ public class OrcaAgentRuntimeFactory {
     // and closes it. Off by default — no hosting pool is created and the tool's background mode reports unavailable.
     // Note: enabling this for many agents/discriminators multiplies the per-context hosting + fan-out pools.
     private boolean workflowRunnerEnabled;
-    // Context-engine design §10: the engine an agent gets when its AGENT.md does not name one, and the session log
+    // Context-engine design › 선택과 관측: the engine an agent gets when its AGENT.md does not name one, and the session log
     // format this node writes. The two meet at runtime creation: rolling keeps its summary span in the view state,
-    // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log §7.3).
+    // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log › 형식).
     private ContextEngineKind defaultContextEngine = ContextEngineKind.DEFAULT;
     private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V2;
     // Tunes the rolling engine's thresholds before the factory wires its collaborators in; null keeps the defaults.
@@ -1065,7 +1065,8 @@ public class OrcaAgentRuntimeFactory {
             provider.registerTools(toolRegistry, context);
         }
         // Rolling elides tool results and summarizes ranges the model saw; SessionHistory is how it reads them back
-        // (context-engine §6). The default engine has no placeholder to follow, so it does not get the tool.
+        // (rolling-context-engine › SessionHistoryTool). The default engine has no placeholder to follow, so it does
+        // not get the tool.
         if (engineKind == ContextEngineKind.ROLLING) {
             toolRegistry.register(new SessionHistoryTool());
         }
@@ -1129,7 +1130,7 @@ public class OrcaAgentRuntimeFactory {
 
     /**
      * Builds the agent's context engine. Rolling on a version-1 node is refused here, which is at startup for a
-     * declared agent: the engine would have nowhere to keep its summary span (session-log §7.3).
+     * declared agent: the engine would have nowhere to keep its summary span (session-log › 형식).
      */
     @SuppressWarnings("deprecation") // the default engine wraps the version-1 guard on purpose
     private ContextEngine buildContextEngine(AgentRuntimeId agentRuntimeId, ContextEngineKind kind,

@@ -23,7 +23,7 @@ import at.aimon.core.llm.token.HeuristicTokenEstimator;
 
 /**
  * The CLI's session-end ingest reads the whole log — sealed ranges included — through the reader, and keeps only the
- * conversation (context-engine §7, L5).
+ * conversation (context-engine › 메모리와의 관계, L5).
  */
 class AgentSetupFactorySessionEndReadTest {
 

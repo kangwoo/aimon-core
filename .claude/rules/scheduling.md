@@ -43,13 +43,14 @@ paths:
 - `AgentRuntime` lifetime is bound to `(Agent, discriminator)`, not to a session.
 - `AgentRuntimeId` is derived deterministically: `agent:<name>` or `agent:<name>:<discriminator>`. Use `AgentRuntimeId.from(Agent)` / `from(Agent, String)` factories. `generate()` does NOT exist.
 - `LiveSession.close()` must NOT call `AgentRuntime.close()` — the runtime is shared across the agent's sessions.
-- `AgentRuntime.close()` is invoked only at application shutdown or explicit agent removal.
+- `AgentRuntime.close()` is invoked only by the runtime's owner — the stack teardown for declared runtimes, `AgentRuntimeResolver`'s idle reclaim for tenant runtimes — never by a session or by the scheduler.
 - `ScheduledTask.boundRuntimeId` references the agent-scoped runtime id, so cron re-fires after the originating session ends will still resolve the runtime from `AgentRuntimeRegistry`.
 
 ## Ownership Rules
 - `AgentRuntimeRegistry` is created **outside** `SchedulingEngine` and injected via builder
 - `SchedulingEngine` does NOT own the registry — it only references it
-- Agent-runtime registration happens in bootstrap (CLI: `AgentSetupFactory`; Web: `LiveSessionOpener`), via `OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)`. Do NOT couple registration to per-open paths.
+- Runtimes of the agents declared in the stack spec (with or without a discriminator) are built by `AimonStackBuilder`, registered by `AimonStack.startRuntimes()`, and closed by the stack teardown (`TeardownPhase.AGENT_RUNTIMES`). The CLI's `AgentSetupFactory` assembles that stack.
+- Undeclared (tenant, discriminator-bearing) ids are created by `AgentRuntimeResolver` (aimon-bootstrap) on first use and reclaimed once nothing holds a lease and the idle TTL has passed. `LiveSessionOpener` implementations ask the resolver; they never create a runtime. Do NOT couple registration to per-open paths.
 
 ## Multi-Instance Design
 - Scheduling implementations must support clustered/distributed environments

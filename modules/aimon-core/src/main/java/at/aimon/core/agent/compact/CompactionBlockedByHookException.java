@@ -16,8 +16,8 @@ import at.aimon.core.agent.exception.AgentException;
  * <li>For {@link CompactionTrigger#AUTO} triggers, the engine surfaces this as {@code CompactionResult.failure}; the
  * {@link CompactionGuard} treats it as a hook-block (does NOT increment the circuit-breaker failure counter, since
  * blocks express intent rather than transient failure).
- * <li>For {@link CompactionTrigger#MANUAL} triggers, the engine downgrades hook blocks to warnings (per design
- * §6) and continues, so this exception is not produced.
+ * <li>For {@link CompactionTrigger#MANUAL} triggers, the engine downgrades hook blocks to warnings (per compaction
+ * design › 훅) and continues, so this exception is not produced.
  * </ul>
  *
  * <p>

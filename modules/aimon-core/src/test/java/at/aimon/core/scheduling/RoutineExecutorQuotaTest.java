@@ -261,7 +261,7 @@ class RoutineExecutorQuotaTest {
 
     @Test
     void aForkThatCrossesTheLimitOnTheLastStepLeavesTheRunSuccessful() {
-        // Soft-limit overshoot (usage-quota §5): there is no later boundary to refuse at, as for a turn whose last
+        // Soft-limit overshoot (usage-quota › 초과 상한): there is no later boundary to refuse at, as for a turn whose last
         // iteration crossed the limit.
         executor.withQuotaGuardFactory(factory(ledger));
         step.behaviour = (input, context) -> {

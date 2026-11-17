@@ -158,7 +158,7 @@ OPENAI_KEY=... AIMON_CONTEXT_PRESSURE=0.3,2 \
 
 한 번의 실행은 과제당 질문 여섯에서 여덟 개짜리 표본 하나이므로, 한두 문제의 차이는 잡음입니다. 과제가
 무엇인지, 비교가 왜 16K 창을 쓰는지, 무엇을 재지 않는지는
-[`docs/design/agent-execution/context-engine.md` §13.11](docs/design/agent-execution/context-engine.md#1311-engine-을-비교하는-과제) 에 있습니다.
+[`docs/design/testing/context-engine-pressure-rig.md`](docs/design/testing/context-engine-pressure-rig.md) 에 있습니다.
 
 **돌릴 때마다 돈이 듭니다** — 키 주인의 계정에 청구되는 실제 호출입니다. 키를 커밋하지 말고, 이슈나
 풀 리퀘스트에 붙이는 실패 출력에서는 키를 가리세요.

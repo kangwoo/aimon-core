@@ -11,20 +11,22 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import at.aimon.core.llm.Message;
 
 /**
- * Builds the post-compaction marker messages per design §4.5.
+ * Builds the post-compaction marker messages per compaction design › 경계 마커.
  *
  * <p>
- * For a given session UUID, two {@code USER}-role messages are produced:
+ * For a given marker UUID, two {@code USER}-role messages are produced:
  *
  * <ol>
  * <li><b>Boundary marker</b> — wraps a JSON metadata payload between {@code BOUNDARY_OPEN} and {@code BOUNDARY_CLOSE}
- * tokens. Re-compaction can locate prior boundaries by matching on {@code sessionUuid}.
+ * tokens. Re-compaction can locate prior boundaries by matching on the marker UUID.
  * <li><b>Summary body</b> — wraps the LLM-generated summary text between {@code SUMMARY_OPEN} and {@code SUMMARY_CLOSE}
  * tokens, followed by a "Continue from here." prompt that anchors the next assistant turn.
  * </ol>
  *
  * <p>
- * Marker tokens use the per-session UUID suffix to prevent collision with user input or tool output. Stateless and
+ * Marker tokens use a UUID suffix to prevent collision with user input or tool output. The UUID is generated fresh
+ * for each compaction ({@code UUID.randomUUID()} at the call site), not once per session: the {@code sessionUuid}
+ * parameter name and metadata key are historical and do not mean the value is session-scoped. Stateless and
  * thread-safe.
  */
 public final class CompactBoundary {
@@ -42,26 +44,26 @@ public final class CompactBoundary {
     }
 
     /**
-     * Returns the boundary opening token for the given session UUID, e.g. {@code [[COMPACT_BOUNDARY:abc-123]]}.
+     * Returns the boundary opening token for the given marker UUID, e.g. {@code [[COMPACT_BOUNDARY:abc-123]]}.
      */
     public static String boundaryOpen(String sessionUuid) {
         Objects.requireNonNull(sessionUuid, "sessionUuid cannot be null");
         return BOUNDARY_OPEN_PREFIX + sessionUuid + MARKER_SUFFIX;
     }
 
-    /** Returns the boundary closing token for the given session UUID, e.g. {@code [[/COMPACT_BOUNDARY:abc-123]]}. */
+    /** Returns the boundary closing token for the given marker UUID, e.g. {@code [[/COMPACT_BOUNDARY:abc-123]]}. */
     public static String boundaryClose(String sessionUuid) {
         Objects.requireNonNull(sessionUuid, "sessionUuid cannot be null");
         return BOUNDARY_CLOSE_PREFIX + sessionUuid + MARKER_SUFFIX;
     }
 
-    /** Returns the summary opening token for the given session UUID, e.g. {@code [[COMPACT_SUMMARY:abc-123]]}. */
+    /** Returns the summary opening token for the given marker UUID, e.g. {@code [[COMPACT_SUMMARY:abc-123]]}. */
     public static String summaryOpen(String sessionUuid) {
         Objects.requireNonNull(sessionUuid, "sessionUuid cannot be null");
         return SUMMARY_OPEN_PREFIX + sessionUuid + MARKER_SUFFIX;
     }
 
-    /** Returns the summary closing token for the given session UUID, e.g. {@code [[/COMPACT_SUMMARY:abc-123]]}. */
+    /** Returns the summary closing token for the given marker UUID, e.g. {@code [[/COMPACT_SUMMARY:abc-123]]}. */
     public static String summaryClose(String sessionUuid) {
         Objects.requireNonNull(sessionUuid, "sessionUuid cannot be null");
         return SUMMARY_CLOSE_PREFIX + sessionUuid + MARKER_SUFFIX;
@@ -71,7 +73,7 @@ public final class CompactBoundary {
      * Builds the boundary marker message containing the JSON-encoded metadata payload.
      *
      * @param sessionUuid
-     *            session UUID used to suffix the marker tokens (must not be null)
+     *            per-compaction marker UUID used to suffix the marker tokens (must not be null)
      * @param trigger
      *            the compaction trigger (must not be null)
      * @param preTokenCount

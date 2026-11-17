@@ -372,7 +372,7 @@ void drainsOnlyMatchingContext() {
 ## 디자인 원칙
 
 - **Storage와 Facade의 분리**: 분산 백엔드가 들어올 때 Repository 계층만 바뀌고, 나머지 코드는 영향을 받지 않습니다. ([multi-instance design rule](../../../.claude/rules/multi-instance-design.md))
-- **Interceptor vs Listener**: `AgentExecutionInterceptor`는 실행 체인을 **제어**하는 동기 계층이고, `MessageQueueListener`는 큐 이벤트를 **관측**하는 비동기 훅입니다. 두 계층은 상호 배타적이지 않습니다 — 턴 경계와 무관한 누적 지표(예: 총 enqueue 수)는 `LoggingMessageQueueListener`로 수집하고, 턴 경계와 맞물리는 지표(예: 실행 전후 큐 깊이, 턴당 enqueue/drain, 실행 시간)는 `QueueMetricsInterceptor`가 실행 경계에서 짧게 뜨는 내부 리스너로 수집합니다. 역할을 섞지 마세요 (`docs/design/agent-execution/interceptor.md` §9.2 참고).
+- **Interceptor vs Listener**: `AgentExecutionInterceptor`는 실행 체인을 **제어**하는 동기 계층이고, `MessageQueueListener`는 큐 이벤트를 **관측**하는 비동기 훅입니다. 두 계층은 상호 배타적이지 않습니다 — 턴 경계와 무관한 누적 지표(예: 총 enqueue 수)는 `LoggingMessageQueueListener`로 수집하고, 턴 경계와 맞물리는 지표(예: 실행 전후 큐 깊이, 턴당 enqueue/drain, 실행 시간)는 `QueueMetricsInterceptor`가 실행 경계에서 짧게 뜨는 내부 리스너로 수집합니다. 역할을 섞지 마세요 (`docs/design/agent-execution/interceptor.md` §7 참고).
 - **Immutable I/O**: `QueuedInput`은 불변 + 빌더, `metadata`는 defensive copy. 큐에 넣은 뒤 외부에서 변조해도 내부 상태는 안전합니다.
 - **Listener 격리**: 리스너 예외는 매니저가 잡고 WARN 로그만 찍습니다. 메트릭 구현의 버그가 ReAct 루프를 멈추게 하지 않습니다.
 
@@ -380,7 +380,7 @@ void drainsOnlyMatchingContext() {
 
 ## 관련 문서
 
-- [interceptor.md](../../design/agent-execution/interceptor.md) §9.2 StreamingEvents와의 관계
+- [interceptor.md](../../design/agent-execution/interceptor.md#7-스트리밍-이벤트와의-관계) §7 스트리밍 이벤트와의 관계
 - [system-reminder-convention.md](system-reminder-convention.md) — 주입된 메시지의 `<system-reminder>` 래핑 규칙
 - [solid-principles.md](../../project/solid-principles.md)
 - `at.aimon.core.agent.queue.package-info` — 패키지 차원의 Javadoc 요약

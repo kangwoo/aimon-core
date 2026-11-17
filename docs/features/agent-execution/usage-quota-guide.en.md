@@ -1,13 +1,13 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: e8df5f74
+source_commit: daaf2ea2
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
 
-> NOTE: What is in place today is phase 1 of the design — an in-memory ledger that counts within one node, and the
-> `AimonStackSpec` wiring. CLI display and Spring Boot properties (phase 2) and a ledger shared across nodes (phase 3)
-> do not exist yet.
+> NOTE: What is in place today is an in-memory ledger that counts within one node, and the `AimonStackSpec` wiring.
+> CLI display and Spring Boot properties ([UQ-5](../../backlog/usage-quota-open-items.md)) and a ledger shared across nodes ([UQ-6](../../backlog/usage-quota-open-items.md)) do not exist
+> yet.
 
 This feature puts a **cumulative limit** on the LLM tokens and cost an agent uses, and stops execution when the limit
 is reached. A limit can be set per session, per user (`Principal`) or per tenant, and counted over all time or per
@@ -145,7 +145,9 @@ inherit and the fork runs without a quota. There is one such path today: applica
 ## 6. When a limit is reached
 
 The check runs **before every LLM call**. When a limit is reached, the execution makes no further LLM call and ends
-with `CompletionReason.QUOTA_EXCEEDED`. It is classed as a normal, limit-driven end, not an error.
+with `CompletionReason.QUOTA_EXCEEDED`. This is a limit-driven end, in the same family as a budget stop
+(`COST_BUDGET_EXCEEDED` and the like). It is not a failed execution (`ERROR`), but it is not a success either
+(`isSuccessful()` is false). The CLI currently draws this family as an error result ([UQ-5](../../backlog/usage-quota-open-items.md)).
 
 ```java
 SubmitOptions options = SubmitOptions.builder().principal(Principal.user("u-123", "alice")).build();
@@ -230,10 +232,10 @@ session moves to another node.
 
 `InMemoryUsageLedger` drops past `DAILY` keys once the retention (seven days by default) has passed, but **never drops
 `TOTAL` keys.** With a session `TOTAL` limit, every session leaves a key behind, so memory keeps growing on a
-long-running node. Cleaning up keys when a session is deleted is phase 3.
+long-running node. Cleaning up keys when a session is deleted does not exist yet ([UQ-6](../../backlog/usage-quota-open-items.md)).
 
 To share limits across nodes you need a `UsageLedger` that records to a shared store. Redis and Postgres
-implementations are not provided yet (phase 3). Until then you can implement `UsageLedger` yourself — there are two
+implementations are not provided yet ([UQ-6](../../backlog/usage-quota-open-items.md)). Until then you can implement `UsageLedger` yourself — there are two
 contracts to keep.
 
 - `charge` **adds a delta atomically** per key (it never overwrites with an absolute value), because several nodes
@@ -242,12 +244,13 @@ contracts to keep.
 
 ## 10. What is not counted yet
 
-A quota counts only the LLM calls of the turn loop and the fork loop. Other calls still go out after the quota is
+A quota counts only the LLM calls of the turn, fork and `/skill` loops. Other calls still go out after the quota is
 spent, and the ledger's usage is always lower than the provider's invoice
-([UQ-1](../../backlog/usage-quota-open-items.md)).
+([UQ-1](../../backlog/usage-quota-open-items.md)). The loop of a slash-command skill that does not fork (`/skill`)
+records cost too, through the `CostEstimator` the factory gives the executors — a host that passes its own command
+execution manager has to call `LlmSkillExecutor#withCostEstimator` itself for those calls to be priced.
 
 - **compaction** summary calls
-- the **cost** of a slash-command skill that does not fork (`/skill`) — it is checked and its tokens are charged, but its calls are not priced
 - LLM calls a code-behavior subagent makes directly
 - LLM calls outside any execution, such as memory derivation and wiki synthesis
 - Embedding and knowledge search cost
@@ -255,8 +258,7 @@ spent, and the ledger's usage is always lower than the provider's invoice
 
 ## Related documents
 
-- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale. Where the implementation departs
-  from the design is in §11
-- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-4)
+- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-6)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — the ReAct loop and `ExecutionBudget`
 - [`scope-model.en.md`](../../overview/scope-model.en.md) — component lifetime rules

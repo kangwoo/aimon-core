@@ -15,7 +15,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * Compaction used to bound an ingest payload for free: the log was rewritten down to the window, so neither an
  * execution's delta nor a whole session's transcript could outgrow it. With an append-only log both can be several
  * windows long, and a deriver puts what it receives into one call. So ingest is sent in chunks of at most
- * {@code maxIngestTokens} each (context-engine §7).
+ * {@code maxIngestTokens} each (context-engine › 메모리와의 관계).
  *
  * <p>
  * Chunks end at {@linkplain LegalCuts legal cuts} only — a deriver handed a {@code tool_result} without its

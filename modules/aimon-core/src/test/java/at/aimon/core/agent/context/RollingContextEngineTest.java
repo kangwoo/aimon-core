@@ -54,7 +54,7 @@ import at.aimon.core.llm.token.TokenEstimator;
 
 /**
  * {@link RollingContextEngine}: head and tail verbatim, one widening summary span, prune before summary, and the
- * fallbacks to the default engine (context-engine §5).
+ * fallbacks to the default engine (rolling-context-engine).
  *
  * <p>
  * Sizes use a one-character-per-token estimator. With the limits below the effective window is 1000, so: auto
@@ -434,14 +434,14 @@ class RollingContextEngineTest {
 
             assertThat(summarizer.summarized).hasSize(1);
             assertThat(summarizer.summarized.get(0).getMessages()).flatExtracting(Message::getToolUseResults)
-                    .extracting(ToolUseResult::getContent).as("context-engine §5.4: the originals, not the view")
-                    .containsExactly(fact);
+                    .extracting(ToolUseResult::getContent)
+                    .as("rolling-context-engine › 요약 갱신: the originals, not the view").containsExactly(fact);
         }
     }
 
     /**
      * What the model has not answered yet — the results of the last {@code tool_use}, or the input after the last
-     * reply — is never elided or absorbed (context-engine §13.10).
+     * reply — is never elided or absorbed (context-engine › 미응답 부분).
      */
     @Nested
     class Unread {

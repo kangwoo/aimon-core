@@ -110,13 +110,19 @@
 |------|------------|
 | 발행 모듈의 POM 스코프 | [`module-dependency-scope.md`](module-dependency-scope.md) D-1 |
 | 승인·보류턴 저장소의 분산 이음매 | [`multi-instance-readiness.md`](multi-instance-readiness.md) M-1 · M-2 |
-| `OrcaAgentExecutor` 분해 | [`../design/agent-execution/orca-executor.md`](../design/agent-execution/orca-executor.md) §13-1 — ReAct 코어를 `DefaultSubagentExecutor` 와 공유하는 계획이 이미 있고 이음매(`agent.loop.LoopTransition`)도 놓여 있다 |
+| `OrcaAgentExecutor` 분해 | [`agent-execution-open-items.md`](agent-execution-open-items.md) AE-1 — ReAct 코어를 `DefaultSubagentExecutor` 와 공유하는 계획이 이미 있고 이음매(`agent.loop.LoopTransition`)도 놓여 있다 |
 | 공개 타입 축소 (`aimon-core` **1,012개**, 저장소 전체 1,281개 — 2026-08-31 확인) | [`../project/roadmap.md`](../project/roadmap.md) §3 — `1.0` 의 javadoc 완비 조건과 같은 뿌리이고, 측정 장치(`-Xdoclint:none`, `aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록)를 켜는 것이 선행이다 |
 | S3 가 공유 파일시스템 계약 테스트를 돌지 않는다 | [`../design/filesystem/backend-contract.md`](../design/filesystem/backend-contract.md) §11 — 이미 열린 항목으로 등록되어 있다. R-5 를 확인하다 나왔고, 새 번호를 주면 중복이 된다 |
 
 마지막 줄이 규칙 하나의 예외처럼 보일 수 있으므로 적어 둔다. 그 표는 **설계 시점 기록으로 동결된 표가
 아니라** 그 문서가 스스로 "지금 열려 있는 것" 으로 유지하는 절이고, 계획이 `orca-executor.md`
 §13-1 에 대해 내린 판단(*"새 문서를 만들면 중복 등록이 된다"*)과 같은 이유로 그대로 둔다.
+
+> **정정** *(2026-11-17)*: 위 표의 `OrcaAgentExecutor` 분해 행은 처음에 `orca-executor.md` §13-1 을 가리켰고, 이 문단은
+> 마지막 줄의 예외를 그 §13-1 에 대해 내린 같은 판단에 기대어 설명한다. 그 절은 이제 없다 — `docs/design/agent-execution/`
+> 재구성이 설계 문서의 열린 항목 절을 걷어 내고 [`agent-execution-open-items.md`](agent-execution-open-items.md) 로 옮겼으므로,
+> 행의 링크를 그 등록부의 AE-1 로 바꿨다. 측정(335줄 · 131줄 · 3,238줄)과 기각한 대안(`IterationGate`)도 AE-1 이 갖는다.
+> 마지막 줄(S3)의 예외는 이 정정과 무관하다. 문단의 문장은 규칙 둘대로 고치지 않고 둔다.
 
 ---
 
