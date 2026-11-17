@@ -133,7 +133,7 @@ public interface LiveSession extends AutoCloseable {
   original principal and system-prompt variables. The no-argument `retryLastTurn()` reuses those options;
   `retryLastTurn(options)` replaces them. `rewindLastTurn()` returns a `RewoundTurn` carrying both — submitting only
   the input would be the same words from a different caller. The design note is
-  [`interrupt.md` §15](../../design/agent-execution/interrupt.md).
+  [`turn-retry.md`](../../design/session/turn-retry.md).
 
 ### DefaultLiveSession
 

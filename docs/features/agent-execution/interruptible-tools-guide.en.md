@@ -38,8 +38,9 @@ AIMON's ReAct loop can be interrupted midway for the following reasons.
 | The session lease failing to renew | `LEASE_LOST` | The multi-node routing layer |
 | The session explicitly released from outside | `SESSION_RELEASED` | `SessionRouter` |
 | A peer node taking over after holder loss was detected | `HOLDER_LOST` | The routing layer's holder-loss sweeper |
+| A reason name sent by another node that this build does not know | `UNKNOWN` | The side that decodes the reason (`InterruptReason#fromWireName`) — a reader's value, so nothing interrupts with it (`LiveSession#interrupt` · `SessionRouter#interrupt` refuse it) |
 
-Whatever the cause, the interrupt signal reaches the tool layer through **a single path** — the current execution's `CancellationSignal` being tripped. The fifth row is the evidence that this execution is not always a turn: a scheduled routine runs with neither a session nor a turn behind it, and is stopped by the same signal machinery ([interrupt.md §12](../../design/agent-execution/interrupt.md)). A tool author declares an `InterruptBehavior` to tell the executor "interpret this signal for me like so", and where necessary observes the signal directly through `InterruptAccess`.
+Whatever the cause, the interrupt signal reaches the tool layer through **a single path** — the current execution's `CancellationSignal` being tripped. The fifth row is the evidence that this execution is not always a turn: a scheduled routine runs with neither a session nor a turn behind it, and is stopped by the same signal machinery ([routine-interrupt.md](../../design/scheduling/routine-interrupt.md)). A tool author declares an `InterruptBehavior` to tell the executor "interpret this signal for me like so", and where necessary observes the signal directly through `InterruptAccess`.
 
 The default behaviour is `InterruptBehavior.NON_INTERRUPTIBLE`. When a tool does not override that declaration, **the execution in flight runs to completion** and the interrupt is only reflected at the next iteration boundary. For short atomic operations such as a stat or a read, that is in fact the safer default.
 
@@ -48,10 +49,10 @@ The default behaviour is `InterruptBehavior.NON_INTERRUPTIBLE`. When a tool does
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  External triggers                                          │
-│    REPL SIGINT handler / DefaultAgentSession NOW listener / │
+│    REPL SIGINT handler / DefaultLiveSession NOW listener /  │
 │    Budget guard / parent cascade / shutdown hook            │
 └────────────────────────┬────────────────────────────────────┘
-                         │ AgentSession#interrupt(InterruptReason)
+                         │ LiveSession#interrupt(InterruptReason)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  InterruptCoordinator (per-turn)                            │
@@ -86,7 +87,7 @@ The default behaviour is `InterruptBehavior.NON_INTERRUPTIBLE`. When a tool does
 
 `Tool.getInterruptBehavior()` returns `NON_INTERRUPTIBLE` by default — a choice made so as not to break compatibility with existing tools.
 
-### `InterruptReason` (an enum with 9 values)
+### `InterruptReason` (an enum with 10 values)
 
 See the table in the [overview](#overview) above. A tool uses the reason **for observation only** — its behaviour needs no more than "it was cancelled", and including the reason in a message format or a log helps the user tell the causes apart.
 
@@ -421,7 +422,7 @@ before the stop, the tool results filled in as skipped) and runs from where the 
 Programmatically it is `LiveSession.retryLastTurn(...)` (rewind and submit) or `rewindLastTurn()` (rewind and hand the
 input back, as an `Optional<UserInput>`). To submit that input again, use `submit(UserInput, SubmitOptions)` or
 `offerAsync(UserInput, ...)`. The design note is
-[`interrupt.md` §15](../../design/agent-execution/interrupt.md).
+[`turn-retry.md`](../../design/session/turn-retry.md).
 
 ## An example of NOW queue priority
 
@@ -431,7 +432,7 @@ The scenario where the user submits a mid-turn correction while a tool is runnin
 At T0: the agent starts WebFetch(url1). (COOPERATIVE, takes several seconds)
 At T1: the user types "hold on, do url2 instead" →
        MessageQueueManager#enqueue(NOW priority, ctx=main).
-At T2: DefaultAgentSession#onQueueEvent spots the NOW priority plus the matching
+At T2: DefaultLiveSession#onQueueEvent spots the NOW priority plus the matching
        context → interrupt(InterruptReason.NOW_PRIORITY_INPUT).
 At T3: WebFetchTool checks signal.isCancelled() at the next stage boundary →
        returns ToolResult.error("WebFetch interrupted: NOW_PRIORITY_INPUT").

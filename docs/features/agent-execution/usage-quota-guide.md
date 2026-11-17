@@ -1,7 +1,7 @@
 # Usage Quota 가이드 — 세션·사용자·테넌트별 사용량 한도
 
-> NOTE: 지금 들어가 있는 것은 설계의 1단계다 — 노드 하나 안에서 세는 in-memory 장부와 `AimonStackSpec` 배선.
-> CLI 표시와 Spring Boot 프로퍼티(2단계), 노드 간 공유 장부(3단계)는 아직 없다.
+> NOTE: 지금 들어가 있는 것은 노드 하나 안에서 세는 in-memory 장부와 `AimonStackSpec` 배선이다.
+> CLI 표시와 Spring Boot 프로퍼티([UQ-5](../../backlog/usage-quota-open-items.md)), 노드 간 공유 장부([UQ-6](../../backlog/usage-quota-open-items.md))는 아직 없다.
 
 에이전트가 쓰는 LLM 토큰과 비용에 **누적 한도**를 걸어, 한도에 닿으면 실행을 멈추게 하는 기능이다. 한도는
 세션 하나, 사용자(`Principal`) 하나, 테넌트 하나 단위로 걸 수 있고, 전체 누적이나 하루 단위로 셀 수 있다.
@@ -133,7 +133,8 @@ cron 으로 걸어 우회할 수는 없다. 다만 루틴에는 세션이 없으
 ## 6. 한도에 닿았을 때
 
 판정은 **LLM 호출 직전**마다 이루어진다. 한도에 닿으면 실행은 다음 LLM 호출을 하지 않고
-`CompletionReason.QUOTA_EXCEEDED` 로 끝난다. 오류가 아니라 한도에 의한 정상 종료로 분류된다.
+`CompletionReason.QUOTA_EXCEEDED` 로 끝난다. 이것은 한도에 의한 종료로, 예산 멈춤(`COST_BUDGET_EXCEEDED` 등)과 같은 무리다.
+실패한 실행(`ERROR`)이 아니지만 성공도 아니다(`isSuccessful()` 이 거짓). CLI 는 지금 이 무리를 오류 결과로 그린다([UQ-5](../../backlog/usage-quota-open-items.md)).
 
 ```java
 SubmitOptions options = SubmitOptions.builder().principal(Principal.user("u-123", "alice")).build();
@@ -209,10 +210,10 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 
 `InMemoryUsageLedger` 는 지난 `DAILY` 키를 보존 기간(기본 7일)이 지나면 지우지만, **`TOTAL` 키는 지우지 않는다.**
 세션 `TOTAL` 한도를 걸면 세션마다 키가 하나씩 남아, 오래 떠 있는 노드에서는 메모리가 계속 늘어난다. 세션 삭제 시
-키 정리는 3단계 범위다.
+키 정리는 아직 없다([UQ-6](../../backlog/usage-quota-open-items.md)).
 
 여러 노드에서 한도를 공유하려면 공유 저장소에 기록하는 `UsageLedger` 가 필요하다. Redis · Postgres 구현은
-아직 제공되지 않는다(3단계). 그때까지는 `UsageLedger` 를 직접 구현할 수 있다 — 지켜야 할 계약은 둘이다.
+아직 제공되지 않는다([UQ-6](../../backlog/usage-quota-open-items.md)). 그때까지는 `UsageLedger` 를 직접 구현할 수 있다 — 지켜야 할 계약은 둘이다.
 
 - `charge` 는 키마다 **delta 를 원자적으로 더한다**(절대값으로 덮어쓰지 않는다). 여러 노드가 같은 사용자 키에
   동시에 쓰기 때문이다. 키 사이의 트랜잭션은 필요 없다
@@ -220,11 +221,12 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 
 ## 10. 아직 세지 않는 것
 
-쿼터는 턴 루프와 포크 루프의 LLM 호출만 센다. 그 밖의 호출은 쿼터를 다 쓴 뒤에도 나가고, 장부의 사용량은
-프로바이더 청구서보다 늘 적다([UQ-1](../../backlog/usage-quota-open-items.md)).
+쿼터는 턴 · 포크 · `/skill` 루프의 LLM 호출만 센다. 그 밖의 호출은 쿼터를 다 쓴 뒤에도 나가고, 장부의 사용량은
+프로바이더 청구서보다 늘 적다([UQ-1](../../backlog/usage-quota-open-items.md)). 포크하지 않는 슬래시 명령 스킬(`/skill`)의
+루프는 팩토리가 실행기에 준 `CostEstimator` 로 비용까지 기록한다 — 명령 실행 매니저를 직접 넘기는 호스트는
+`LlmSkillExecutor#withCostEstimator` 를 직접 불러야 가격이 매겨진다.
 
 - **대화 압축(compaction) 요약 호출**
-- 포크하지 않는 슬래시 명령 스킬(`/skill`)의 LLM **비용** — 판정과 토큰 기록은 되지만 가격이 매겨지지 않는다
 - 코드 동작(code behavior) 서브에이전트가 직접 부르는 LLM 호출
 - 메모리 파생 · 위키 합성 같은 실행 밖의 LLM 호출
 - 임베딩 · 지식 검색 비용
@@ -232,7 +234,7 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 
 ## 관련 문서
 
-- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — 설계 근거. 구현이 설계와 달라진 점은 §11
-- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — 열린 항목 (UQ-1 ~ UQ-4)
+- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — 설계 근거
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — 열린 항목 (UQ-1 ~ UQ-6)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — ReAct 루프와 `ExecutionBudget`
 - [`scope-model.md`](../../overview/scope-model.md) — 컴포넌트 수명 규칙

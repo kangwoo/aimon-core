@@ -2458,7 +2458,7 @@ B-20 이 이 표에서 빠진 뒤, 남은 한 줄은 "미루는 이유가 참인
 **열림 · 결정 대기**이고 등록 수치도 움직이지 않는다.
 
 **뒷절반 — "SPI 를 깨지 않는 것뿐".** 그 앱이 따라야 할 이관 절차서는 이 저장소에 있다 —
-[`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) §5,
+[`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md#5-생성과-등록) §5,
 그 문서의 Phase 3 체크리스트가 *"마이그레이션 안내는 본 문서가 단일 source of truth"* 라고 못박은 절이다.
 그 절의 After 블록은 이렇게 되어 있었다.
 

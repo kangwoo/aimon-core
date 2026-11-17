@@ -58,7 +58,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 
 | 컴포넌트 | 생성 | 소멸 |
 |---------|------|------|
-| `AgentRuntime` | 부트스트랩에서 1회 — CLI `AgentSetupFactory`, web `LiveSessionOpener` | 앱 shutdown 또는 명시적 agent 제거 시 `OrcaAgentRuntimeManager.destroyRuntime` |
+| `AgentRuntime` | discriminator 없는 런타임은 부트스트랩에서 1회 — bootstrap `AimonStack`(CLI 는 `AgentSetupFactory` 가 그 스택을 조립한다). 테넌트(discriminator 있는) 런타임은 `AgentRuntimeResolver`(aimon-bootstrap)가 첫 사용 때 만든다. `LiveSessionOpener` 는 런타임을 만들지 않고 조회만 한다 | discriminator 없는 런타임은 앱 shutdown 또는 명시적 agent 제거 시 `OrcaAgentRuntimeManager.destroyRuntime`. 테넌트 런타임은 리스를 쥔 쪽이 없고 유휴 TTL 이 지나면 `AgentRuntimeResolver` 가 닫는다 |
 | `McpClientManager` | `AgentRuntime` 생성 시 | `OrcaAgentRuntime.close()` 가 명시적으로 닫음 |
 | `WorkflowRunner` (agent-scoped 변형) | `OrcaAgentRuntimeFactory` — `workflowRunnerEnabled` 일 때만 | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped 변형) | `WorkflowTool` / `GraalJsWorkflowTool` 이 호출마다 | 각자의 try-with-resources |

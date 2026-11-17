@@ -12,7 +12,7 @@
 
 전사를 LLM 에 보이는 대화 그대로 저장하면, 압축과 prompt-too-long 복구가 그것을 고쳐 쓰므로 뷰를 줄이는 일이 곧 기록을
 지우는 일이 된다. 원문이 사라지고, 압축된 실행의 메모리 ingest 가 비고, 요약문이 원문처럼 ingest 된다
-([`context-engine.md` §1.1](../agent-execution/context-engine.md)).
+([`context-engine.md` §1](../agent-execution/context-engine.md#1-기록과-뷰--무엇을-푸는가)).
 
 그래서 기록은 **append-only 로그**로 두고, 뷰를 줄이는 정보는 로그 옆의 **뷰 상태**에 둔다. 로그는 압축으로 줄지 않고, 뷰
 상태는 로그를 가리키기만 한다.
@@ -376,7 +376,7 @@ CLI `cli.sessionLogWriteFormat` 이다. 모든 조립의 기본은 v2 다.
 **v1 쓰기 모드.** `replaceWith` 로 기록을 고쳐 쓰는 제자리 압축으로 물러난다. 교체 항목은 `nextSeq` 부터 새 seq 를 받고 `floorSeq` 가
 그 첫 seq 로 올라간다. 교체된 항목과 같은 인스턴스는 origin 을 유지하고 나머지는 `CONVERSATION` 이다. manifest 는 새 floor 아래로
 내려가므로 지운다. 뷰 상태나 manifest 가 있는 v2 버퍼는 제자리 폴백을 만나도 제자리로 압축하지 않는다
-([`context-engine.md`](../agent-execution/context-engine.md)). `RollingContextEngine` 은 v1 에서 구현할 수 없으므로 v1 쓰기 모드에서
+([`context-engine.md` §8.1](../agent-execution/context-engine.md#81-뷰-모드와-in-place)). `RollingContextEngine` 은 v1 에서 구현할 수 없으므로 v1 쓰기 모드에서
 배선하면 기동 시 실패한다.
 
 ### 9.2 로드·저장 체인

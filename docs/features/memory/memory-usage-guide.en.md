@@ -252,7 +252,7 @@ and a compacted execution is ingested as it was said. The loss remains **only in
 the history is replaced wholesale, so that execution sends **nothing** and the next one anchors afresh, which is
 cheaper than sending a summary as if it were conversation or re-sending messages already ingested. The reasoning is in
 [Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2 and
-[Context Engine](../../design/agent-execution/context-engine.md) §7.
+[Context Engine](../../design/agent-execution/context-engine.md#9-메모리와의-관계) §9.
 
 Neither value sends what the runtime injected (`LogOrigin.SYNTHETIC` — assembled
 `<system-reminder>`s, the file and skill lists a restore hook attaches). What is sent is split into chunks of about 32K

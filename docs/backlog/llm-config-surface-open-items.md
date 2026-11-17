@@ -1113,7 +1113,7 @@ visible answer` · effort 처방 · `thinkingBudgetTokens` 부재를 더했고, 
 붙는다. 도구 호출이 있는 응답은 **어느 호출도 실행하지 않는다** — 호출마다 `max_tokens` 를 이름으로 대는 오류 결과로
 답하고, WARN 이 `max_tokens` · iteration · 도구 이름을 적고, 루프는 이어진다. 두 실행기 모두 프로바이더 중립의
 `StopReason` 을 `at.aimon.core.agent.budget.TruncatedResponses` 한 곳에서 읽는다. 설계와 기각한 대안은
-[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
+[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/truncation-and-stall.md#5-설계-결정)
 에, 기록의 정정은 옛 `thinking-reporting-and-dialect-records.md` §16.10(지금은
 [`../design/llm/anthropic-thinking.md` §6.4](../design/llm/anthropic-thinking.md#64-clamp-경고의-범위--clamp-만))에 있다.
 
@@ -1480,7 +1480,7 @@ javadoc 예시가 2곳(`SubagentExecutionEnvironment` 와 `DefaultSubagentExecut
 ## L-22 — 에이전트 실행기 밖의 도구 루프 둘은 stop reason 을 읽지 않아서, `max_tokens` 에서 잘린 도구 호출이 그대로 실행된다
 
 *(2026-09-11 등록. 출처는 #108 · #100 —
-[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
+[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/README.md#4-옛-경로-대응표)
 §8 을 §11.3 이 이 항목으로 올렸다. 그 작업은 두 에이전트 실행기만 고쳤고, 이 루프들은 **그 작업의 범위 밖**이었다. 여기
 두는 것은 L-16 의 짝이기 때문이다.)*
 
@@ -1521,7 +1521,7 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 않고** 호출마다 같은 거절 결과로 답한 뒤 루프를 잇는다. WARN 이 스킬 이름, 1부터 센 iteration, 도구 이름을 적는다 — 인자는 적지
 않는다. 도구 호출이 없는 잘린 최종 답은 성공으로 돌아가되 텍스트 끝에 `[System: response truncated at max_tokens]` 가 붙고, WARN
 이 스킬 이름을 적는다. 설계와 기각한 대안은
-[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/truncation-and-stall.md#5-설계-결정)
 의 D1 · D2 · D5 에 있다.
 
 **정할 것 셋을 이렇게 정했다.**
@@ -1573,7 +1573,7 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 
 ## L-23 — 서브에이전트 포크에는 정체 가드가 없어서, 매 응답이 `max_tokens` 에서 잘리는 포크는 기본 1000 iteration 까지 거절을 반복한다
 
-*(2026-09-11 등록. 출처는 #100 — [설계](../design/agent-execution/max-tokens-truncation-reporting.md) §8 이 PR 본문으로만
+*(2026-09-11 등록. 출처는 #100 — [설계](../design/README.md#4-옛-경로-대응표) §8 이 PR 본문으로만
 보냈던 것을 설계 리뷰가 막지 않음으로 다시 짚었고, §11.3 이 이 항목으로 올렸다. 가드가 없는 것 자체는 그 작업보다 오래되었고
 `max_tokens` 와 무관하다. 여기 두는 것은 그 결과가 L-16 을 닫은 거절과 만나는 자리이기 때문이다.)*
 
@@ -1609,7 +1609,7 @@ iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록�
 턴과 같은 중단 메시지와 `CompletionReason.ERROR` 로 끝난다 — OnStop 훅은 `success=false`, 진행 스트림은 `[ended: …]`. 매 응답이
 잘리는 포크는 이제 `max_tokens` 크기의 요청을 세 번 보내고 끝난다. 가드는 턴 · 포크 · 스킬 루프가 함께 쓰는 한 정의다. 설계와
 기각한 대안은
-[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/truncation-and-stall.md#5-설계-결정)
 의 D3 · D4 에 있다.
 
 **처방 둘 중 앞의 것을 골랐다 (규칙 다섯).** 턴의 가드를 옮겼고 잘린 응답만 따로 세지 않았다. 따로 세면 턴 옆에 "진척 없음" 의
@@ -1734,7 +1734,7 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 
 ## L-25 — 백그라운드 포크의 결과를 부모에게 전하는 두 자리는 `max_tokens` 에서 잘린 답을 완결된 답처럼 보여 준다
 
-*(2026-09-11 등록. 출처는 #117 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-1. #117 의
+*(2026-09-11 등록. 출처는 #117 — [설계](../design/README.md#4-옛-경로-대응표) §8.1 F-1. #117 의
 첫 항목은 전경 `Task` 호출의 출력을 고쳤고, 백그라운드로 띄운 포크가 지나는 두 파일은 그 작업의 파일이 아니었다. 여기 두는
 것은 L-23 의 짝이기 때문이다.)*
 
@@ -1785,7 +1785,7 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 
 ## L-26 — 잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴은 `COMPLETED` 로 끝난다
 
-*(2026-09-11 등록. 출처는 #115 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-2 · §9 Q4. 결정
+*(2026-09-11 등록. 출처는 #115 — [설계](../design/README.md#4-옛-경로-대응표) §8.1 F-2 · §9 Q4. 결정
 항목이다 — 그 설계는 이 질문을 유지보수자가 정하도록 남겼고, 무엇으로 정하든 그 작업의 파일이 아닌 `command/**` 가 필요하다.)*
 
 **무엇을.** 슬래시 명령으로 실행한 인라인 스킬의 최종 답이 `max_tokens` 에서 잘렸을 때, 그 턴의 `CompletionReason` 이 그 사실을
@@ -2163,9 +2163,9 @@ reportIfThinkingBlockBindingRejected`.
 - [`../design/llm/anthropic-thinking.md`](../design/llm/anthropic-thinking.md) — 옛 `thinking-reporting-and-dialect-records.md` 의 결정이 간 곳. 그 기록은 L-6·L-7 을 닫고
   L-9·L-10·L-11 을 열었다. §14 의 방언 census 는 지금 `model-capabilities.md` §6, §16(#83 의 결정, L-15 의 출처)과
   §16.8(#89 의 결정, L-16 의 출처)은 지금 이 문서 §6 이다
-- [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md) —
+- [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/truncation-and-stall.md) —
   #108 · #100 · #101 의 설계. L-16 을 닫았고, §11 이 L-22 · L-23 으로 올린 것과 설계 문서에 남긴 것을 가른다
-- [`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) —
+- [`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/truncation-and-stall.md) —
   #115 · #117 의 설계. D1 · D2 · D5 가 L-22 를, D3 · D4 가 L-23 을 닫은 결정이고, §8.1 F-1 이 L-25 의, F-2 와 §9 Q4 가 L-26 의
   출처이며, §11 이 구현이 설계에서 벗어난 자리다
 - [`../design/llm/model-capabilities.md`](../design/llm/model-capabilities.md) — capability SPI 자체의 설계(옛 `openai-model-capabilities.md`). 옛 §7 O-8 이 이 작업으로

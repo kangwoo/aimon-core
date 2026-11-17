@@ -139,6 +139,7 @@ RoutineExecutor
 | `PRINCIPAL` | `task.owner` | 없으면 중첩 등록이 `Principal.system()` 으로 떨어져 원래 사람을 지운다 |
 | `EXECUTION_ID` | `ExecutionId.generate("routine:" + taskId)` | 발화마다 새로. 같은 작업의 두 발화를 구분하는 유일한 값 |
 | `FILE_STAMPS_KEY` | 빈 `ConcurrentHashMap` | 발화마다 새로. `Read` 가 기록하고 `Edit` · `Write` 가 대조하는 read stamp — 아래 "read stamp" 문단 |
+| `QUOTA_GUARD` | 발화 1회의 `QuotaGuard`(주체는 `task.owner`) — 쿼터 팩토리가 배선되었을 때만. 해석에 실패하면 비활성 guard | 단계가 띄운 포크 · 스킬이 LLM 호출 전에 판정하고 사용량을 기록한다 — [사용량 쿼터](../agent-execution/usage-quota.md) |
 | `SESSION_ID` | **없음** | 세션이 없다 |
 | `INVOKING_SESSION_ID` | **없음** | 같은 이유 |
 
@@ -352,7 +353,8 @@ routine 작성자가 매번 판단할 일이 아니므로 step 설정보다 선�
 
 예외는 둘이다. 도구를 **찾기 전에** 실패한 시도(런타임 미등록, 모르는 도구 이름)는 아무것도 실행하지 않았으므로
 재시도한다 — 늦게 등록되는 런타임이 그 사이에 나타날 수 있다. 반대로 도구가 실패를 `notRetryable()` 로 표시했으면
-멱등 도구라도 재시도하지 않는다. 쿼터에 막힌 시도도 재시도하지 않는다(§3.5).
+멱등 도구라도 재시도하지 않는다. 쿼터로 멈춘 시도는 소유자의 쿼터가 여전히 차 있으면 재시도하지 않는다 — 장부에 닿지
+못하면 재시도한다([사용량 쿼터](../agent-execution/usage-quota.md)).
 
 마지막 시도가 timeout 으로 끝난 단계는 `StepResult.isOutcomeUnknown()` 이 참이다. 실패로 기록되지만 "아무 일도
 일어나지 않았다" 는 뜻은 아니다. 이력에는 `ScheduledTaskExecutionHistory.isOutcomeUnknown()` 으로 남는다 — 단계 가운데
@@ -463,7 +465,7 @@ S 와 S+1 의 키가 달라 실행이 겹치고, 더 오래된 misfire 도 거�
 **회차 키는 인터럽트의 주소이기도 하다.** `executeFire` 는 모든 발화를 — slot 이 없는 untimed 발화까지 —
 `RoutineExecutor.execute(task, fire)` 하나로 넘기고, slot 이 있는 실행은 `getOccurrenceKey()` 아래에 등록된다. 그래서 `ScheduledTaskManager.interrupt(taskId, occurrenceKey,
 principal)` 은 그 회차만 끊고, 늦게 도착한 취소가 다음 회차를 끊지 않는다
-([`interrupt.md` §12.8](../agent-execution/interrupt.md#128-회차-하나만-끊기--occurrence-key)).
+([`routine-interrupt.md` §8](routine-interrupt.md#8-회차-하나만-끊기--occurrence-key-와-묘비)).
 
 **호스트가 발화를 영속했다가 다시 만들 때.** 발화를 자기 큐에 넣고 나중에 워커에서 실행하는 호스트는 getter 세 개
 (`getTaskId()` · `getScheduledFireTime()` · `getSlot()`)만 저장하면 된다. 시각이 있으면 `ScheduledFire.of(taskId,

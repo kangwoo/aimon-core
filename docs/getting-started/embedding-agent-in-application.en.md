@@ -1812,11 +1812,13 @@ reopening the handle**. To undo it you have to call `clearBudgetOverride()` expl
 Every old type name that used to appear in this document has been renamed.
 
 > **If you are moving a whole 0.1.x application over, this table alone is not enough.** Renaming is one
-> thing; *removing the wiring that used to build a new `AgentRuntime` per session* is another, and the
-> procedure for the latter — Before / After code, all the way to "if your host is Spring, that wiring is
-> deleted, not moved" — is governed solely by
-> [`agent-runtime-scope.md` §4 Migration](../design/agent-execution/agent-runtime-scope.md#4-마이그레이션).
-> The table below is the dictionary you read that section with.
+> thing; *removing the wiring that used to build a new `AgentRuntime` per session* is another. The shape
+> after the removal — the runtime is built once, idempotently, at bootstrap, and a session only looks it up —
+> is governed by
+> [`agent-runtime-scope.md` §5 Creation and registration](../design/agent-execution/agent-runtime-scope.md#5-생성과-등록).
+> The old migration section, with its Before / After code all the way to "if your host is Spring, that wiring
+> is deleted, not moved", survives in revision `05b4e424` of that document. The table below is the dictionary
+> you read that section with.
 
 | Old name | Current name |
 |----------|--------------|

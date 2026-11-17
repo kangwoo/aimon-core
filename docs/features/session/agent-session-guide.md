@@ -125,7 +125,7 @@ public interface LiveSession extends AutoCloseable {
   시작한 턴이든 재시도되고 **원래의 principal·시스템 프롬프트 변수 아래에서** 다시 돈다. 무인자
   `retryLastTurn()` 이 원래 옵션을 쓰고, `retryLastTurn(옵션)` 이 그것을 갈아 끼운다. `rewindLastTurn()` 은
   둘을 담은 `RewoundTurn` 을 돌려준다 — 입력만 집어 제출하면 같은 말을 다른 사람이 하는 것이 된다.
-  설계 근거는 [`interrupt.md` §15](../../design/agent-execution/interrupt.md).
+  설계 근거는 [`turn-retry.md`](../../design/session/turn-retry.md).
 
 ### DefaultLiveSession
 

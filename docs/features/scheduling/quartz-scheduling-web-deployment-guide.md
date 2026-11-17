@@ -285,7 +285,7 @@ WARN 만 남으며 시계를 고칠 때까지 계속될 수 있다. 이 WARN 은
 (`LOCAL_ONLY`)와 JVM 하나(`InMemoryScheduledTaskInterruptBus`)까지다. 클러스터용은 MongoDB 를 쓰는 배포라면
 `aimon-session-mongodb` 의 `MongoScheduledTaskInterruptBus` 를 넘기면 되고(`init.js` 가 만드는 capped 컬렉션
 `scheduled_task_interrupts` 와 replica set 이 필요하다), 그 밖의 저장소에서는 애플리케이션이 쓴다.
-설계 근거는 [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
+설계 근거는 [`routine-interrupt.md` §7](../../design/scheduling/routine-interrupt.md#7-노드를-넘는-중단--scheduledtaskinterruptbus).
 
 `routineExecutionAttributes`는 루틴 실행 1회마다 호스트에게 그 실행의 execution attributes 를 묻는 자리다 — 턴에서
 `SubmitOptions.executionAttribute(...)` 가 하는 일이며, 그 `environment.*` 부분집합이 환경 provider 의

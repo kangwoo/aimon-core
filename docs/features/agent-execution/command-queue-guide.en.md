@@ -377,7 +377,7 @@ The in-memory repository can be used as-is in tests too — there is no need to 
 ## Design principles
 
 - **Separating storage from the facade**: when a distributed backend arrives only the repository layer changes, and the rest of the code is untouched. ([multi-instance design rule](../../../.claude/rules/multi-instance-design.md))
-- **Interceptor vs listener**: `AgentExecutionInterceptor` is a synchronous layer that **controls** the execution chain, while `MessageQueueListener` is an asynchronous hook that **observes** queue events. The two layers are not mutually exclusive — collect the cumulative figures that have nothing to do with turn boundaries (total enqueues, say) with `LoggingMessageQueueListener`, and collect the ones that are interlocked with them (queue depth before and after an execution, enqueues/drains per turn, execution time) with the short-lived internal listener that `QueueMetricsInterceptor` raises at the execution boundary. Do not mix the two roles (see `docs/design/agent-execution/interceptor.md` §9.2).
+- **Interceptor vs listener**: `AgentExecutionInterceptor` is a synchronous layer that **controls** the execution chain, while `MessageQueueListener` is an asynchronous hook that **observes** queue events. The two layers are not mutually exclusive — collect the cumulative figures that have nothing to do with turn boundaries (total enqueues, say) with `LoggingMessageQueueListener`, and collect the ones that are interlocked with them (queue depth before and after an execution, enqueues/drains per turn, execution time) with the short-lived internal listener that `QueueMetricsInterceptor` raises at the execution boundary. Do not mix the two roles (see `docs/design/agent-execution/interceptor.md` §7).
 - **Immutable I/O**: `QueuedInput` is immutable with a builder, and `metadata` is a defensive copy. Tampering with it from outside after it has been queued cannot corrupt the internal state.
 - **Listener isolation**: an exception from a listener is caught by the manager, which only logs a WARN. A bug in a metrics implementation cannot stop the ReAct loop.
 
@@ -385,7 +385,7 @@ The in-memory repository can be used as-is in tests too — there is no need to 
 
 ## Related documents
 
-- [interceptor.md](../../design/agent-execution/interceptor.md) §9.2 — the relationship with StreamingEvents
+- [interceptor.md](../../design/agent-execution/interceptor.md#7-스트리밍-이벤트와의-관계) §7 — the relationship with streaming events
 - [system-reminder-convention.en.md](system-reminder-convention.en.md) — the `<system-reminder>` wrapping rules for injected messages
 - [solid-principles.md](../../project/solid-principles.md)
 - `at.aimon.core.agent.queue.package-info` — a package-level Javadoc summary

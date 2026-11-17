@@ -31,7 +31,7 @@ Anthropic 은 thinking 을 두 가지 요청 모양으로 받는다. 어느 모�
 | 모델별 방언 실측 결론과 내장 행, 모델 이름을 보지 않는다는 원칙 | [`model-capabilities.md`](model-capabilities.md) |
 | thinking 키의 설정 표면, 기동 실패와 키 경로 재던짐 | [`configuration-surface.md`](configuration-surface.md) |
 | 추론 델타의 전달 게이트와 채널 | [`streaming.md`](streaming.md) |
-| `max_tokens` 에서 잘린 응답의 보고 | [`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md) |
+| `max_tokens` 에서 잘린 응답의 보고 | [`../agent-execution/truncation-and-stall.md`](../agent-execution/truncation-and-stall.md#2-잘린-응답) |
 
 **비목표.** interleaved thinking beta 헤더는 보내지 않는다(§9). `thinking.type: disabled` 는 보내지 않는다(§4.6).
 운영자가 켜지 않은 배포에서 thinking 을 켜지 않는다(§4.5).
@@ -407,7 +407,7 @@ signature 에 모델을 싣지 않는 것은 조건이 설정 쌍의 성질이�
   8000/8001 은 설정대로 나간다. §8.3 은 비활성·재구성된 조합을 보고하고, 따르되 현명하지 않다고 판단되는 요청은 보고하지
   않는다
 - **실제로 짜인 결과는 일어날 때 보고된다.** `max_tokens` 에서 잘린 응답의 보고는
-  [`max_tokens` 잘림 보고](../agent-execution/max-tokens-truncation-reporting.md)가 정하고, 수치를 요구하지 않는다. 그래서 clamp
+  [`max_tokens` 잘림 보고](../agent-execution/truncation-and-stall.md#2-잘린-응답)가 정하고, 수치를 요구하지 않는다. 그래서 clamp
   경고는 짜일 가능성을 추정해 경고하지 않는다
 - **경고 문구가 참으로 남는다.** 경고가 뜨는 모든 요청은 정확히 1토큰을 남기고, `maxTokens` 인상은 그 요청에 듣는 처방이다
 
@@ -712,5 +712,5 @@ display-on-budgeted, budget-overrides-effort 는 모두 `REQUIRES_THINKING` 이�
 - [`openai-responses-path.md`](openai-responses-path.md) — 다른 provider 의 숙고 요청(`reasoning.summary`)
 - [`model-name-resolution.md`](model-name-resolution.md) — 클라이언트 기본 모델
 - [`anthropic-default-model-sonnet-5-5.md`](anthropic-default-model-sonnet-5-5.md) — 기본 모델을 `claude-sonnet-5-5` 로 옮긴 설계(승인본), 블록 바인딩과 그 실측
-- [`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md) — `max_tokens` 에서 잘린 응답의 보고
+- [`../agent-execution/truncation-and-stall.md`](../agent-execution/truncation-and-stall.md) — `max_tokens` 에서 잘린 응답의 보고
 - [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-10 · L-15 · L-25 · L-26 · L-31

@@ -156,7 +156,7 @@ per question. Read it in this order:
 
 One run is one sample of six to eight questions per task, so a difference of a question or two is noise.
 What the tasks are, why the comparison uses a 16K window, and what it does not measure are in
-[`docs/design/agent-execution/context-engine.md` §13.11](docs/design/agent-execution/context-engine.md#1311-engine-을-비교하는-과제).
+[`docs/design/testing/context-engine-pressure-rig.md`](docs/design/testing/context-engine-pressure-rig.md).
 
 **Every run costs money** — these are billed calls on the account the keys belong to. Never commit a
 key, and redact it from any failure output you paste into an issue or a pull request.

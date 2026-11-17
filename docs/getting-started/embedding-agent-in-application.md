@@ -1728,10 +1728,11 @@ live.clearBudgetOverride();                                     // opener 기본
 이 문서에 나오던 옛 타입 이름은 모두 개명되었습니다.
 
 > **0.1.x 앱을 통째로 옮기는 중이라면 이 표만으로는 모자랍니다.** 이름을 바꾸는 것과 *세션마다
-> `AgentRuntime` 을 새로 만들던 배선을 걷어내는 것*은 다른 일이고, 후자의 절차 —
-> Before / After 코드와 "Spring 호스트라면 그 배선은 옮기는 게 아니라 지운다" 까지 — 는
-> [`agent-runtime-scope.md` §4 마이그레이션](../design/agent-execution/agent-runtime-scope.md#4-마이그레이션)
-> 가 단일 기준입니다. 아래 표는 그 절을 읽을 때 쓰는 사전입니다.
+> `AgentRuntime` 을 새로 만들던 배선을 걷어내는 것*은 다른 일입니다. 걷어낸 뒤의 모양 — 런타임은
+> 부트스트랩에서 한 번 멱등으로 만들고 세션은 조회만 한다 — 은
+> [`agent-runtime-scope.md` §5 생성과 등록](../design/agent-execution/agent-runtime-scope.md#5-생성과-등록)
+> 이 기준입니다. Before / After 코드와 "Spring 호스트라면 그 배선은 옮기는 게 아니라 지운다" 까지 담았던 옛
+> 마이그레이션 절은 그 문서의 판본 `05b4e424` 에 남아 있습니다. 아래 표는 그 절을 읽을 때 쓰는 사전입니다.
 
 | 옛 이름 | 현재 이름 |
 |---------|----------|

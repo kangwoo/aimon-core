@@ -244,7 +244,7 @@ IMPORTANT: `execution-end` 의 델타는 로그의 **seq** 에 걸린 기준점�
 실행도 말해진 그대로 수집된다. 손실은 **버전 1 쓰기 모드에만** 남는다 — 거기서는 이력을 통째로 갈아 끼우므로 그
 실행은 **아무것도 보내지 않고** 다음 실행이 다시 기준점을 잡는다. 요약을 대화인 척 보내거나 이미 수집된 메시지를
 다시 보내는 것보다 싸기 때문이다. 근거는 [교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md)
-§7.2 와 [Context Engine](../../design/agent-execution/context-engine.md) §7 에 있다.
+§7.2 와 [Context Engine](../../design/agent-execution/context-engine.md#9-메모리와의-관계) §9 에 있다.
 
 두 값 모두 런타임이 주입한 항목(`LogOrigin.SYNTHETIC` — 조립된 `<system-reminder>`, 복원 훅이 붙인
 파일·스킬 목록)은 보내지 않는다. 한 번에 보내는 양은 추정 32K 토큰(`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`) 단위로

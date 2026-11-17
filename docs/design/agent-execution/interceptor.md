@@ -1,9 +1,11 @@
-# Execution Interceptor — `execute()` 경계를 가로챈다
+# 실행 인터셉터 — `execute()` 경계를 가로챈다
 
 > Status: **IMPLEMENTED**. 프레임워크가 자동으로 감싸지 않는다 — 호출자가 명시적으로 적용하는 데코레이터다.
 > 적용 대상: `aimon-core`
 > 관련 문서: [`orca-executor.md`](orca-executor.md) (감싸이는 실행기),
-> [`hook-development-guide.md`](../../features/hook/hook-development-guide.md) (도구 수준 계층)
+> [`hook/hook-system.md`](../hook/hook-system.md) (도구 수준 계층의 설계),
+> [`hook-development-guide.md`](../../features/hook/hook-development-guide.md) (도구 수준 계층의 사용법),
+> [`command-queue-guide.md`](../../features/agent-execution/command-queue-guide.md) (`QueueMetricsInterceptor` 배선)
 
 ---
 
@@ -76,7 +78,7 @@ default String getName()    // 클래스 단순명. 진단·로깅용
 **제네릭 전략은 인터셉터 종류가 정한다.** 패스스루는 결과를 만들 필요가 없으므로 타입 파라미터를 열어
 두고 아무 `AgentExecutor` 에나 재사용한다. 차단 인터셉터는 올바른 결과 타입을 **직접 생성**해야 하므로
 구체 타입(`OrcaAgentExecutionResult` 등)으로 특정한다. Java 제네릭은 invariant 이라
-`AgentExecutor<OrcaRuntime, …>` 가 `AgentExecutor<AgentRuntime, …>` 의 하위 타입이 아니고, 타입을
+`AgentExecutor<OrcaAgentRuntime, …>` 가 `AgentExecutor<AgentRuntime, …>` 의 하위 타입이 아니고, 타입을
 보존하지 않으면 이 구분이 런타임 `ClassCastException` 으로 미뤄진다.
 
 ---
@@ -105,6 +107,13 @@ RES result = intercepted.execute(context, request);   // 호출자에게는 원�
 ---
 
 ## 5. 설계 결정
+
+| 쟁점 | 결정 | 기각한 대안과 이유 |
+|------|------|-------------------|
+| `execute()` 경계를 가로채는 방식 | 미들웨어 체인 데코레이터(`InterceptingAgentExecutor`) | 상속 기반 템플릿 메서드 — 단일 상속이라 조합되지 않는다 / before·after 만 있는 데코레이터 — 요청 변환도 실행 차단도 못 한다 / 훅 확장 — 도구 수준 계층에 실행 수준 관심사가 섞인다 |
+| `proceed()` 호출 횟수 | 단계마다 최대 1회, 2회째는 `IllegalStateException` | 재호출 허용(체인 안 재시도) — 바깥 인터셉터가 본 요청을 다시 흘려 로그 · 메트릭 · 감사가 어긋나고 LLM 비용이 두 번 든다 |
+| 인터셉터 예외 | 호출자에게 전파 | 훅처럼 격리 — 인증 실패 같은 결정이 조용히 삼켜진다 |
+| 제네릭 | `<CTX, REQ, RES>` 를 체인 전체에 보존 | 공통 상위 타입으로 지움 — 차단 인터셉터가 만든 결과의 타입 오류가 런타임 `ClassCastException` 으로 미뤄진다 |
 
 **미들웨어 체인.** 상속 기반 템플릿 메서드는 단일 상속에 묶여 조합이 안 되고, before/after 만 있는 단순
 데코레이터는 요청 변환도 실행 차단도 못 한다. 훅을 확장하는 안은 도구 수준 계층에 실행 수준 관심사를
@@ -138,41 +147,31 @@ RES result = intercepted.execute(context, request);   // 호출자에게는 원�
 
 ## 6. 구현 패턴
 
-**패스스루 — 타입을 열어 둔다.**
+두 종류는 `proceed()` 를 다루는 방식과 타입 파라미터에서 갈린다(§3).
 
 ```
-class MetricsInterceptor<CTX, REQ, RES> implements AgentExecutionInterceptor<CTX, REQ, RES>:
-    getOrder() → -90
+// 패스스루 — 타입을 열어 두고 항상 proceed. 기록은 finally 에서 (§5 "후처리는 스스로 지켜야 한다")
+class MetricsInterceptor<CTX, REQ, RES>:   order -90
+    intercept: try { return chain.proceed(ctx, req) } finally { 기록 }
 
-    intercept(ctx, req, chain):
-        timer 시작
-        try:
-            return chain.proceed(ctx, req)      // 항상 호출
-        finally:
-            timer 종료 후 기록                   // 예외 여부와 무관
-```
-
-**차단 — 결과 타입을 특정한다.**
-
-```
-class AuthInterceptor implements AgentExecutionInterceptor<OrcaRuntime, OrcaRequest, OrcaAgentExecutionResult>:
-    getOrder() → -50
-
-    intercept(ctx, req, chain):
-        if not authService.isAuthorized(req.getPrincipal(), ctx.getAgent()):
-            return OrcaAgentExecutionResult.failure("Unauthorized", …)   // proceed 호출 안 함
-        return chain.proceed(ctx, req)
+// 차단 — 결과 타입을 특정하고, 거부할 때는 proceed 없이 결과를 직접 만든다
+class AuthInterceptor<OrcaAgentRuntime, OrcaAgentExecutionRequest, OrcaAgentExecutionResult>:   order -50
+    intercept: 권한 없음 → OrcaAgentExecutionResult.failure(…) / 있음 → chain.proceed(ctx, req)
 ```
 
 **코어가 제공하는 유일한 구현 — `QueueMetricsInterceptor`** (`at.aimon.core.agent.queue`). 실행 경계를
-알아야만 답할 수 있는 질문("턴 시작 시점의 큐 깊이는? 턴이 도는 동안 몇 건이 들어오고 빠졌는가?")을 위해
+알아야만 답할 수 있는 질문("실행 시작 시점의 큐 깊이는? 실행이 도는 동안 몇 건이 들어오고 빠졌는가?")을 위해
 실행 동안만 살아 있는 `MessageQueueListener` 를 붙였다 뗀다. `getOrder()` 가 `-1000` 인 것은 다른
 인터셉터가 만든 큐 활동까지 포함시키기 위해 가장 바깥에 서려는 것이다. 누적 카운터는 `LongAdder` 이고
-턴마다 DEBUG 한 줄을 남긴다 — 메트릭 백엔드가 있는 프로젝트는 이 클래스를 감싸 자기 레지스트리로 옮긴다.
+실행마다 DEBUG 한 줄을 남긴다 — 메트릭 백엔드가 있는 프로젝트는 이 클래스를 감싸 자기 레지스트리로 옮긴다.
 
-같은 `AgentRuntimeId` 의 실행이 **동시에** 둘 이상 돌면 두 리스너가 같은 트래픽을 각각 세어 중복
-계상된다. 한 런타임의 턴은 순차로 도는 것이 정상이므로 실무에서는 문제가 되지 않지만, 계약상 그렇다는
-것은 알아 두어야 한다.
+리스너는 실행(`intercept` 호출)마다 새로 붙지만 큐 항목을 `AgentRuntimeId` 로만 거르고 `sessionId` 는 보지 않는다. 큐
+매니저(`MessageQueueManager`)는 스택에 하나이고, 런타임은 agent-scoped 라 여러 세션이 함께 쓴다. 세션 하나는 한 번에 한
+턴만 돌지만 노드는 `TurnAdmission` 이 허락하는 만큼 서로 다른 세션의 턴을 동시에 돌린다. 그래서 같은 런타임을 쓰는 두 세션의
+턴이 겹치면 각 리스너가 상대 세션의 큐 활동까지 세어 **중복 계상**한다. 클래스 주석의 "한 런타임의 턴은 보통 순차로 돈다" 는
+세션이 하나뿐인 호스트(CLI)에서만 맞는 가정이다. 실행기 자신의 큐 소비는 `sessionId` 까지 맞춰 거르므로 이 어긋남은 메트릭에만
+있다. 코어의 조립 코드(`aimon-bootstrap` · 스타터 · CLI)는 이 인터셉터를 배선하지 않는다 — 다중 세션 호스트가 쓸 때는 세션
+단위로 다시 걸러야 한다.
 
 ---
 
@@ -228,6 +227,17 @@ executor.executeAsync(ctx, req, repl::onEvent)    // 관찰 경로
 
 ---
 
+## 9. 하지 말 것
+
+- 한 단계에서 `chain.proceed()` 를 두 번 부르지 않는다. 재시도는 체인 밖의 메커니즘이 한다.
+- 차단 인터셉터를 열린 타입 파라미터로 쓰지 않는다. 직접 만든 결과의 타입은 구체 타입으로 특정해야 컴파일 타임에 잡힌다.
+- 메트릭 기록과 자원 정리를 `proceed()` 뒤에 그냥 두지 않는다. 안쪽 후처리가 던지면 실행되지 않으므로 `try-finally` 에 둔다.
+- 실행 관찰(iteration · 도구 호출 렌더링)을 인터셉터로 하지 않는다. 경계 밖을 볼 수 없고, 관찰 코드의 예외가 실행을 죽인다(§7).
+- 실행 제어(차단 · rate limit)를 이벤트 리스너로 하지 않는다. 리스너 예외는 격리되어 결정이 삼켜진다(§7).
+- 다중 세션 호스트에서 `QueueMetricsInterceptor` 의 수치를 세션 단위 값으로 읽지 않는다(§6).
+
+---
+
 ## 부록 — 참조 파일 지도
 
 | 관심사 | 파일 |
@@ -236,6 +246,8 @@ executor.executeAsync(ctx, req, repl::onEvent)    // 관찰 경로
 | 체인 | [`AgentExecutionChain.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/interceptor/AgentExecutionChain.java) |
 | 데코레이터 | [`InterceptingAgentExecutor.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/interceptor/InterceptingAgentExecutor.java) |
 | 구현 예 | [`QueueMetricsInterceptor.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/queue/QueueMetricsInterceptor.java) |
+| 큐 매니저 · 큐 항목 | [`MessageQueueManager.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/queue/MessageQueueManager.java), [`QueuedInput.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/queue/QueuedInput.java) |
+| 노드의 동시 턴 상한 | [`TurnAdmission.java`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/admission/TurnAdmission.java) |
 | 감싸이는 실행기 | [`OrcaAgentExecutor.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutor.java) |
 | 실행기 계약 | [`AgentExecutor.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/AgentExecutor.java) |
 | 이벤트 계층 | [`agent/stream/`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/stream/) |

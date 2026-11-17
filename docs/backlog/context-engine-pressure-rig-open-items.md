@@ -1,8 +1,8 @@
-# Context engine 뷰 압력 리그가 남긴 열린 항목 — 등록 항목 6건 (열림 4 · 닫힘 2)
+# Context engine 뷰 압력 리그가 남긴 열린 항목 — 등록 항목 7건 (열림 5 · 닫힘 2)
 
 출처는 2026-10-07 의 작업이다 — `ContextEngineLiveRig` 에 `default` · `rolling` engine 을 같은 과제로 재는 비교 과제를
-붙였다. 설계 기록은 [`design/agent-execution/context-engine-pressure-rig.md`](../design/agent-execution/context-engine-pressure-rig.md),
-지금의 리그를 서술하는 글은 [`design/agent-execution/context-engine.md` §13.11](../design/agent-execution/context-engine.md#1311-engine-을-비교하는-과제) 이다.
+붙였다. 설계 기록은 [`design/agent-execution/context-engine-pressure-rig.md`](../design/README.md#4-옛-경로-대응표),
+지금의 리그를 서술하는 글은 [`design/testing/context-engine-pressure-rig.md`](../design/testing/context-engine-pressure-rig.md) 이다.
 
 **열림/닫힘의 정본은 이 문서다.** 설계 기록 §7 의 열린 질문 아홉은 설계 시점의 기록이고, 그 가운데 이 변경 밖에 결과가
 있는 것만 여기로 옮겼다(옮기지 않은 넷과 그 이유는 그 기록 §9.4). `CP-1` 과 `CP-5` 는 질문이 아니라 작업이 끝난 자리에
@@ -53,6 +53,12 @@
 - **`claude-haiku-4-5` 의 logTriage 롤링 행은 뺀다.** 실패한 턴이 있다(CP-6)
 - **needle 은 두 모델 모두 0/6 대 6/6 이다.** 기본 engine 은 요약이 성공해도 여섯 질문을 전부 포기했고, 롤링은 head 를
   원문으로 남겨 전부 맞혔다
+
+> **정정** *(2026-11-17)*: 위 줄의 "롤링은 head 를 원문으로 남겨 전부 맞혔다" 는 리그의 설계와 맞지 않는다. 리그는 사실을
+> head 밖에 둔다 — 1턴은 사실 없는 브리핑이고, 롤링의 head 고정이 주는 이득은 과제에서 일부러 뺐다(설계 기록 §2.4 의 head
+> 결정, §7 Q5). 그러니 head 가 원문으로 남는다는 것은 needle 6/6 의 이유가 될 수 없다. 롤링이 무엇으로 전부 맞혔는지
+> (prune 뒤에 남은 결과, 요약, `SessionHistory` 되찾기 중 어느 것인지)는 이 한 번의 실행으로 가르지 않았다. 수치는 그대로다.
+> 등록 문장은 규칙 둘대로 고치지 않고 둔다.
 - **keyValue 는 `claude-haiku-4-5` 에서 2/8 대 3/8 이다.** 롤링은 결과를 다섯 번 prune 했고 모델은 `SessionHistory` 를 한
   번도 부르지 않은 채 다섯 질문을 포기했다. 같은 모델이 logTriage 에서는 되찾기를 썼다. 이유는 이 한 번의 실행으로는 알
   수 없다
@@ -161,3 +167,21 @@ iteration 한도에서 턴을 끝내지 않았다" 와 같은 자리일 수 있�
 `AnthropicContextPressureLiveTest`. 보고서의 질문 표에서 `iterations` 와 `SessionHistory calls` 가 같은 행이 그 모양이다.
 
 **언제 다시 볼까.** 이 리그로 롤링을 다시 잴 때. 그 행이 빠진 채로는 CP-1 의 표에서 logTriage 를 읽을 수 없다.
+
+## CP-7 — 기준선은 옛 비교 프로파일에서 잰 것이다 · **열림**
+
+**무엇을.** 지금의 비교 프로파일 — 두 engine 이 같은 auto 임계값 11,200(`0.8 × effective 14,000`)에서 압축하고, 대조 수준의
+여유가 그 값의 0.6 배(6,720)인 프로파일 — 에서 CP-1 의 명령을 다시 돌려 기준선을 다시 잰다.
+
+**왜.** CP-1 의 수치는 2026-10-07 에 롤링 임계값 8,400 · 기본 engine AUTO 13,000 프로파일에서 잰 것이다. 그 뒤 두 engine 이
+공통 임계값 11,200 으로 바뀌었고 다시 잰 기록이 없다. 같은 과제라도 압축이 시작되는 자리가 두 engine 모두 달라졌으므로
+CP-1 의 표는 지금 배포되는 설정의 비교가 아니다. 리그 설계의 파생 수치(16K 창의 근거, 수준 4 의 여유, 대조 계획의 크기)도
+8,400 기준으로 계산된 것이라 다시 재기 전까지는 확인되지 않은 값이다.
+
+**어디.** 두 모듈의 `ContextEngineLiveRig`(`COMPARISON_LIMITS`, `comparisonRollingThreshold`), `ContextPressureRun`
+(`CONTROL_SHARE`, `controlCeiling`). 리그 설계는
+[`design/testing/context-engine-pressure-rig.md`](../design/testing/context-engine-pressure-rig.md).
+
+**언제 다시 볼까.** 이 리그로 engine 을 다시 비교할 때 — CP-6 의 재측정과 같은 실행으로 한다. 수치를
+[`self-managed-context-engine.md` §12](../design/backlog/self-managed-context-engine.md#12-언제-다시-볼까) 의 착수 조건에 대기 전에
+이 항목이 먼저다.
