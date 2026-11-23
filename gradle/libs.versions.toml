@@ -173,7 +173,7 @@ testcontainers = "1.21.4"
 archunit = "1.5.1"
 
 # Observability
-micrometer = "1.17.2"
+micrometer = "1.18.0"
 opentelemetry = "1.34.1"
 
 # Scheduling
